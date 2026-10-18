@@ -1,0 +1,7 @@
+build/
+.vs/
+gtd-config.json
+gtd.sqlite
+*.sqlite-shm
+*.sqlite-wal
+/GuessTheDrawing/x64

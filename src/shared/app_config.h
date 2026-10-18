@@ -1,0 +1,29 @@
+#pragma once
+
+#include <QJsonObject>
+#include <QString>
+
+namespace gtd {
+
+class AppConfig {
+public:
+	static QString defaultPath();
+
+	bool loadOrCreate(const QString& filePath, QString* error = nullptr);
+	QString stringValue(const QString& section, const QString& key) const;
+	int intValue(const QString& section, const QString& key) const;
+	QString resolvedPath(const QString& section, const QString& key) const;
+	QString filePath() const;
+
+private:
+	static QJsonObject defaults();
+	static QJsonObject mergeDefaults(const QJsonObject& defaults, const QJsonObject& existing);
+	static QString createSecret();
+	bool validate(QString* error) const;
+	bool save(QString* error) const;
+
+	QJsonObject values_;
+	QString filePath_;
+};
+
+}

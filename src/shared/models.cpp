@@ -1,0 +1,248 @@
+#include "shared/models.h"
+
+#include <QRegularExpression>
+#include <cmath>
+
+namespace gtd {
+namespace {
+
+void setValidationError(QString* error, const QString& message)
+{
+	if (error)
+		*error = message;
+}
+
+bool validId(const QString& id)
+{
+	static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
+	return pattern.match(id).hasMatch();
+}
+
+bool validColor(const QString& color)
+{
+	static const QRegularExpression pattern(QStringLiteral("^#[0-9a-fA-F]{6}$"));
+	return pattern.match(color).hasMatch();
+}
+
+bool validPoints(const QJsonArray& points)
+{
+	if (points.size() > MaximumObjectPoints)
+		return false;
+	for (const QJsonValue& value : points) {
+		if (!value.isObject())
+			return false;
+		const QJsonObject point = value.toObject();
+		if (!point.value(QStringLiteral("x")).isDouble()
+			|| !point.value(QStringLiteral("y")).isDouble())
+			return false;
+		const double x = point.value(QStringLiteral("x")).toDouble(-1.0);
+		const double y = point.value(QStringLiteral("y")).toDouble(-1.0);
+		if (!std::isfinite(x) || !std::isfinite(y) || x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0)
+			return false;
+	}
+	return true;
+}
+
+}
+
+QJsonObject RoomInfo::toJson() const
+{
+	return {{QStringLiteral("serverId"), serverId},
+			{QStringLiteral("roomId"), roomId},
+			{QStringLiteral("roomName"), roomName},
+			{QStringLiteral("host"), host},
+			{QStringLiteral("port"), static_cast<int>(port)},
+			{QStringLiteral("players"), players},
+			{QStringLiteral("spectators"), spectators},
+			{QStringLiteral("maxPlayers"), maxPlayers},
+			{QStringLiteral("roundSeconds"), roundSeconds}};
+}
+
+RoomInfo RoomInfo::fromJson(const QJsonObject& object)
+{
+	RoomInfo room;
+	room.serverId = object.value(QStringLiteral("serverId")).toString();
+	room.roomId = object.value(QStringLiteral("roomId")).toString();
+	room.roomName = object.value(QStringLiteral("roomName")).toString();
+	room.host = object.value(QStringLiteral("host")).toString();
+	room.port = static_cast<quint16>(qBound(0, object.value(QStringLiteral("port")).toInt(), 65535));
+	room.players = qMax(0, object.value(QStringLiteral("players")).toInt());
+	room.spectators = qMax(0, object.value(QStringLiteral("spectators")).toInt());
+	room.maxPlayers = qBound(1, object.value(QStringLiteral("maxPlayers")).toInt(8), 32);
+	room.roundSeconds = qBound(10, object.value(QStringLiteral("roundSeconds")).toInt(60), 600);
+	return room;
+}
+
+QJsonObject PlayerProfile::toJson() const
+{
+	return {{QStringLiteral("username"), username},
+			{QStringLiteral("displayName"), displayName},
+			{QStringLiteral("avatarUrl"), avatarUrl},
+			{QStringLiteral("countryCode"), countryCode},
+			{QStringLiteral("totalScore"), totalScore},
+			{QStringLiteral("guessingScore"), guessingScore},
+			{QStringLiteral("drawingScore"), drawingScore},
+			{QStringLiteral("roundsWon"), roundsWon},
+			{QStringLiteral("roundsLost"), roundsLost},
+			{QStringLiteral("leaderboardRank"), leaderboardRank},
+			{QStringLiteral("guessingLeaderboardRank"), guessingLeaderboardRank},
+			{QStringLiteral("drawingLeaderboardRank"), drawingLeaderboardRank},
+			{QStringLiteral("guessingRank"), guessingRank},
+			{QStringLiteral("drawingRank"), drawingRank}};
+}
+
+PlayerProfile PlayerProfile::fromJson(const QJsonObject& object)
+{
+	PlayerProfile profile;
+	profile.username = object.value(QStringLiteral("username")).toString();
+	profile.displayName = object.value(QStringLiteral("displayName")).toString(profile.username);
+	profile.avatarUrl = object.value(QStringLiteral("avatarUrl")).toString();
+	profile.countryCode = object.value(QStringLiteral("countryCode")).toString().toUpper();
+	profile.totalScore = qMax(0, object.value(QStringLiteral("totalScore")).toInt());
+	profile.guessingScore = qMax(0, object.value(QStringLiteral("guessingScore")).toInt(profile.totalScore));
+	profile.drawingScore = qMax(0, object.value(QStringLiteral("drawingScore")).toInt());
+	profile.roundsWon = qMax(0, object.value(QStringLiteral("roundsWon")).toInt());
+	profile.roundsLost = qMax(0, object.value(QStringLiteral("roundsLost")).toInt());
+	profile.leaderboardRank = qMax(0, object.value(QStringLiteral("leaderboardRank")).toInt());
+	profile.guessingLeaderboardRank = qMax(0, object.value(QStringLiteral("guessingLeaderboardRank")).toInt());
+	profile.drawingLeaderboardRank = qMax(0, object.value(QStringLiteral("drawingLeaderboardRank")).toInt());
+	profile.guessingRank = object.value(QStringLiteral("guessingRank")).toString();
+	profile.drawingRank = object.value(QStringLiteral("drawingRank")).toString();
+	return profile;
+}
+
+QJsonObject DrawingStroke::toJson() const
+{
+	return {{QStringLiteral("color"), color},
+			{QStringLiteral("width"), qBound(1, width, 32)},
+			{QStringLiteral("points"), points}};
+}
+
+DrawingStroke DrawingStroke::fromJson(const QJsonObject& object)
+{
+	DrawingStroke stroke;
+	stroke.color = object.value(QStringLiteral("color")).toString(QStringLiteral("#202124"));
+	stroke.width = qBound(1, object.value(QStringLiteral("width")).toInt(4), 32);
+	stroke.points = object.value(QStringLiteral("points")).toArray();
+	return stroke;
+}
+
+QJsonObject CanvasLayer::toJson() const
+{
+	return {{QStringLiteral("id"), id}, {QStringLiteral("name"), name},
+			{QStringLiteral("order"), order}, {QStringLiteral("visible"), visible},
+			{QStringLiteral("locked"), locked}};
+}
+
+CanvasLayer CanvasLayer::fromJson(const QJsonObject& object)
+{
+	CanvasLayer layer;
+	layer.id = object.value(QStringLiteral("id")).toString();
+	layer.name = object.value(QStringLiteral("name")).toString();
+	layer.order = object.value(QStringLiteral("order")).toInt();
+	layer.visible = object.value(QStringLiteral("visible")).toBool(true);
+	layer.locked = object.value(QStringLiteral("locked")).toBool(false);
+	return layer;
+}
+
+QJsonObject CanvasObject::toJson() const
+{
+	return {{QStringLiteral("id"), id}, {QStringLiteral("layerId"), layerId},
+			{QStringLiteral("type"), type}, {QStringLiteral("color"), color},
+			{QStringLiteral("fillColor"), fillColor}, {QStringLiteral("text"), text},
+			{QStringLiteral("points"), points}, {QStringLiteral("x"), x},
+			{QStringLiteral("y"), y}, {QStringLiteral("width"), width},
+			{QStringLiteral("height"), height}, {QStringLiteral("strokeWidth"), strokeWidth},
+			{QStringLiteral("fontSize"), fontSize}, {QStringLiteral("filled"), filled}};
+}
+
+CanvasObject CanvasObject::fromJson(const QJsonObject& object)
+{
+	CanvasObject item;
+	item.id = object.value(QStringLiteral("id")).toString();
+	item.layerId = object.value(QStringLiteral("layerId")).toString();
+	item.type = object.value(QStringLiteral("type")).toString();
+	item.color = object.value(QStringLiteral("color")).toString(QStringLiteral("#202124"));
+	item.fillColor = object.value(QStringLiteral("fillColor")).toString(QStringLiteral("#ffffff"));
+	item.text = object.value(QStringLiteral("text")).toString();
+	item.points = object.value(QStringLiteral("points")).toArray();
+	item.x = object.value(QStringLiteral("x")).toDouble();
+	item.y = object.value(QStringLiteral("y")).toDouble();
+	item.width = object.value(QStringLiteral("width")).toDouble();
+	item.height = object.value(QStringLiteral("height")).toDouble();
+	item.strokeWidth = object.value(QStringLiteral("strokeWidth")).toInt(4);
+	item.fontSize = object.value(QStringLiteral("fontSize")).toInt(24);
+	item.filled = object.value(QStringLiteral("filled")).toBool(false);
+	return item;
+}
+
+bool isValidCanvasLayer(const CanvasLayer& layer, QString* error)
+{
+	if (!validId(layer.id)) {
+		setValidationError(error, QStringLiteral("Invalid layer ID"));
+		return false;
+	}
+	if (layer.name.trimmed().isEmpty() || layer.name.size() > 32) {
+		setValidationError(error, QStringLiteral("Layer names must contain 1-32 characters"));
+		return false;
+	}
+	if (layer.order < 0 || layer.order >= MaximumCanvasLayers) {
+		setValidationError(error, QStringLiteral("Invalid layer order"));
+		return false;
+	}
+	return true;
+}
+
+bool isValidCanvasObject(const CanvasObject& item, QString* error)
+{
+	if (!validId(item.id) || !validId(item.layerId)) {
+		setValidationError(error, QStringLiteral("Invalid object or layer ID"));
+		return false;
+	}
+	if (item.type != QStringLiteral("freehand") && item.type != QStringLiteral("rectangle")
+		&& item.type != QStringLiteral("ellipse") && item.type != QStringLiteral("line")
+		&& item.type != QStringLiteral("text")) {
+		setValidationError(error, QStringLiteral("Unsupported canvas object type"));
+		return false;
+	}
+	if (!validColor(item.color) || !validColor(item.fillColor)) {
+		setValidationError(error, QStringLiteral("Invalid object color"));
+		return false;
+	}
+	if (!std::isfinite(item.x) || !std::isfinite(item.y) || !std::isfinite(item.width)
+		|| !std::isfinite(item.height) || item.x < 0.0 || item.y < 0.0 || item.width < 0.0
+		|| item.height < 0.0 || item.x + item.width > 1.000001 || item.y + item.height > 1.000001) {
+		setValidationError(error, QStringLiteral("Object geometry is outside the canvas"));
+		return false;
+	}
+	if (item.strokeWidth < 1 || item.strokeWidth > 32 || item.fontSize < 8 || item.fontSize > 96) {
+		setValidationError(error, QStringLiteral("Invalid stroke width or text size"));
+		return false;
+	}
+	if (item.type == QStringLiteral("text")) {
+		if (item.text.trimmed().isEmpty() || item.text.size() > 256) {
+			setValidationError(error, QStringLiteral("Text objects must contain 1-256 characters"));
+			return false;
+		}
+	} else if (!item.text.isEmpty()) {
+		setValidationError(error, QStringLiteral("Only text objects may contain text"));
+		return false;
+	}
+	if (item.type == QStringLiteral("freehand")) {
+		if (item.points.isEmpty() || !validPoints(item.points)) {
+			setValidationError(error, QStringLiteral("Freehand points are invalid or exceed the limit"));
+			return false;
+		}
+	} else if (item.type == QStringLiteral("line")) {
+		if (item.points.size() != 2 || !validPoints(item.points)) {
+			setValidationError(error, QStringLiteral("Lines require two normalized endpoints"));
+			return false;
+		}
+	} else if (item.points.size() != 0) {
+		setValidationError(error, QStringLiteral("This object type cannot contain path points"));
+		return false;
+	}
+	return true;
+}
+
+}

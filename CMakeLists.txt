@@ -1,0 +1,70 @@
+cmake_minimum_required(VERSION 3.21)
+project(GuessTheDrawing VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Network Sql Widgets)
+
+add_library(gtd_shared
+	src/shared/app_config.cpp
+	src/shared/app_config.h
+	src/shared/auth_token.cpp
+	src/shared/auth_token.h
+	src/shared/models.cpp
+	src/shared/protocol.cpp
+	src/shared/protocol.h
+	src/shared/models.h
+	src/shared/game_rules.cpp
+	src/shared/game_rules.h
+)
+target_include_directories(gtd_shared PUBLIC src)
+target_link_libraries(gtd_shared PUBLIC Qt6::Core Qt6::Network)
+
+add_library(gtd_storage
+	src/storage/account_store.cpp
+	src/storage/account_store.h
+)
+target_include_directories(gtd_storage PUBLIC src)
+target_link_libraries(gtd_storage PUBLIC gtd_shared Qt6::Sql Qt6::Network)
+
+add_executable(gtd_master src/master/main.cpp src/master/master_server.cpp src/master/master_server.h)
+target_link_libraries(gtd_master PRIVATE gtd_storage gtd_shared Qt6::Core Qt6::Network Qt6::Sql)
+
+add_executable(gtd_game_server src/game/main.cpp src/game/game_server.cpp src/game/game_server.h)
+target_link_libraries(gtd_game_server PRIVATE gtd_shared Qt6::Core Qt6::Network)
+
+add_executable(gtd_client src/client/main.cpp src/client/main_window.cpp src/client/main_window.h src/client/drawing_canvas.cpp src/client/drawing_canvas.h)
+if(WIN32)
+	set_target_properties(gtd_client PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+target_link_libraries(gtd_client PRIVATE gtd_shared Qt6::Core Qt6::Network Qt6::Widgets)
+
+include(CTest)
+if(BUILD_TESTING)
+	find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
+	add_executable(gtd_account_tests tests/test_account_store.cpp)
+	target_link_libraries(gtd_account_tests PRIVATE gtd_storage Qt6::Test)
+	add_test(NAME gtd_account_tests COMMAND gtd_account_tests)
+	add_executable(gtd_rules_tests tests/test_game_rules.cpp)
+	target_link_libraries(gtd_rules_tests PRIVATE gtd_shared Qt6::Test)
+	add_test(NAME gtd_rules_tests COMMAND gtd_rules_tests)
+	add_executable(gtd_protocol_tests tests/test_protocol.cpp)
+	target_link_libraries(gtd_protocol_tests PRIVATE gtd_shared Qt6::Test)
+	add_test(NAME gtd_protocol_tests COMMAND gtd_protocol_tests)
+	add_executable(gtd_canvas_tests tests/test_canvas_models.cpp)
+	target_link_libraries(gtd_canvas_tests PRIVATE gtd_shared Qt6::Test)
+	add_test(NAME gtd_canvas_tests COMMAND gtd_canvas_tests)
+	add_executable(gtd_drawing_canvas_tests tests/test_drawing_canvas.cpp src/client/drawing_canvas.cpp src/client/drawing_canvas.h)
+	target_link_libraries(gtd_drawing_canvas_tests PRIVATE gtd_shared Qt6::Widgets Qt6::Test)
+	add_test(NAME gtd_drawing_canvas_tests COMMAND gtd_drawing_canvas_tests)
+	add_executable(gtd_game_server_tests tests/test_game_server.cpp src/game/game_server.cpp src/game/game_server.h)
+	target_link_libraries(gtd_game_server_tests PRIVATE gtd_shared Qt6::Test)
+	add_test(NAME gtd_game_server_tests COMMAND gtd_game_server_tests)
+	add_executable(gtd_app_config_tests tests/test_app_config.cpp)
+	target_link_libraries(gtd_app_config_tests PRIVATE gtd_shared Qt6::Test)
+	add_test(NAME gtd_app_config_tests COMMAND gtd_app_config_tests)
+endif()

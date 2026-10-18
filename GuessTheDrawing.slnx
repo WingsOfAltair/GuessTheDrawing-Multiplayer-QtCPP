@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="GuessTheDrawing.vcxproj" Id="c6a4af4d-a7b6-41e0-b233-ea9f274bdf48" />
+</Solution>
