@@ -6,8 +6,11 @@
 #include <QImage>
 #include <QList>
 #include <QPointF>
+#include <QPointer>
 #include <QRectF>
 #include <QWidget>
+
+class QShortcut;
 
 class QMouseEvent;
 class QPaintEvent;
@@ -23,6 +26,7 @@ public:
 					  Rectangle, RoundedRectangle, Ellipse, Line, Fill, PickColor, Text };
 
 	explicit DrawingCanvas(QWidget* parent = nullptr);
+	~DrawingCanvas() override;
 	void setDrawingAllowed(bool allowed);
 	void setTool(Tool tool);
 	void setCurrentColor(const QString& color);
@@ -88,6 +92,8 @@ private:
 	int handleAt(const QRectF& bounds, const QPointF& point) const;
 	void emitOperation(const QJsonObject& operation);
 	void emitObjectUpsert(const CanvasObject& object);
+	void copySelectedObject();
+	void pasteCopiedObject();
 	void emitLayerUpsert(const CanvasLayer& layer);
 	void updateLayer(const CanvasLayer& layer);
 	CanvasLayer* findLayer(const QString& layerId);
@@ -129,6 +135,9 @@ private:
 	QString pendingHistoryActiveLayerBefore_;
 	CanvasObject previewObject_;
 	CanvasObject originalObject_;
+	CanvasObject copiedObject_;
+	QPointer<QShortcut> copyShortcut_;
+	QPointer<QShortcut> pasteShortcut_;
 	QString activeLayerId_;
 	QString selectedObjectId_;
 	QPointF dragStart_;

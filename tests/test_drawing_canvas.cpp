@@ -1,7 +1,10 @@
 #include "client/drawing_canvas.h"
 
 #include <QColor>
+#include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -23,6 +26,78 @@ private slots:
 		canvas.show();
 
 		QTest::mouseMove(&canvas, QPoint(50, 50));
+	}
+
+	void selectToolCopiesAndPastesObjectWithoutUsingSystemClipboard()
+	{
+		QClipboard* clipboard = QGuiApplication::clipboard();
+		const QString originalClipboard = clipboard->text();
+		const QString clipboardText = QStringLiteral("system clipboard remains unchanged");
+		clipboard->setText(clipboardText);
+
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("visible"), QStringLiteral("Visible"), 0, true, false}.toJson()},
+			QJsonArray{rectangleObject(QStringLiteral("source"), QStringLiteral("visible")).toJson()});
+		canvas.setTool(gtd::DrawingCanvas::Tool::Select);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+		QCOMPARE(QApplication::focusWidget(), &canvas);
+		QTest::keyClick(QApplication::focusWidget(), Qt::Key_C, Qt::ControlModifier);
+		QCOMPARE(clipboard->text(), clipboardText);
+		QTest::keyClick(QApplication::focusWidget(), Qt::Key_V, Qt::ControlModifier);
+
+		QCOMPARE(clipboard->text(), clipboardText);
+		QCOMPARE(operations.size(), 1);
+		const QJsonObject operation = operations.first().first().toJsonObject();
+		QCOMPARE(operation.value(QStringLiteral("action")).toString(), QStringLiteral("object_upsert"));
+		const gtd::CanvasObject pasted = gtd::CanvasObject::fromJson(
+			operation.value(QStringLiteral("object")).toObject());
+		QVERIFY(pasted.id != QStringLiteral("source"));
+		QCOMPARE(pasted.layerId, QStringLiteral("visible"));
+		QCOMPARE(pasted.type, QStringLiteral("rectangle"));
+		QVERIFY(qAbs(pasted.x - 0.42) < 0.0001);
+		QVERIFY(qAbs(pasted.y - 0.42) < 0.0001);
+		QCOMPARE(pasted.width, 0.2);
+		QCOMPARE(pasted.height, 0.2);
+		QTest::keyClick(QApplication::focusWidget(), Qt::Key_V, Qt::ControlModifier);
+		QCOMPARE(operations.size(), 2);
+		const gtd::CanvasObject pastedAgain = gtd::CanvasObject::fromJson(
+			operations.last().first().toJsonObject().value(QStringLiteral("object")).toObject());
+		QVERIFY(pastedAgain.id != pasted.id);
+		QVERIFY(qAbs(pastedAgain.x - pasted.x) < 0.0001);
+		QVERIFY(canvas.canUndo());
+
+		canvas.undo();
+		QCOMPARE(operations.size(), 3);
+		QCOMPARE(operations.last().first().toJsonObject().value(QStringLiteral("action")).toString(),
+			QStringLiteral("object_delete"));
+		clipboard->setText(originalClipboard);
+	}
+
+	void selectToolIgnoresSystemClipboardWhenPasting()
+	{
+		QClipboard* clipboard = QGuiApplication::clipboard();
+		const QString originalClipboard = clipboard->text();
+		clipboard->setText(QStringLiteral("external clipboard content"));
+
+		gtd::DrawingCanvas canvas;
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Select);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		QTest::keyClick(&canvas, Qt::Key_V, Qt::ControlModifier);
+
+		QCOMPARE(operations.size(), 0);
+		clipboard->setText(originalClipboard);
 	}
 
 	void renderImageContainsArtworkWithoutEditorFrame()

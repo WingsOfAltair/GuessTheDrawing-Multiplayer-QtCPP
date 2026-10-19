@@ -10,6 +10,7 @@
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QShortcut>
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPen>
@@ -141,9 +142,27 @@ DrawingCanvas::DrawingCanvas(QWidget* parent)
 {
 	setMinimumSize(480, 320);
 	setMouseTracking(true);
+	setFocusPolicy(Qt::ClickFocus);
 	setAutoFillBackground(false);
+	QWidget* shortcutScope = parent ? parent : this;
+	copyShortcut_ = new QShortcut(QKeySequence::Copy, shortcutScope);
+	copyShortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+	copyShortcut_->setEnabled(false);
+	connect(copyShortcut_, &QShortcut::activated, this, &DrawingCanvas::copySelectedObject);
+	pasteShortcut_ = new QShortcut(QKeySequence::Paste, shortcutScope);
+	pasteShortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+	pasteShortcut_->setEnabled(false);
+	connect(pasteShortcut_, &QShortcut::activated, this, &DrawingCanvas::pasteCopiedObject);
 	layers_.append(CanvasLayer{QStringLiteral("layer-default"), QStringLiteral("Background"), 0, true, false});
 	activeLayerId_ = layers_.first().id;
+}
+
+DrawingCanvas::~DrawingCanvas()
+{
+	if (copyShortcut_ && copyShortcut_->parent() != this)
+		delete copyShortcut_.data();
+	if (pasteShortcut_ && pasteShortcut_->parent() != this)
+		delete pasteShortcut_.data();
 }
 
 void DrawingCanvas::eraseFreehandAt(const QPointF& center, qreal radiusPixels)
@@ -368,6 +387,8 @@ void DrawingCanvas::setTool(Tool tool)
 		endHistoryTransaction();
 	}
 	tool_ = tool;
+	copyShortcut_->setEnabled(tool == Tool::Select);
+	pasteShortcut_->setEnabled(tool == Tool::Select);
 	setCursor(!drawingAllowed_ ? Qt::ForbiddenCursor
 							  : (tool == Tool::Select ? Qt::ArrowCursor : Qt::CrossCursor));
 	dragMode_ = DragMode::None;
@@ -740,6 +761,7 @@ void DrawingCanvas::setScene(const QJsonArray& layers, const QJsonArray& objects
 	const QString oldSelection = activeLayerId_;
 	layers_.clear();
 	objects_.clear();
+	copiedObject_ = CanvasObject{};
 	for (const QJsonValue& value : layers) {
 		if (!value.isObject())
 			continue;
@@ -1086,6 +1108,47 @@ void DrawingCanvas::emitObjectUpsert(const CanvasObject& object)
 	emitOperation(upsertObjectOperation(object));
 }
 
+void DrawingCanvas::copySelectedObject()
+{
+	if (tool_ != Tool::Select)
+		return;
+	if (const CanvasObject* selected = findObject(selectedObjectId_))
+		copiedObject_ = *selected;
+}
+
+void DrawingCanvas::pasteCopiedObject()
+{
+	if (!drawingAllowed_ || tool_ != Tool::Select || copiedObject_.id.isEmpty())
+		return;
+	const CanvasLayer* layer = findLayer(activeLayerId_);
+	if (!layer || layer->locked || !layer->visible)
+		return;
+
+	CanvasObject pasted = copiedObject_;
+	pasted.id = newId();
+	pasted.layerId = activeLayerId_;
+	const auto offsetFor = [](qreal origin, qreal extent) {
+		constexpr qreal offset = 0.02;
+		if (origin + extent + offset <= 1.0)
+			return offset;
+		return origin >= offset ? -offset : 0.0;
+	};
+	const qreal offsetX = offsetFor(pasted.x, pasted.width);
+	const qreal offsetY = offsetFor(pasted.y, pasted.height);
+	pasted.x += offsetX;
+	pasted.y += offsetY;
+	for (int index = 0; index < pasted.points.size(); ++index) {
+		const QPointF point = pointFromJson(pasted.points.at(index));
+		pasted.points[index] = pointJson(QPointF(point.x() + offsetX, point.y() + offsetY));
+	}
+
+	beginHistoryTransaction();
+	selectedObjectId_ = pasted.id;
+	emitObjectUpsert(pasted);
+	endHistoryTransaction();
+	update();
+}
+
 void DrawingCanvas::emitLayerUpsert(const CanvasLayer& layer)
 {
 	emitOperation({{QStringLiteral("action"), QStringLiteral("layer_upsert")},
@@ -1408,6 +1471,7 @@ void DrawingCanvas::paintScene(QPainter& painter) const
 
 void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 {
+	setFocus(Qt::MouseFocusReason);
 	if (!drawingAllowed_ || event->button() != Qt::LeftButton) {
 		QWidget::mousePressEvent(event);
 		return;
