@@ -3,6 +3,7 @@ D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/gtd_stora
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/gtd_master.dir
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/gtd_game_server.dir
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/gtd_client.dir
+D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/gtd_client_other_files.dir
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/Experimental.dir
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/Nightly.dir
 D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/CMakeFiles/Continuous.dir

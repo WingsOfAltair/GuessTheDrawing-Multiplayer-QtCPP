@@ -1,4 +1,4 @@
-gtd_app_config_tests 5 0.012347
+gtd_app_config_tests 7 0.00814444
 gtd_account_tests 4 4.86941
 gtd_rules_tests 4 0.00515633
 gtd_protocol_tests 4 0.00538077

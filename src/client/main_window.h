@@ -73,6 +73,7 @@ private:
 	void populateLeaderboard(QTableWidget* table, const QJsonArray& players, bool drawingPoints);
 	void saveProfile();
 	void applyLanguage(const QString& languageCode);
+	void applyTheme(const QString& theme);
 	void updateLayerList(const QJsonArray& layers);
 	void chooseTextAt(const QPointF& position);
 	void chooseColor();
@@ -129,6 +130,7 @@ private:
 	QTableWidget* drawingLeaderboardTable_ = nullptr;
 	QComboBox* countryCombo_ = nullptr;
 	QComboBox* languageCombo_ = nullptr;
+	QComboBox* themeCombo_ = nullptr;
 	QLineEdit* nicknameEdit_ = nullptr;
 	QLineEdit* currentPasswordEdit_ = nullptr;
 	QLineEdit* newPasswordEdit_ = nullptr;

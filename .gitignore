@@ -5,3 +5,4 @@ gtd.sqlite
 *.sqlite-shm
 *.sqlite-wal
 /GuessTheDrawing/x64
+/x64

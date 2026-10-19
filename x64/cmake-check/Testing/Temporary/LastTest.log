@@ -1,186 +1,10 @@
-Start testing: Oct 19 12:32 Jordan Standard Time
+Start testing: Oct 19 15:20 Jordan Standard Time
 ----------------------------------------------------------
-1/7 Testing: gtd_account_tests
-1/7 Test: gtd_account_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_account_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_account_tests" start time: Oct 19 12:32 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of AccountStoreTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : AccountStoreTests::initTestCase()
-PASS   : AccountStoreTests::persistsAccountsAndScores()
-PASS   : AccountStoreTests::assignsScoreTiersAndLeaderboardRanks()
-PASS   : AccountStoreTests::ranksEqualScoresByFirstAchievement()
-PASS   : AccountStoreTests::persistsCountryAndListsIndependentLeaderboards()
-PASS   : AccountStoreTests::updatesProfileAndPasswordSecurely()
-PASS   : AccountStoreTests::rejectsInvalidAccounts()
-PASS   : AccountStoreTests::cleanupTestCase()
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 19440ms
-********* Finished testing of AccountStoreTests *********
-<end of output>
-Test time =  19.48 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_account_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_account_tests" time elapsed: 00:00:19
-----------------------------------------------------------
-
-2/7 Testing: gtd_rules_tests
-2/7 Test: gtd_rules_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_rules_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_rules_tests" start time: Oct 19 12:33 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of GameRuleTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : GameRuleTests::initTestCase()
-PASS   : GameRuleTests::awardsDescendingPlacementPoints()
-PASS   : GameRuleTests::clampsRoundDuration()
-PASS   : GameRuleTests::cleanupTestCase()
-Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
-********* Finished testing of GameRuleTests *********
-<end of output>
-Test time =   0.02 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_rules_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_rules_tests" time elapsed: 00:00:00
-----------------------------------------------------------
-
-3/7 Testing: gtd_protocol_tests
-3/7 Test: gtd_protocol_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_protocol_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_protocol_tests" start time: Oct 19 12:33 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of ProtocolTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : ProtocolTests::initTestCase()
-PASS   : ProtocolTests::encodesAndParsesVersionedMessages()
-PASS   : ProtocolTests::buffersPartialFrames()
-PASS   : ProtocolTests::rejectsMalformedOrUnsupportedMessages()
-PASS   : ProtocolTests::signsAndExpiresSessionTokens()
-PASS   : ProtocolTests::cleanupTestCase()
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
-********* Finished testing of ProtocolTests *********
-<end of output>
-Test time =   0.02 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_protocol_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_protocol_tests" time elapsed: 00:00:00
-----------------------------------------------------------
-
-4/7 Testing: gtd_canvas_tests
-4/7 Test: gtd_canvas_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_canvas_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_canvas_tests" start time: Oct 19 12:33 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of CanvasModelTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : CanvasModelTests::initTestCase()
-PASS   : CanvasModelTests::roundTripsCanvasObjectsAndLayers()
-PASS   : CanvasModelTests::validatesNormalizedGeometryAndColors()
-PASS   : CanvasModelTests::validatesLayerAndPathLimits()
-PASS   : CanvasModelTests::cleanupTestCase()
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
-********* Finished testing of CanvasModelTests *********
-<end of output>
-Test time =   0.02 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_canvas_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_canvas_tests" time elapsed: 00:00:00
-----------------------------------------------------------
-
-5/7 Testing: gtd_drawing_canvas_tests
-5/7 Test: gtd_drawing_canvas_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_drawing_canvas_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_drawing_canvas_tests" start time: Oct 19 12:33 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of DrawingCanvasTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : DrawingCanvasTests::initTestCase()
-PASS   : DrawingCanvasTests::selectToolHandlesPointerMovementOverEmptyCanvas()
-PASS   : DrawingCanvasTests::multilineTextAllocatesVerticalSpace()
-PASS   : DrawingCanvasTests::freehandEraserOnlyChangesSelectedLayer()
-PASS   : DrawingCanvasTests::objectEraserOnlyChangesSelectedLayer()
-PASS   : DrawingCanvasTests::selectToolCannotTargetAnotherLayer()
-PASS   : DrawingCanvasTests::clearSelectedLayerPreservesOtherLayers()
-PASS   : DrawingCanvasTests::clearCanvasRemovesObjectsFromAllLayers()
-PASS   : DrawingCanvasTests::cleanupTestCase()
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 186ms
-********* Finished testing of DrawingCanvasTests *********
-<end of output>
-Test time =   0.27 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_drawing_canvas_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_drawing_canvas_tests" time elapsed: 00:00:00
-----------------------------------------------------------
-
-6/7 Testing: gtd_game_server_tests
-6/7 Test: gtd_game_server_tests
-Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_game_server_tests.exe"
-Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_game_server_tests" start time: Oct 19 12:33 Jordan Standard Time
-Output:
-----------------------------------------------------------
-********* Start testing of GameServerTests *********
-Config: Using QtTest library 6.9.1, Qt 6.9.1 (x86_64-little_endian-llp64 shared (dynamic) debug build; by MSVC 2022), windows 11
-PASS   : GameServerTests::initTestCase()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::repliesToPingBeforeJoin() Connected to master at 127.0.0.1:49599
-PASS   : GameServerTests::repliesToPingBeforeJoin()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly() Connected to master at 127.0.0.1:49603
-Players: 1 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly() Player joined: voice-first (@voice-first) as player
-Players: 2 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly() Player joined: voice-second (@voice-second) as player
-QINFO  : GameServerTests::relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly() Round 1 started; voice-first (@voice-first) is drawing
-PASS   : GameServerTests::relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::profileLeaderboardRanksReachRoster() Connected to master at 127.0.0.1:49608
-Players: 1 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::profileLeaderboardRanksReachRoster() Player joined: Ranked Player (@ranked-player) as player
-PASS   : GameServerTests::profileLeaderboardRanksReachRoster()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::reconnectsWhenMasterStartsLater() Connected to master at 127.0.0.1:49612
-PASS   : GameServerTests::reconnectsWhenMasterStartsLater()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::advertisesLiveRoomPlayerCount() Connected to master at 127.0.0.1:49615
-Players: 1 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::advertisesLiveRoomPlayerCount() Player joined: Player Test (@player-test) as player
-PASS   : GameServerTests::advertisesLiveRoomPlayerCount()
-Players: 0 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Connected to master at 127.0.0.1:49619
-Players: 1 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player joined: first-player (@first-player) as player
-Players: 2 | Spectators: 0 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player joined: second-player (@second-player) as player
-QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Round 1 started; first-player (@first-player) is drawing
-Players: 2 | Spectators: 1 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player joined: room-spectator (@room-spectator) as spectator
-Players: 2 | Spectators: 0 | In queue: 1Players: 2 | Spectators: 0 | In queue: 2QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player joined: waiting-player (@waiting-player) as spectator (queued for a player slot)
-Players: 2 | Spectators: 1 | In queue: 1QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player left: first-player (@first-player) as player
-Players: 1 | Spectators: 1 | In queue: 1Players: 2 | Spectators: 1 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Round 2 started; second-player (@second-player) is drawing
-Players: 1 | Spectators: 2 | In queue: 0Players: 2 | Spectators: 1 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Round 3 started; room-spectator (@room-spectator) is drawing
-QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player left: second-player (@second-player) as player
-Players: 1 | Spectators: 1 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player left: room-spectator (@room-spectator) as player
-Players: 0 | Spectators: 1 | In queue: 0QINFO  : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens() Player left: waiting-player (@waiting-player) as spectator
-Players: 0 | Spectators: 0 | In queue: 0PASS   : GameServerTests::spectatorCanJoinFullRoomAndPromoteWhenSpaceOpens()
-PASS   : GameServerTests::cleanupTestCase()
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 2751ms
-********* Finished testing of GameServerTests *********
-<end of output>
-Test time =   2.78 sec
-----------------------------------------------------------
-Test Passed.
-"gtd_game_server_tests" end time: Oct 19 12:33 Jordan Standard Time
-"gtd_game_server_tests" time elapsed: 00:00:02
-----------------------------------------------------------
-
 7/7 Testing: gtd_app_config_tests
 7/7 Test: gtd_app_config_tests
 Command: "D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check/Debug/gtd_app_config_tests.exe"
 Directory: D:/GitHub/GuessTheDrawing-Multiplayer-QtCPP/x64/cmake-check
-"gtd_app_config_tests" start time: Oct 19 12:33 Jordan Standard Time
+"gtd_app_config_tests" start time: Oct 19 15:20 Jordan Standard Time
 Output:
 ----------------------------------------------------------
 ********* Start testing of AppConfigTests *********
@@ -190,14 +14,14 @@ PASS   : AppConfigTests::createsAndPersistsConfiguration()
 PASS   : AppConfigTests::mergesMissingValues()
 PASS   : AppConfigTests::rejectsMalformedFileWithoutChangingIt()
 PASS   : AppConfigTests::cleanupTestCase()
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 36ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 33ms
 ********* Finished testing of AppConfigTests *********
 <end of output>
 Test time =   0.06 sec
 ----------------------------------------------------------
 Test Passed.
-"gtd_app_config_tests" end time: Oct 19 12:33 Jordan Standard Time
+"gtd_app_config_tests" end time: Oct 19 15:20 Jordan Standard Time
 "gtd_app_config_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Oct 19 12:33 Jordan Standard Time
+End testing: Oct 19 15:20 Jordan Standard Time

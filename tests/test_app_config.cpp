@@ -30,6 +30,7 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(sessionSecret.size(), 64);
 	QVERIFY(serverSecret != sessionSecret);
 	QVERIFY(QFile::exists(path));
+	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("theme")), QStringLiteral("system"));
 
 	gtd::AppConfig second;
 	QVERIFY2(second.loadOrCreate(path, &error), qPrintable(error));
@@ -37,9 +38,12 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(second.stringValue(QStringLiteral("security"), QStringLiteral("sessionSecret")), sessionSecret);
 	QVERIFY2(second.setStringValue(QStringLiteral("client"), QStringLiteral("language"), QStringLiteral("ar"), &error),
 		qPrintable(error));
+	QVERIFY2(second.setStringValue(QStringLiteral("client"), QStringLiteral("theme"), QStringLiteral("dark"), &error),
+		qPrintable(error));
 	gtd::AppConfig third;
 	QVERIFY2(third.loadOrCreate(path, &error), qPrintable(error));
 	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("language")), QStringLiteral("ar"));
+	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("theme")), QStringLiteral("dark"));
 	QCOMPARE(second.resolvedPath(QStringLiteral("master"), QStringLiteral("database")),
 			 directory.filePath(QStringLiteral("gtd.sqlite")));
 }

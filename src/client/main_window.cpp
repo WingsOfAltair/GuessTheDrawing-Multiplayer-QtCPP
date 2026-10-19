@@ -26,9 +26,11 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QPainter>
+#include <QPalette>
 #include <QSpinBox>
 #include <QSignalBlocker>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -847,6 +849,7 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	  masterPort_(masterPort)
 {
 	applyLanguage(config_.stringValue(QStringLiteral("client"), QStringLiteral("language")));
+	applyTheme(config_.stringValue(QStringLiteral("client"), QStringLiteral("theme")));
 	setWindowTitle(QStringLiteral("Guess The Drawing"));
 	resize(1100, 720);
 
@@ -1237,6 +1240,33 @@ QWidget* MainWindow::createLobbyPage()
 	auto* languageLabel = new QLabel(appSettingsPage);
 	setLocalizedText(languageLabel, QStringLiteral("Language"), languageCode_);
 	appSettingsLayout->addRow(languageLabel, languageCombo_);
+	themeCombo_ = new QComboBox(appSettingsPage);
+	const QList<QPair<QString, QString>> themes{
+		{QStringLiteral("Light"), QStringLiteral("light")},
+		{QStringLiteral("Dark"), QStringLiteral("dark")},
+		{QStringLiteral("System"), QStringLiteral("system")},
+		{QStringLiteral("Ocean"), QStringLiteral("ocean")},
+		{QStringLiteral("Forest"), QStringLiteral("forest")},
+		{QStringLiteral("Sunset"), QStringLiteral("sunset")},
+		{QStringLiteral("Purple"), QStringLiteral("purple")},
+		{QStringLiteral("Solarized"), QStringLiteral("solarized")},
+		{QStringLiteral("High Contrast"), QStringLiteral("high-contrast")},
+		{QStringLiteral("Rose"), QStringLiteral("rose")},
+		{QStringLiteral("Midnight"), QStringLiteral("midnight")},
+		{QStringLiteral("Nord"), QStringLiteral("nord")},
+		{QStringLiteral("Dracula"), QStringLiteral("dracula")},
+		{QStringLiteral("Monokai"), QStringLiteral("monokai")}};
+	QStringList themeNames;
+	for (const auto& themeOption : themes) {
+		themeCombo_->addItem(themeOption.first, themeOption.second);
+		themeNames.append(themeOption.first);
+	}
+	themeCombo_->setProperty("gtdSourceItems", themeNames);
+	const int themeIndex = themeCombo_->findData(config_.stringValue(QStringLiteral("client"), QStringLiteral("theme")));
+	themeCombo_->setCurrentIndex(themeIndex >= 0 ? themeIndex : themeCombo_->findData(QStringLiteral("system")));
+	auto* themeLabel = new QLabel(appSettingsPage);
+	setLocalizedText(themeLabel, QStringLiteral("Theme"), languageCode_);
+	appSettingsLayout->addRow(themeLabel, themeCombo_);
 	settingsStatusLabel_ = new QLabel(appSettingsPage);
 	settingsStatusLabel_->setWordWrap(true);
 	appSettingsLayout->addRow(settingsStatusLabel_);
@@ -1263,6 +1293,20 @@ QWidget* MainWindow::createLobbyPage()
 		settingsStatusLabel_->clear();
 		applyLanguage(languageCode);
 	});
+	connect(themeCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+		const QString theme = themeCombo_->itemData(index).toString();
+		QString error;
+		if (!config_.setStringValue(QStringLiteral("client"), QStringLiteral("theme"), theme, &error)) {
+			const QSignalBlocker blocker(themeCombo_);
+			themeCombo_->setCurrentIndex(themeCombo_->findData(config_.stringValue(
+				QStringLiteral("client"), QStringLiteral("theme"))));
+			setLocalizedFormattedText(settingsStatusLabel_, QStringLiteral("Could not save theme setting: %1"),
+				{error}, languageCode_);
+			return;
+		}
+		settingsStatusLabel_->clear();
+		applyTheme(theme);
+	});
 	connect(tabs, &QTabWidget::currentChanged, this, [this](int index) {
 		if (index == 1)
 			requestLeaderboards();
@@ -1280,6 +1324,94 @@ QWidget* MainWindow::createLobbyPage()
 		roomRefreshTimer_.stop();
 	});
 	return page;
+}
+
+void MainWindow::applyTheme(const QString& theme)
+{
+	const QPalette systemPalette = QApplication::style()->standardPalette();
+	if (theme == QStringLiteral("system") || theme == QStringLiteral("other")) {
+		QApplication::setPalette(systemPalette);
+		return;
+	}
+
+	QPalette palette = systemPalette;
+	auto setColors = [&palette](const QString& window, const QString& surface, const QString& base,
+								const QString& text, const QString& accent, const QString& accentText,
+								const QString& button, const QString& disabledText) {
+		palette.setColor(QPalette::Window, QColor(window));
+		palette.setColor(QPalette::WindowText, QColor(text));
+		palette.setColor(QPalette::Base, QColor(base));
+		palette.setColor(QPalette::AlternateBase, QColor(surface));
+		palette.setColor(QPalette::ToolTipBase, QColor(surface));
+		palette.setColor(QPalette::ToolTipText, QColor(text));
+		palette.setColor(QPalette::Text, QColor(text));
+		palette.setColor(QPalette::PlaceholderText, QColor(disabledText));
+		palette.setColor(QPalette::Button, QColor(button));
+		palette.setColor(QPalette::ButtonText, QColor(text));
+		palette.setColor(QPalette::BrightText, QColor(accent));
+		palette.setColor(QPalette::Link, QColor(accent));
+		palette.setColor(QPalette::Highlight, QColor(accent));
+		palette.setColor(QPalette::HighlightedText, QColor(accentText));
+		palette.setColor(QPalette::Disabled, QPalette::Text, QColor(disabledText));
+		palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(disabledText));
+	};
+	if (theme == QStringLiteral("light")) {
+		setColors(QStringLiteral("#f5f6f8"), QStringLiteral("#f1f3f4"), QStringLiteral("#ffffff"),
+			QStringLiteral("#202124"), QStringLiteral("#1a73e8"), QStringLiteral("#ffffff"),
+			QStringLiteral("#e8eaed"), QStringLiteral("#80868b"));
+	} else if (theme == QStringLiteral("dark")) {
+		setColors(QStringLiteral("#202124"), QStringLiteral("#292a2d"), QStringLiteral("#17181a"),
+			QStringLiteral("#e8eaed"), QStringLiteral("#8ab4f8"), QStringLiteral("#202124"),
+			QStringLiteral("#303134"), QStringLiteral("#9aa0a6"));
+	} else if (theme == QStringLiteral("ocean")) {
+		setColors(QStringLiteral("#0b1f2a"), QStringLiteral("#173747"), QStringLiteral("#102c3a"),
+			QStringLiteral("#e3f6fc"), QStringLiteral("#35c4d0"), QStringLiteral("#062027"),
+			QStringLiteral("#174454"), QStringLiteral("#87a9b5"));
+	} else if (theme == QStringLiteral("forest")) {
+		setColors(QStringLiteral("#16251b"), QStringLiteral("#263c2d"), QStringLiteral("#1d3023"),
+			QStringLiteral("#e5f2e8"), QStringLiteral("#8ccf83"), QStringLiteral("#15251a"),
+			QStringLiteral("#304b37"), QStringLiteral("#9caf9e"));
+	} else if (theme == QStringLiteral("sunset")) {
+		setColors(QStringLiteral("#2a1b2d"), QStringLiteral("#47303c"), QStringLiteral("#352333"),
+			QStringLiteral("#fff0e6"), QStringLiteral("#ff9a62"), QStringLiteral("#30180c"),
+			QStringLiteral("#513440"), QStringLiteral("#baa5ad"));
+	} else if (theme == QStringLiteral("purple")) {
+		setColors(QStringLiteral("#211a2e"), QStringLiteral("#382b4b"), QStringLiteral("#2b203b"),
+			QStringLiteral("#f1e9ff"), QStringLiteral("#c4a1ff"), QStringLiteral("#241333"),
+			QStringLiteral("#403052"), QStringLiteral("#ab9dbb"));
+	} else if (theme == QStringLiteral("solarized")) {
+		setColors(QStringLiteral("#002b36"), QStringLiteral("#073642"), QStringLiteral("#00212b"),
+			QStringLiteral("#839496"), QStringLiteral("#268bd2"), QStringLiteral("#fdf6e3"),
+			QStringLiteral("#073642"), QStringLiteral("#586e75"));
+	} else if (theme == QStringLiteral("high-contrast")) {
+		setColors(QStringLiteral("#000000"), QStringLiteral("#000000"), QStringLiteral("#000000"),
+			QStringLiteral("#ffffff"), QStringLiteral("#ffff00"), QStringLiteral("#000000"),
+			QStringLiteral("#000000"), QStringLiteral("#d0d0d0"));
+	} else if (theme == QStringLiteral("rose")) {
+		setColors(QStringLiteral("#fff5f7"), QStringLiteral("#fce4ec"), QStringLiteral("#ffffff"),
+			QStringLiteral("#44212a"), QStringLiteral("#d84a7b"), QStringLiteral("#ffffff"),
+			QStringLiteral("#f8d7e2"), QStringLiteral("#9a7c85"));
+	} else if (theme == QStringLiteral("midnight")) {
+		setColors(QStringLiteral("#101828"), QStringLiteral("#202d46"), QStringLiteral("#141e32"),
+			QStringLiteral("#e7edff"), QStringLiteral("#65d6ff"), QStringLiteral("#06151e"),
+			QStringLiteral("#253653"), QStringLiteral("#98a6c4"));
+	} else if (theme == QStringLiteral("nord")) {
+		setColors(QStringLiteral("#2e3440"), QStringLiteral("#434c5e"), QStringLiteral("#3b4252"),
+			QStringLiteral("#eceff4"), QStringLiteral("#88c0d0"), QStringLiteral("#2e3440"),
+			QStringLiteral("#4c566a"), QStringLiteral("#aab2bf"));
+	} else if (theme == QStringLiteral("dracula")) {
+		setColors(QStringLiteral("#282a36"), QStringLiteral("#44475a"), QStringLiteral("#343746"),
+			QStringLiteral("#f8f8f2"), QStringLiteral("#bd93f9"), QStringLiteral("#282a36"),
+			QStringLiteral("#44475a"), QStringLiteral("#a7a9b5"));
+	} else if (theme == QStringLiteral("monokai")) {
+		setColors(QStringLiteral("#272822"), QStringLiteral("#3e3d32"), QStringLiteral("#2e2d27"),
+			QStringLiteral("#f8f8f2"), QStringLiteral("#a6e22e"), QStringLiteral("#1c1d16"),
+			QStringLiteral("#49483e"), QStringLiteral("#a6a69f"));
+	} else {
+		QApplication::setPalette(systemPalette);
+		return;
+	}
+	QApplication::setPalette(palette);
 }
 
 QWidget* MainWindow::createGamePage()

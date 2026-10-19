@@ -72,6 +72,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "gtd_client", "gtd_client.vc
 		{3C4A2DDC-3A62-3DB6-B819-6F25EAB139C8} = {3C4A2DDC-3A62-3DB6-B819-6F25EAB139C8}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "gtd_client_other_files", "gtd_client_other_files.vcxproj", "{8DF83C67-D3EC-3B33-ACA3-3650F77A6BA6}"
+	ProjectSection(ProjectDependencies) = postProject
+		{25C7A7C4-50BE-3842-93A3-2CD154B22DC0} = {25C7A7C4-50BE-3842-93A3-2CD154B22DC0}
+	EndProjectSection
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "gtd_drawing_canvas_tests", "gtd_drawing_canvas_tests.vcxproj", "{DD3EAD14-ADAB-3561-BCBA-1AF47C95F03C}"
 	ProjectSection(ProjectDependencies) = postProject
 		{25C7A7C4-50BE-3842-93A3-2CD154B22DC0} = {25C7A7C4-50BE-3842-93A3-2CD154B22DC0}
@@ -192,6 +197,10 @@ Global
 		{8B4B7BE5-0233-332C-A9E1-0456E5812B2F}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
 		{8B4B7BE5-0233-332C-A9E1-0456E5812B2F}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
 		{8B4B7BE5-0233-332C-A9E1-0456E5812B2F}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+		{8DF83C67-D3EC-3B33-ACA3-3650F77A6BA6}.Debug|x64.ActiveCfg = Debug|x64
+		{8DF83C67-D3EC-3B33-ACA3-3650F77A6BA6}.Release|x64.ActiveCfg = Release|x64
+		{8DF83C67-D3EC-3B33-ACA3-3650F77A6BA6}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{8DF83C67-D3EC-3B33-ACA3-3650F77A6BA6}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
 		{DD3EAD14-ADAB-3561-BCBA-1AF47C95F03C}.Debug|x64.ActiveCfg = Debug|x64
 		{DD3EAD14-ADAB-3561-BCBA-1AF47C95F03C}.Debug|x64.Build.0 = Debug|x64
 		{DD3EAD14-ADAB-3561-BCBA-1AF47C95F03C}.Release|x64.ActiveCfg = Release|x64

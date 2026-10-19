@@ -73,7 +73,8 @@ QJsonObject AppConfig::defaults()
 		{QStringLiteral("client"), QJsonObject{
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("masterPort"), 45450},
-			{QStringLiteral("language"), QStringLiteral("en")}}}
+			{QStringLiteral("language"), QStringLiteral("en")},
+			{QStringLiteral("theme"), QStringLiteral("system")}}}
 	};
 }
 
