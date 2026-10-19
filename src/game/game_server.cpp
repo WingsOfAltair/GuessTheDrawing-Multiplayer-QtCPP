@@ -205,6 +205,10 @@ void GameServer::readPlayer(QTcpSocket* socket)
 void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (type == QStringLiteral("Ping")) {
+		sendMessage(socket, reply(QStringLiteral("Pong"), message));
+		return;
+	}
 	if (!playersBySocket_.contains(socket)) {
 		if (type == QStringLiteral("JoinRoom"))
 			joinRoom(socket, message);

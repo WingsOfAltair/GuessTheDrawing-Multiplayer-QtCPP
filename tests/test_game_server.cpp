@@ -13,6 +13,38 @@ class GameServerTests final : public QObject {
 	Q_OBJECT
 
 private slots:
+	void repliesToPingBeforeJoin()
+	{
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("room-ping");
+		room.roomName = QStringLiteral("Ping room");
+		gtd::GameServer server(room, QStringLiteral("server-ping"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"));
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+
+		QTcpSocket probe;
+		probe.connectToHost(QHostAddress::LocalHost, server.port());
+		QTRY_COMPARE(probe.state(), QAbstractSocket::ConnectedState);
+		QByteArray buffer;
+		QString pongRequestId;
+		connect(&probe, &QTcpSocket::readyRead, this, [&] {
+			const QList<QJsonObject> messages = gtd::takeMessages(&buffer, probe.readAll());
+			for (const QJsonObject& message : messages) {
+				if (message.value(QStringLiteral("type")).toString() == QStringLiteral("Pong"))
+					pongRequestId = message.value(QStringLiteral("requestId")).toString();
+			}
+		});
+		QVERIFY(gtd::sendMessage(&probe, gtd::makeMessage(QStringLiteral("Ping"),
+			{{QStringLiteral("requestId"), QStringLiteral("room-ping-probe")}})));
+
+		QTRY_COMPARE(pongRequestId, QStringLiteral("room-ping-probe"));
+	}
+
 	void profileLeaderboardRanksReachRoster()
 	{
 		QTcpServer master;

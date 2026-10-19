@@ -15,8 +15,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPaintEvent>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QPainter>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTableWidget>
@@ -25,6 +27,83 @@
 #include <QVector>
 
 namespace gtd {
+
+class LatencyIndicator final : public QWidget {
+public:
+	explicit LatencyIndicator(QWidget* parent = nullptr)
+		: QWidget(parent)
+	{
+		setFixedSize(105, 24);
+		setAttribute(Qt::WA_TransparentForMouseEvents);
+		setPing(-1);
+	}
+
+	void setPing(int pingMs)
+	{
+		pingMs_ = pingMs;
+		const QString description = pingMs_ < 0
+			? QStringLiteral("Ping unavailable")
+			: QStringLiteral("%1 ms · %2 latency").arg(pingMs_).arg(quality());
+		setToolTip(description);
+		setAccessibleName(description);
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent*) override
+	{
+		QPainter painter(this);
+		painter.setRenderHint(QPainter::Antialiasing);
+		const int bars = strength();
+		QColor activeColor(QStringLiteral("#43a047"));
+		if (pingMs_ > 200)
+			activeColor = QColor(QStringLiteral("#e53935"));
+		else if (pingMs_ > 120)
+			activeColor = QColor(QStringLiteral("#f9a825"));
+		else if (pingMs_ > 60)
+			activeColor = QColor(QStringLiteral("#7cb342"));
+		const QColor inactiveColor = palette().color(QPalette::Disabled, QPalette::Text);
+		const int heights[] = {5, 8, 11, 14};
+		for (int index = 0; index < 4; ++index) {
+			painter.setPen(Qt::NoPen);
+			painter.setBrush(index < bars ? activeColor : inactiveColor);
+			painter.drawRoundedRect(4 + index * 6, height() - heights[index] - 3,
+				4, heights[index], 1, 1);
+		}
+		painter.setPen(palette().color(QPalette::Text));
+		painter.drawText(31, height() - 5, pingMs_ < 0
+			? QStringLiteral("— ms") : QStringLiteral("%1 ms").arg(pingMs_));
+	}
+
+private:
+	int strength() const
+	{
+		if (pingMs_ < 0)
+			return 0;
+		if (pingMs_ <= 60)
+			return 4;
+		if (pingMs_ <= 120)
+			return 3;
+		if (pingMs_ <= 200)
+			return 2;
+		return 1;
+	}
+
+	QString quality() const
+	{
+		if (pingMs_ < 0)
+			return QStringLiteral("unavailable");
+		if (pingMs_ <= 60)
+			return QStringLiteral("excellent");
+		if (pingMs_ <= 120)
+			return QStringLiteral("good");
+		if (pingMs_ <= 200)
+			return QStringLiteral("fair");
+		return QStringLiteral("weak");
+	}
+
+	int pingMs_ = -1;
+};
 
 MainWindow::MainWindow(QString masterHost, quint16 masterPort, QWidget* parent)
 	: QMainWindow(parent),
@@ -73,6 +152,11 @@ MainWindow::MainWindow(QString masterHost, quint16 masterPort, QWidget* parent)
 	});
 	connect(&gameSocket_, &QTcpSocket::readyRead, this, [this] { readGameServer(); });
 	connect(&gameSocket_, &QTcpSocket::disconnected, this, [this] {
+		activePingTimer_.stop();
+		pendingActivePingRequestId_.clear();
+		activePingMs_ = -1;
+		if (activeLatencyIndicator_)
+			activeLatencyIndicator_->setPing(-1);
 		if (inRoom_ && !leavingRoom_) {
 			inRoom_ = false;
 			pages_->setCurrentWidget(lobbyPage_);
@@ -85,6 +169,8 @@ MainWindow::MainWindow(QString masterHost, quint16 masterPort, QWidget* parent)
 		if (!inRoom_)
 			connectionStatusLabel_->setText(QStringLiteral("Could not connect to the selected room"));
 	});
+	activePingTimer_.setInterval(2000);
+	connect(&activePingTimer_, &QTimer::timeout, this, [this] { sendActivePing(); });
 
 	roomRefreshTimer_.setInterval(5000);
 	connect(&roomRefreshTimer_, &QTimer::timeout, this, [this] {
@@ -182,13 +268,18 @@ QWidget* MainWindow::createLobbyPage()
 	auto* tabs = new QTabWidget(page);
 	auto* roomsPage = new QWidget(tabs);
 	auto* roomsLayout = new QVBoxLayout(roomsPage);
-	roomsTable_ = new QTableWidget(0, 4, page);
+	roomsTable_ = new QTableWidget(0, 5, page);
 	roomsTable_->setHorizontalHeaderLabels({QStringLiteral("Room"), QStringLiteral("Players"),
-											 QStringLiteral("Round timer"), QStringLiteral("Server")});
+											 QStringLiteral("Round timer"), QStringLiteral("Ping"),
+											 QStringLiteral("Server")});
 	roomsTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	roomsTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	roomsTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-	roomsTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+	// A cell widget alone does not reliably contribute to ResizeToContents sizing.
+	// Keep the Ping column wide enough for the latency bars and millisecond value.
+	roomsTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+	roomsTable_->setColumnWidth(3, 120);
+	roomsTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
 	roomsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
 	roomsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
 	roomsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -280,6 +371,13 @@ QWidget* MainWindow::createGamePage()
 	auto* layout = new QVBoxLayout(page);
 	auto* header = new QGridLayout;
 	gameRoomLabel_ = new QLabel(page);
+	auto* activePingWidget = new QWidget(page);
+	auto* activePingLayout = new QHBoxLayout(activePingWidget);
+	activePingLayout->setContentsMargins(0, 0, 0, 0);
+	activePingLayout->setSpacing(4);
+	activePingLayout->addWidget(new QLabel(QStringLiteral("Ping"), activePingWidget));
+	activeLatencyIndicator_ = new LatencyIndicator(activePingWidget);
+	activePingLayout->addWidget(activeLatencyIndicator_);
 	queueStatusLabel_ = new QLabel(page);
 	queueStatusLabel_->hide();
 	queueProgressBar_ = new QProgressBar(page);
@@ -301,8 +399,9 @@ QWidget* MainWindow::createGamePage()
 	header->addWidget(roundStatusLabel_, 0, 1);
 	header->addWidget(wordLabel_, 0, 2);
 	header->addWidget(timerLabel_, 0, 3);
-	header->addWidget(promoteToPlayerButton_, 0, 4);
-	header->addWidget(leaveButton, 0, 5);
+	header->addWidget(activePingWidget, 0, 4);
+	header->addWidget(promoteToPlayerButton_, 0, 5);
+	header->addWidget(leaveButton, 0, 6);
 	layout->addLayout(header);
 	layout->addWidget(queueStatusLabel_);
 	layout->addWidget(queueProgressBar_);
@@ -730,6 +829,14 @@ void MainWindow::saveProfile()
 void MainWindow::handleGameMessage(const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (type == QStringLiteral("Pong")) {
+		if (message.value(QStringLiteral("requestId")).toString() == pendingActivePingRequestId_) {
+			activePingMs_ = static_cast<int>(activePingElapsed_.elapsed());
+			pendingActivePingRequestId_.clear();
+			activeLatencyIndicator_->setPing(activePingMs_);
+		}
+		return;
+	}
 	if (type == QStringLiteral("JoinResult")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_)
 			return;
@@ -740,6 +847,11 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		}
 		inRoom_ = true;
 		leavingRoom_ = false;
+		activePingMs_ = -1;
+		pendingActivePingRequestId_.clear();
+		activeLatencyIndicator_->setPing(-1);
+		activePingTimer_.start();
+		sendActivePing();
 		isSpectator_ = message.value(QStringLiteral("spectator")).toBool(false);
 		queuedForPlayer_ = message.value(QStringLiteral("queuedForPlayer")).toBool(false);
 		currentDrawer_.clear();
@@ -867,6 +979,7 @@ void MainWindow::requestRooms()
 
 void MainWindow::populateRooms(const QJsonArray& rooms)
 {
+	roomLatencyIndicators_.clear();
 	roomsTable_->setRowCount(0);
 	roomsById_.clear();
 	for (const QJsonValue& value : rooms) {
@@ -884,12 +997,106 @@ void MainWindow::populateRooms(const QJsonArray& rooms)
 		roomsTable_->setItem(row, 1, new QTableWidgetItem(QStringLiteral("%1 / %2 · %3 spectating")
 															   .arg(room.players).arg(room.maxPlayers).arg(room.spectators)));
 		roomsTable_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("%1 sec").arg(room.roundSeconds)));
-		roomsTable_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1:%2").arg(room.host).arg(room.port)));
+		auto* latencyIndicator = new LatencyIndicator(roomsTable_);
+		latencyIndicator->setPing(roomPingMs_.value(room.roomId, -1));
+		roomLatencyIndicators_.insert(room.roomId, latencyIndicator);
+		roomsTable_->setCellWidget(row, 3, latencyIndicator);
+		roomsTable_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1:%2").arg(room.host).arg(room.port)));
 	}
 	roomsRefreshElapsed_.start();
 	connectionStatusLabel_->setText(QStringLiteral("%1 room(s) listed").arg(roomsTable_->rowCount()));
 	updateRoomsRefreshStatus();
 	joinRoomButton_->setEnabled(roomsTable_->currentRow() >= 0);
+	probeRooms(rooms);
+}
+
+void MainWindow::probeRooms(const QJsonArray& rooms)
+{
+	for (const QJsonValue& value : rooms) {
+		if (!value.isObject())
+			continue;
+		const RoomInfo room = RoomInfo::fromJson(value.toObject());
+		if (room.roomId.isEmpty() || room.host.isEmpty() || room.port == 0
+			|| roomPingSockets_.contains(room.roomId))
+			continue;
+
+		auto* socket = new QTcpSocket(this);
+		RoomPingProbe probe;
+		probe.roomId = room.roomId;
+		probe.requestId = nextRequestId();
+		roomPingProbes_.insert(socket, probe);
+		roomPingSockets_.insert(room.roomId, socket);
+		connect(socket, &QTcpSocket::connected, this, [this, socket] {
+			auto it = roomPingProbes_.find(socket);
+			if (it == roomPingProbes_.end())
+				return;
+			it->elapsed.start();
+			if (!sendMessage(socket, makeMessage(QStringLiteral("Ping"),
+				{{QStringLiteral("requestId"), it->requestId}})))
+				finishRoomPingProbe(socket);
+		});
+		connect(socket, &QTcpSocket::readyRead, this, [this, socket] {
+			auto it = roomPingProbes_.find(socket);
+			if (it == roomPingProbes_.end())
+				return;
+			QString error;
+			const QList<QJsonObject> messages = takeMessages(&it->buffer, socket->readAll(), &error);
+			if (!error.isEmpty()) {
+				finishRoomPingProbe(socket);
+				return;
+			}
+			for (const QJsonObject& message : messages) {
+				if (message.value(QStringLiteral("type")).toString() == QStringLiteral("Pong")
+					&& message.value(QStringLiteral("requestId")).toString() == it->requestId) {
+					finishRoomPingProbe(socket, static_cast<int>(it->elapsed.elapsed()));
+					return;
+				}
+			}
+		});
+		connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
+			finishRoomPingProbe(socket);
+		});
+		QTimer::singleShot(3000, socket, [this, socket] {
+			finishRoomPingProbe(socket);
+		});
+		socket->connectToHost(room.host, room.port);
+	}
+}
+
+void MainWindow::finishRoomPingProbe(QTcpSocket* socket, int pingMs)
+{
+	auto it = roomPingProbes_.find(socket);
+	if (it == roomPingProbes_.end())
+		return;
+	const QString roomId = it->roomId;
+	if (roomPingSockets_.value(roomId) == socket)
+		roomPingSockets_.remove(roomId);
+	roomPingProbes_.erase(it);
+	if (pingMs >= 0)
+		roomPingMs_.insert(roomId, pingMs);
+	else
+		roomPingMs_.remove(roomId);
+	if (roomLatencyIndicators_.contains(roomId))
+		roomLatencyIndicators_.value(roomId)->setPing(pingMs);
+	socket->abort();
+	socket->deleteLater();
+}
+
+void MainWindow::sendActivePing()
+{
+	if (!inRoom_ || gameSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	if (!pendingActivePingRequestId_.isEmpty()) {
+		if (activePingElapsed_.elapsed() < 5000)
+			return;
+		pendingActivePingRequestId_.clear();
+		activePingMs_ = -1;
+		activeLatencyIndicator_->setPing(-1);
+	}
+	pendingActivePingRequestId_ = nextRequestId();
+	activePingElapsed_.start();
+	sendGameMessage(makeMessage(QStringLiteral("Ping"),
+		{{QStringLiteral("requestId"), pendingActivePingRequestId_}}));
 }
 
 void MainWindow::updateRoomsRefreshStatus()
@@ -921,6 +1128,10 @@ void MainWindow::joinSelectedRoom()
 	pendingRoleChangeRequestId_.clear();
 	gameBuffer_.clear();
 	inRoom_ = false;
+	activePingTimer_.stop();
+	pendingActivePingRequestId_.clear();
+	activePingMs_ = -1;
+	activeLatencyIndicator_->setPing(-1);
 	isSpectator_ = false;
 	roundActive_ = false;
 	leavingRoom_ = false;
@@ -937,6 +1148,10 @@ void MainWindow::leaveRoom()
 		gameSocket_.disconnectFromHost();
 	}
 	inRoom_ = false;
+	activePingTimer_.stop();
+	pendingActivePingRequestId_.clear();
+	activePingMs_ = -1;
+	activeLatencyIndicator_->setPing(-1);
 	isSpectator_ = false;
 	pendingRoleChangeRequestId_.clear();
 	roundActive_ = false;

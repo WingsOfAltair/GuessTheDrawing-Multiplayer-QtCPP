@@ -25,6 +25,7 @@ class QWidget;
 namespace gtd {
 
 class DrawingCanvas;
+class LatencyIndicator;
 
 class MainWindow final : public QMainWindow {
 	Q_OBJECT
@@ -53,6 +54,9 @@ private:
 	void updateRoster(const QJsonArray& players, const QJsonObject& room);
 	void updateQueueStatus(const QJsonObject& queue);
 	void updateRoomsRefreshStatus();
+	void probeRooms(const QJsonArray& rooms);
+	void finishRoomPingProbe(QTcpSocket* socket, int pingMs = -1);
+	void sendActivePing();
 	void requestLeaderboards();
 	void populateLeaderboard(QTableWidget* table, const QJsonArray& players, bool drawingPoints);
 	void saveProfile();
@@ -69,7 +73,19 @@ private:
 	QByteArray gameBuffer_;
 	QTimer roomRefreshTimer_;
 	QTimer refreshAgeTimer_;
+	QTimer activePingTimer_;
 	QElapsedTimer roomsRefreshElapsed_;
+	QElapsedTimer activePingElapsed_;
+	struct RoomPingProbe {
+		QString roomId;
+		QString requestId;
+		QByteArray buffer;
+		QElapsedTimer elapsed;
+	};
+	QHash<QTcpSocket*, RoomPingProbe> roomPingProbes_;
+	QHash<QString, QTcpSocket*> roomPingSockets_;
+	QHash<QString, int> roomPingMs_;
+	QHash<QString, LatencyIndicator*> roomLatencyIndicators_;
 	QStackedWidget* pages_ = nullptr;
 	QWidget* loginPage_ = nullptr;
 	QWidget* lobbyPage_ = nullptr;
@@ -82,6 +98,7 @@ private:
 	QLabel* loginConnectionStatusLabel_ = nullptr;
 	QLabel* connectionStatusLabel_ = nullptr;
 	QTableWidget* roomsTable_ = nullptr;
+	LatencyIndicator* activeLatencyIndicator_ = nullptr;
 	QTableWidget* guessingLeaderboardTable_ = nullptr;
 	QTableWidget* drawingLeaderboardTable_ = nullptr;
 	QComboBox* countryCombo_ = nullptr;
@@ -125,11 +142,13 @@ private:
 	QString pendingAuthRequestId_;
 	QString pendingJoinRequestId_;
 	QString pendingRoleChangeRequestId_;
+	QString pendingActivePingRequestId_;
 	QString pendingRoomId_;
 	RoomInfo joiningRoom_;
 	QHash<QString, RoomInfo> roomsById_;
 	quint64 requestCounter_ = 1;
 	int secondsRemaining_ = 0;
+	int activePingMs_ = -1;
 	bool roundActive_ = false;
 	bool inRoom_ = false;
 	bool isSpectator_ = false;
