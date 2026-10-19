@@ -54,6 +54,7 @@ private:
 	void joinSelectedRoom();
 	void leaveRoom();
 	void sendGameMessage(const QJsonObject& message);
+	void flushPendingCanvasOperations();
 	void sendGuess();
 	void sendRoomChat();
 	void startVoiceInput();
@@ -90,6 +91,8 @@ private:
 	QTimer roomRefreshTimer_;
 	QTimer refreshAgeTimer_;
 	QTimer activePingTimer_;
+	QTimer canvasOperationFlushTimer_;
+	QHash<QString, QJsonObject> pendingCanvasOperations_;
 	QAudioSource* voiceInput_ = nullptr;
 	QIODevice* voiceInputDevice_ = nullptr;
 	QHash<QString, QAudioSink*> voiceOutputs_;

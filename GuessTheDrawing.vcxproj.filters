@@ -21,6 +21,7 @@
     <None Include="README.md" />
     <None Include=".github\copilot-instructions.md" />
     <None Include=".gitignore" />
+    <None Include="dictionary" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shared\models.h">

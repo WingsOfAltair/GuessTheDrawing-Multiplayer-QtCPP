@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace gtd {
 
@@ -900,6 +901,8 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	});
 	connect(&gameSocket_, &QTcpSocket::readyRead, this, [this] { readGameServer(); });
 	connect(&gameSocket_, &QTcpSocket::disconnected, this, [this] {
+		canvasOperationFlushTimer_.stop();
+		pendingCanvasOperations_.clear();
 		activePingTimer_.stop();
 		stopVoiceInput();
 		clearVoiceOutputs();
@@ -921,6 +924,10 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	});
 	activePingTimer_.setInterval(2000);
 	connect(&activePingTimer_, &QTimer::timeout, this, [this] { sendActivePing(); });
+	canvasOperationFlushTimer_.setSingleShot(true);
+	canvasOperationFlushTimer_.setInterval(25);
+	connect(&canvasOperationFlushTimer_, &QTimer::timeout, this,
+		[this] { flushPendingCanvasOperations(); });
 	voiceOutputFlushTimer_.setInterval(5);
 	connect(&voiceOutputFlushTimer_, &QTimer::timeout, this, [this] { flushVoiceOutputs(); });
 
@@ -1689,6 +1696,17 @@ QWidget* MainWindow::createGamePage()
 	layout->addLayout(body, 1);
 
 	connect(canvas_, &DrawingCanvas::operationGenerated, this, [this](const QJsonObject& operation) {
+		if (operation.value(QStringLiteral("action")).toString() == QStringLiteral("object_upsert")) {
+			const QString objectId = operation.value(QStringLiteral("object")).toObject()
+				.value(QStringLiteral("id")).toString();
+			if (!objectId.isEmpty()) {
+				pendingCanvasOperations_.insert(objectId, operation);
+				if (!canvasOperationFlushTimer_.isActive())
+					canvasOperationFlushTimer_.start();
+				return;
+			}
+		}
+		flushPendingCanvasOperations();
 		sendGameMessage(makeMessage(QStringLiteral("CanvasOperation"),
 			{{QStringLiteral("operation"), operation}}));
 	});
@@ -2435,6 +2453,7 @@ void MainWindow::joinSelectedRoom()
 	leavingRoom_ = false;
 		setLocalizedFormattedText(connectionStatusLabel_, QStringLiteral("Connecting to %1…"),
 			{joiningRoom_.roomName}, languageCode_);
+	flushPendingCanvasOperations();
 	gameSocket_.abort();
 	gameSocket_.connectToHost(joiningRoom_.host, joiningRoom_.port);
 }
@@ -2442,6 +2461,7 @@ void MainWindow::joinSelectedRoom()
 void MainWindow::leaveRoom()
 {
 	if (gameSocket_.state() == QAbstractSocket::ConnectedState) {
+		flushPendingCanvasOperations();
 		leavingRoom_ = true;
 		sendGameMessage(makeMessage(QStringLiteral("LeaveRoom")));
 		gameSocket_.disconnectFromHost();
@@ -2463,6 +2483,16 @@ void MainWindow::leaveRoom()
 void MainWindow::sendGameMessage(const QJsonObject& message)
 {
 	sendMessage(&gameSocket_, message);
+}
+
+void MainWindow::flushPendingCanvasOperations()
+{
+	canvasOperationFlushTimer_.stop();
+	for (const QJsonObject& operation : std::as_const(pendingCanvasOperations_)) {
+		sendGameMessage(makeMessage(QStringLiteral("CanvasOperation"),
+			{{QStringLiteral("operation"), operation}}));
+	}
+	pendingCanvasOperations_.clear();
 }
 
 void MainWindow::sendGuess()
