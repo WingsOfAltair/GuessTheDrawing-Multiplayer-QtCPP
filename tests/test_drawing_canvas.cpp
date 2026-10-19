@@ -254,7 +254,8 @@ private slots:
 
 		colors.clear();
 		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(10, 10));
-		QVERIFY(colors.isEmpty());
+		QCOMPARE(colors.size(), 1);
+		QCOMPARE(colors.first().first().toString(), QStringLiteral("#ffffff"));
 	}
 
 	void multilineTextAllocatesVerticalSpace()
@@ -428,6 +429,39 @@ private slots:
 		canvas.setSelectedLayer(QStringLiteral("layer-b"));
 		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
 		QVERIFY(!operations.isEmpty());
+	}
+
+	void freehandEraserCutsVectorShapeStrokes()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		gtd::CanvasObject shape = rectangleObject(QStringLiteral("shape"), QStringLiteral("layer-a"));
+		shape.color = QStringLiteral("#ff0000");
+		shape.filled = true;
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-a"), QStringLiteral("A"), 0, true, false}.toJson()},
+			QJsonArray{shape.toJson()});
+		canvas.setTool(gtd::DrawingCanvas::Tool::Eraser);
+		canvas.show();
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+
+		const QPoint erasedPoint(qRound(canvas.width() * 0.5), qRound(canvas.height() * 0.4));
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, erasedPoint);
+		QCOMPARE(operations.size(), 1);
+		const QJsonObject upsert = operations.first().first().toJsonObject();
+		QCOMPARE(upsert.value(QStringLiteral("action")).toString(), QStringLiteral("object_upsert"));
+		const QJsonObject replacement = upsert.value(QStringLiteral("object")).toObject();
+		QCOMPARE(replacement.value(QStringLiteral("id")).toString(), QStringLiteral("shape"));
+		QCOMPARE(replacement.value(QStringLiteral("type")).toString(), QStringLiteral("fill"));
+
+		const QImage image = canvas.renderImage();
+		QCOMPARE(image.pixelColor(erasedPoint), QColor(Qt::white));
+		QCOMPARE(image.pixelColor(qRound(canvas.width() * 0.4), qRound(canvas.height() * 0.5)),
+			QColor(QStringLiteral("#ff0000")));
+		QCOMPARE(image.pixelColor(qRound(canvas.width() * 0.5), qRound(canvas.height() * 0.5)),
+			QColor(QStringLiteral("#ff0000")));
 	}
 
 	void objectEraserOnlyChangesSelectedLayer()

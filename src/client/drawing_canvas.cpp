@@ -151,17 +151,30 @@ void DrawingCanvas::eraseFreehandAt(const QPointF& center, qreal radiusPixels)
 	struct ChangedStroke {
 		CanvasObject original;
 		QList<QList<QPointF>> fragments;
+		CanvasObject rasterized;
+		bool isRasterized = false;
+		bool remove = false;
 	};
 	QList<ChangedStroke> changedStrokes;
 	const QPointF centerPixels(center.x() * width(), center.y() * height());
 	for (const CanvasObject& object : objects_) {
-		if ((object.type != QStringLiteral("freehand") && object.type != QStringLiteral("brush")
-			&& object.type != QStringLiteral("airbrush") && object.type != QStringLiteral("curve"))
-			|| object.layerId != activeLayerId_)
+		if (object.layerId != activeLayerId_)
 			continue;
 		const CanvasLayer* layer = findLayer(object.layerId);
 		if (!layer || !layer->visible || layer->locked)
 			continue;
+		if (object.type != QStringLiteral("freehand") && object.type != QStringLiteral("brush")
+			&& object.type != QStringLiteral("airbrush") && object.type != QStringLiteral("curve")) {
+			const qreal margin = radiusPixels
+				+ object.strokeWidth * qMin(width(), height()) / 600.0 + 1.0;
+			if (!objectRect(object).adjusted(-margin, -margin, margin, margin).contains(centerPixels))
+				continue;
+			CanvasObject rasterized = object;
+			bool empty = false;
+			if (eraseRasterObjectAt(&rasterized, center, radiusPixels, &empty))
+				changedStrokes.append({object, {}, rasterized, true, empty});
+			continue;
+		}
 		QList<QPointF> path;
 		path.reserve(object.points.size());
 		for (const QJsonValue& value : object.points) {
@@ -175,9 +188,13 @@ void DrawingCanvas::eraseFreehandAt(const QPointF& center, qreal radiusPixels)
 	}
 
 	for (const ChangedStroke& changed : changedStrokes) {
-		if (changed.fragments.isEmpty()) {
+		if (changed.remove || (!changed.isRasterized && changed.fragments.isEmpty())) {
 			emitOperation({{QStringLiteral("action"), QStringLiteral("object_delete")},
 						   {QStringLiteral("objectId"), changed.original.id}});
+			continue;
+		}
+		if (changed.isRasterized) {
+			emitObjectUpsert(changed.rasterized);
 			continue;
 		}
 		for (qsizetype index = 0; index < changed.fragments.size(); ++index) {
@@ -191,6 +208,107 @@ void DrawingCanvas::eraseFreehandAt(const QPointF& center, qreal radiusPixels)
 			emitObjectUpsert(fragment);
 		}
 	}
+}
+
+bool DrawingCanvas::eraseRasterObjectAt(CanvasObject* object, const QPointF& center,
+										qreal radiusPixels, bool* empty) const
+{
+	if (!object || !empty)
+		return false;
+	QImage image;
+	QRectF bounds;
+	if (object->type == QStringLiteral("fill")) {
+		image = QImage::fromData(QByteArray::fromBase64(object->imageData.toLatin1()), "PNG");
+		bounds = objectRect(*object);
+	} else {
+		const qreal scale = qMin<qreal>(1.0,
+			static_cast<qreal>(MaximumCanvasImageDimension) / qMax(width(), height()));
+		const QSize rasterSize(qMax(1, qRound(width() * scale)), qMax(1, qRound(height() * scale)));
+		image = QImage(rasterSize, QImage::Format_ARGB32_Premultiplied);
+		image.fill(Qt::transparent);
+		QPainter painter(&image);
+		painter.setRenderHint(QPainter::Antialiasing);
+		painter.scale(static_cast<qreal>(rasterSize.width()) / qMax(1, width()),
+			static_cast<qreal>(rasterSize.height()) / qMax(1, height()));
+		paintObject(painter, *object);
+		painter.end();
+		bounds = QRectF(0, 0, width(), height());
+	}
+	if (image.isNull() || bounds.width() <= 0.0 || bounds.height() <= 0.0)
+		return false;
+	image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+	const qreal scaleX = image.width() / bounds.width();
+	const qreal scaleY = image.height() / bounds.height();
+	const QPointF centerInImage((center.x() * width() - bounds.left()) * scaleX,
+		(center.y() * height() - bounds.top()) * scaleY);
+	const qreal radiusX = radiusPixels * scaleX;
+	const qreal radiusY = radiusPixels * scaleY;
+	const QRect affected(qMax(0, qFloor(centerInImage.x() - radiusX)),
+		qMax(0, qFloor(centerInImage.y() - radiusY)),
+		qMin(image.width(), qCeil(centerInImage.x() + radiusX))
+			- qMax(0, qFloor(centerInImage.x() - radiusX)) + 1,
+		qMin(image.height(), qCeil(centerInImage.y() + radiusY))
+			- qMax(0, qFloor(centerInImage.y() - radiusY)) + 1);
+	bool changed = false;
+	for (int y = affected.top(); y <= affected.bottom() && !changed; ++y) {
+		const auto* row = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+		for (int x = affected.left(); x <= affected.right(); ++x) {
+			const qreal dx = (x + 0.5 - centerInImage.x()) / radiusX;
+			const qreal dy = (y + 0.5 - centerInImage.y()) / radiusY;
+			if (dx * dx + dy * dy <= 1.0 && qAlpha(row[x]) > 0) {
+				changed = true;
+				break;
+			}
+		}
+	}
+	if (!changed)
+		return false;
+	QPainter eraser(&image);
+	eraser.setCompositionMode(QPainter::CompositionMode_Clear);
+	eraser.setPen(Qt::NoPen);
+	eraser.setBrush(Qt::black);
+	eraser.drawEllipse(QRectF(centerInImage.x() - radiusX, centerInImage.y() - radiusY,
+		radiusX * 2.0, radiusY * 2.0));
+	eraser.end();
+
+	int left = image.width();
+	int top = image.height();
+	int right = -1;
+	int bottom = -1;
+	for (int y = 0; y < image.height(); ++y) {
+		const auto* row = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+		for (int x = 0; x < image.width(); ++x) {
+			if (qAlpha(row[x]) == 0)
+				continue;
+			left = qMin(left, x);
+			top = qMin(top, y);
+			right = qMax(right, x);
+			bottom = qMax(bottom, y);
+		}
+	}
+	if (right < left || bottom < top) {
+		*empty = true;
+		return true;
+	}
+	const QRect crop(left, top, right - left + 1, bottom - top + 1);
+	QByteArray pngData;
+	QBuffer buffer(&pngData);
+	if (!buffer.open(QIODevice::WriteOnly) || !image.copy(crop).save(&buffer, "PNG"))
+		return false;
+	const QByteArray encoded = pngData.toBase64();
+	if (encoded.size() > MaximumCanvasImageDataLength)
+		return false;
+	object->type = QStringLiteral("fill");
+	object->imageData = QString::fromLatin1(encoded);
+	object->points = QJsonArray{};
+	object->text.clear();
+	object->x = (bounds.left() + crop.left() / scaleX) / qMax(1, width());
+	object->y = (bounds.top() + crop.top() / scaleY) / qMax(1, height());
+	object->width = crop.width() / scaleX / qMax(1, width());
+	object->height = crop.height() / scaleY / qMax(1, height());
+	object->filled = true;
+	*empty = false;
+	return true;
 }
 
 void DrawingCanvas::eraseSweep(const QPointF& from, const QPointF& to)
@@ -353,7 +471,7 @@ void DrawingCanvas::pickColorAt(const QPointF& position)
 		static_cast<qreal>(MaximumCanvasImageDimension) / qMax(width(), height()));
 	const QSize rasterSize(qMax(1, qRound(width() * scale)), qMax(1, qRound(height() * scale)));
 	QImage layerImage(rasterSize, QImage::Format_ARGB32_Premultiplied);
-	layerImage.fill(Qt::transparent);
+	layerImage.fill(Qt::white);
 	QPainter painter(&layerImage);
 	painter.setRenderHint(QPainter::Antialiasing);
 	painter.scale(static_cast<qreal>(rasterSize.width()) / qMax(1, width()),

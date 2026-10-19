@@ -98,6 +98,8 @@ private:
 	void clearHistory();
 	void emitHistoryChanged();
 	void eraseFreehandAt(const QPointF& center, qreal radiusPixels);
+	bool eraseRasterObjectAt(CanvasObject* object, const QPointF& center, qreal radiusPixels,
+							 bool* empty) const;
 	void eraseSweep(const QPointF& from, const QPointF& to);
 	void eraseObjectsAt(const QPointF& position);
 	void paintScene(QPainter& painter) const;
