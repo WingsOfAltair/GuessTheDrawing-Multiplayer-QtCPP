@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QTextStream>
 #include <QTcpSocket>
+#include <QHostAddress>
 
 #include <cstdio>
 
@@ -29,6 +30,7 @@ namespace {
 
 constexpr qint64 ServerTimeoutSeconds = 15;
 constexpr qint64 SessionLifetimeSeconds = 24 * 60 * 60;
+constexpr qsizetype MaximumRoomsPerServer = 128;
 
 bool constantTimeEqual(const QByteArray& left, const QByteArray& right)
 {
@@ -113,6 +115,7 @@ void MasterServer::acceptConnections()
 {
 	while (listener_.hasPendingConnections()) {
 		QTcpSocket* socket = listener_.nextPendingConnection();
+		socket->setReadBufferSize(MaximumFrameBytes);
 		pendingData_.insert(socket, {});
 		connect(socket, &QTcpSocket::readyRead, this, [this, socket] { readSocket(socket); });
 		connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
@@ -333,6 +336,11 @@ void MasterServer::handleServerRegistration(QTcpSocket* socket, const QJsonObjec
 		socket->disconnectFromHost();
 		return;
 	}
+	if (message.value(QStringLiteral("rooms")).toArray().size() > MaximumRoomsPerServer) {
+		sendError(socket, message, QStringLiteral("Game server advertises too many rooms"));
+		socket->disconnectFromHost();
+		return;
+	}
 
 	const QString serverId = message.value(QStringLiteral("serverId")).toString().trimmed();
 	static const QRegularExpression serverIdPattern(QStringLiteral("^[A-Za-z0-9_-]{1,48}$"));
@@ -454,15 +462,37 @@ void MasterServer::updateRegistration(QTcpSocket* socket, const QJsonObject& mes
 	if (!roomsValue.isArray() && initial)
 		return;
 	if (roomsValue.isArray()) {
+		const QJsonArray roomValues = roomsValue.toArray();
+		if (roomValues.size() > MaximumRoomsPerServer)
+			return;
 		QList<RoomInfo> rooms;
 		QSet<QString> roomIds;
 		const QString advertisedHost = message.value(QStringLiteral("host")).toString().trimmed();
-		const QString host = advertisedHost.isEmpty() ? socket->peerAddress().toString() : advertisedHost;
-		for (const QJsonValue& value : roomsValue.toArray()) {
+		QString host = advertisedHost;
+		QHostAddress hostAddress;
+		static const QRegularExpression hostnamePattern(QStringLiteral(
+			"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$"));
+		if (host.isEmpty() || host.size() > 253
+			|| (!hostAddress.setAddress(host) && !hostnamePattern.match(host).hasMatch()))
+			host = socket->peerAddress().toString();
+		static const QRegularExpression roomIdPattern(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
+		for (const QJsonValue& value : roomValues) {
 			if (!value.isObject())
 				continue;
-			RoomInfo room = RoomInfo::fromJson(value.toObject());
-			if (room.roomId.isEmpty() || room.port == 0 || roomIds.contains(room.roomId))
+			const QJsonObject roomObject = value.toObject();
+			const QJsonValue portValue = roomObject.value(QStringLiteral("port"));
+			const int port = portValue.toInt(-1);
+			const QJsonValue maxPlayersValue = roomObject.value(QStringLiteral("maxPlayers"));
+			const int maxPlayers = maxPlayersValue.toInt(-1);
+			const QJsonValue roundSecondsValue = roomObject.value(QStringLiteral("roundSeconds"));
+			const int roundSeconds = roundSecondsValue.toInt(-1);
+			RoomInfo room = RoomInfo::fromJson(roomObject);
+			if (!roomIdPattern.match(room.roomId).hasMatch()
+				|| !isValidSingleLineText(room.roomName, 64)
+				|| !portValue.isDouble() || port < 1 || port > 65535
+				|| !maxPlayersValue.isDouble() || maxPlayers < 2 || maxPlayers > 32
+				|| !roundSecondsValue.isDouble() || roundSeconds < 10 || roundSeconds > 600
+				|| roomIds.contains(room.roomId))
 				continue;
 			room.serverId = serverId;
 			room.host = host;

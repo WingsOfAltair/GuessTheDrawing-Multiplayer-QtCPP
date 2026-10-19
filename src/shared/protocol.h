@@ -11,6 +11,8 @@ namespace gtd {
 
 inline constexpr int ProtocolVersion = 1;
 inline constexpr qsizetype MaximumFrameBytes = 1024 * 1024;
+inline constexpr qsizetype MaximumMessageTypeLength = 64;
+inline constexpr qsizetype MaximumMessagesPerRead = 256;
 
 QByteArray encodeMessage(const QJsonObject& message);
 QJsonObject makeMessage(const QString& type, const QJsonObject& fields = {});

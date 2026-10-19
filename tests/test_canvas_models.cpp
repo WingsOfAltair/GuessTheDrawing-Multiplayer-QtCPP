@@ -58,6 +58,9 @@ private slots:
 	{
 		gtd::CanvasLayer layer{QStringLiteral("layer-a"), QStringLiteral("Visible layer"), 0, true, false};
 		QVERIFY(gtd::isValidCanvasLayer(layer));
+		layer.name = QStringLiteral("Hidden\nLayer");
+		QVERIFY(!gtd::isValidCanvasLayer(layer));
+		layer.name = QStringLiteral("Visible layer");
 		layer.order = gtd::MaximumCanvasLayers;
 		QVERIFY(!gtd::isValidCanvasLayer(layer));
 

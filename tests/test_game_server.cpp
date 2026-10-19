@@ -119,6 +119,17 @@ private slots:
 		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("hello room"))
 			.value(QStringLiteral("roomChat")).toBool());
 
+		const QString oversizedChat(301, QLatin1Char('x'));
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("oversized-chat")},
+			 {QStringLiteral("text"), oversizedChat}})));
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("valid-after-oversized")},
+			 {QStringLiteral("text"), QStringLiteral("valid after oversized input")}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("ChatMessage"),
+			QStringLiteral("valid after oversized input")).isEmpty());
+		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), oversizedChat).isEmpty());
+
 		const QByteArray audio(640, '\x2a');
 		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("VoiceFrame"),
 			{{QStringLiteral("sampleRate"), 16000},

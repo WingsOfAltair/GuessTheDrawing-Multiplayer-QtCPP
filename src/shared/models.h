@@ -87,5 +87,6 @@ struct CanvasObject {
 
 bool isValidCanvasLayer(const CanvasLayer& layer, QString* error = nullptr);
 bool isValidCanvasObject(const CanvasObject& object, QString* error = nullptr);
+bool isValidSingleLineText(const QString& text, qsizetype maximumLength);
 
 }

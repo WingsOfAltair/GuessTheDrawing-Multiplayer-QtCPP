@@ -176,14 +176,25 @@ CanvasObject CanvasObject::fromJson(const QJsonObject& object)
 	return item;
 }
 
+bool isValidSingleLineText(const QString& text, qsizetype maximumLength)
+{
+	if (maximumLength < 1 || text.size() > maximumLength || text.trimmed().isEmpty())
+		return false;
+	for (const QChar character : text) {
+		if (character.category() == QChar::Other_Control)
+			return false;
+	}
+	return true;
+}
+
 bool isValidCanvasLayer(const CanvasLayer& layer, QString* error)
 {
 	if (!validId(layer.id)) {
 		setValidationError(error, QStringLiteral("Invalid layer ID"));
 		return false;
 	}
-	if (layer.name.trimmed().isEmpty() || layer.name.size() > 32) {
-		setValidationError(error, QStringLiteral("Layer names must contain 1-32 characters"));
+	if (!isValidSingleLineText(layer.name, 32)) {
+		setValidationError(error, QStringLiteral("Layer names must contain 1-32 characters without control characters"));
 		return false;
 	}
 	if (layer.order < 0 || layer.order >= MaximumCanvasLayers) {

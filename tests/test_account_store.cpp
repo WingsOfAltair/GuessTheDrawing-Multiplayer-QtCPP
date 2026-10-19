@@ -175,6 +175,28 @@ private slots:
 		QVERIFY(!store.createAccount(QStringLiteral("player"), QStringLiteral("short"),
 									 QStringLiteral("Player"), &error));
 	}
+
+	void validatesTextFieldsAndKeepsSqlLikeTextAsData()
+	{
+		QTemporaryDir directory;
+		gtd::AccountStore store(directory.filePath(QStringLiteral("accounts.sqlite")));
+		QString error;
+		QVERIFY2(store.initialize(&error), qPrintable(error));
+		const QString sqlLikeName = QStringLiteral("' OR 1=1 --");
+		QVERIFY2(store.createAccount(QStringLiteral("safeplayer"), QStringLiteral("password123"),
+			sqlLikeName, &error), qPrintable(error));
+		const auto profile = store.profile(QStringLiteral("safeplayer"), &error);
+		QVERIFY2(profile.has_value(), qPrintable(error));
+		QCOMPARE(profile->displayName, sqlLikeName);
+
+		QVERIFY(!store.createAccount(QStringLiteral("longdisplay"), QStringLiteral("password123"),
+			QString(33, QLatin1Char('x')), &error));
+		QVERIFY(!store.createAccount(QStringLiteral("controlname"), QStringLiteral("password123"),
+			QStringLiteral("First\nSecond"), &error));
+		QVERIFY(!store.updateProfile(QStringLiteral("safeplayer"), QStringLiteral("First\nSecond"),
+			QString(), QString(), QString(), &error));
+		QVERIFY(!store.authenticate(QStringLiteral("safeplayer"), QString(129, QLatin1Char('x')), &error));
+	}
 };
 
 QTEST_GUILESS_MAIN(AccountStoreTests)

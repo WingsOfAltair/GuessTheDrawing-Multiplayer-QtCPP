@@ -22,6 +22,14 @@ QJsonObject makeMessage(const QString& type, const QJsonObject& fields)
 
 bool parseMessage(const QByteArray& frame, QJsonObject* message, QString* error)
 {
+	if (error)
+		error->clear();
+	if (frame.size() > MaximumFrameBytes) {
+		if (error)
+			*error = QStringLiteral("Message exceeds the maximum frame size");
+		return false;
+	}
+
 	QJsonParseError parseError;
 	const QJsonDocument document = QJsonDocument::fromJson(frame, &parseError);
 	if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
@@ -31,11 +39,32 @@ bool parseMessage(const QByteArray& frame, QJsonObject* message, QString* error)
 	}
 
 	const QJsonObject object = document.object();
+	const QString type = object.value(QStringLiteral("type")).toString();
 	if (object.value(QStringLiteral("version")).toInt(-1) != ProtocolVersion
 		|| !object.value(QStringLiteral("type")).isString()
-		|| object.value(QStringLiteral("type")).toString().isEmpty()) {
+		|| type.isEmpty() || type.size() > MaximumMessageTypeLength) {
 		if (error)
-			*error = QStringLiteral("Unsupported protocol version or missing message type");
+			*error = QStringLiteral("Unsupported protocol version or invalid message type");
+		return false;
+	}
+	auto validStringField = [&object](const QString& key, qsizetype maximumLength) {
+		const QJsonValue value = object.value(key);
+		return value.isUndefined() || (value.isString() && value.toString().size() <= maximumLength);
+	};
+	if (!validStringField(QStringLiteral("requestId"), 128)
+		|| !validStringField(QStringLiteral("username"), 24)
+		|| !validStringField(QStringLiteral("password"), 128)
+		|| !validStringField(QStringLiteral("currentPassword"), 128)
+		|| !validStringField(QStringLiteral("newPassword"), 128)
+		|| !validStringField(QStringLiteral("displayName"), 32)
+		|| !validStringField(QStringLiteral("countryCode"), 6)
+		|| !validStringField(QStringLiteral("authToken"), 512)
+		|| !validStringField(QStringLiteral("text"), 4096)
+		|| !validStringField(QStringLiteral("serverId"), 48)
+		|| !validStringField(QStringLiteral("roomId"), 64)
+		|| !validStringField(QStringLiteral("host"), 253)) {
+		if (error)
+			*error = QStringLiteral("Invalid or oversized message field");
 		return false;
 	}
 
@@ -49,43 +78,46 @@ QList<QJsonObject> takeMessages(QByteArray* pending, const QByteArray& incoming,
 	QList<QJsonObject> messages;
 	if (!pending)
 		return messages;
-
-	*pending += incoming;
-	if (pending->size() > MaximumFrameBytes && !pending->contains('\n')) {
-		if (error)
-			*error = QStringLiteral("Message exceeds the maximum frame size");
-		pending->clear();
-		return messages;
-	}
-
-	while (true) {
-		const qsizetype newline = pending->indexOf('\n');
-		if (newline < 0)
-			break;
-		if (newline > MaximumFrameBytes) {
-			if (error)
-				*error = QStringLiteral("Message exceeds the maximum frame size");
-			pending->clear();
-			return {};
-		}
-		const QByteArray frame = pending->left(newline).trimmed();
-		pending->remove(0, newline + 1);
-		if (frame.isEmpty())
-			continue;
-
-		QJsonObject message;
-		if (!parseMessage(frame, &message, error)) {
-			pending->clear();
-			return {};
-		}
-		messages.append(message);
-	}
-
+	if (error)
+		error->clear();
 	if (pending->size() > MaximumFrameBytes) {
 		if (error)
 			*error = QStringLiteral("Message exceeds the maximum frame size");
 		pending->clear();
 		return {};
+	}
+
+	qsizetype offset = 0;
+	while (offset < incoming.size()) {
+		const qsizetype newline = incoming.indexOf('\n', offset);
+		const qsizetype segmentEnd = newline < 0 ? incoming.size() : newline;
+		const qsizetype segmentSize = segmentEnd - offset;
+		if (pending->size() + segmentSize > MaximumFrameBytes) {
+			if (error)
+				*error = QStringLiteral("Message exceeds the maximum frame size");
+			pending->clear();
+			return {};
+		}
+		if (segmentSize > 0)
+			pending->append(incoming.constData() + offset, segmentSize);
+		if (newline < 0)
+			break;
+
+		const QByteArray frame = pending->trimmed();
+		pending->clear();
+		offset = newline + 1;
+		if (frame.isEmpty())
+			continue;
+		if (messages.size() >= MaximumMessagesPerRead) {
+			if (error)
+				*error = QStringLiteral("Too many messages in one read");
+			return {};
+		}
+
+		QJsonObject message;
+		if (!parseMessage(frame, &message, error))
+			return {};
+		messages.append(message);
 	}
 	return messages;
 }

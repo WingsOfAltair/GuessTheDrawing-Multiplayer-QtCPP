@@ -848,6 +848,8 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	  masterHost_(std::move(masterHost)),
 	  masterPort_(masterPort)
 {
+	masterSocket_.setReadBufferSize(MaximumFrameBytes);
+	gameSocket_.setReadBufferSize(MaximumFrameBytes);
 	applyLanguage(config_.stringValue(QStringLiteral("client"), QStringLiteral("language")));
 	applyTheme(config_.stringValue(QStringLiteral("client"), QStringLiteral("theme")));
 	setWindowTitle(QStringLiteral("Guess The Drawing"));
@@ -2157,6 +2159,7 @@ void MainWindow::probeRooms(const QJsonArray& rooms)
 			continue;
 
 		auto* socket = new QTcpSocket(this);
+		socket->setReadBufferSize(MaximumFrameBytes);
 		RoomPingProbe probe;
 		probe.roomId = room.roomId;
 		probe.requestId = nextRequestId();

@@ -89,6 +89,7 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	resetCanvas();
 
 	connect(&listener_, &QTcpServer::newConnection, this, [this] { acceptConnections(); });
+	masterSocket_.setReadBufferSize(MaximumFrameBytes);
 	connect(&masterSocket_, &QTcpSocket::connected, this, [this] {
 		reconnectTimer_.stop();
 		masterRegistered_ = false;
@@ -180,6 +181,7 @@ void GameServer::acceptConnections()
 {
 	while (listener_.hasPendingConnections()) {
 		QTcpSocket* socket = listener_.nextPendingConnection();
+		socket->setReadBufferSize(MaximumFrameBytes);
 		playerBuffers_.insert(socket, {});
 		connect(socket, &QTcpSocket::readyRead, this, [this, socket] { readPlayer(socket); });
 		connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
@@ -240,8 +242,8 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 				{{QStringLiteral("message"), QStringLiteral("The drawer cannot send chat during the round")}}));
 			return;
 		}
-		const QString text = message.value(QStringLiteral("text")).toString().trimmed().left(300);
-		if (player == players_.cend() || text.isEmpty())
+		const QString text = message.value(QStringLiteral("text")).toString().trimmed();
+		if (player == players_.cend() || !isValidSingleLineText(text, 300))
 			return;
 		broadcast(makeMessage(QStringLiteral("ChatMessage"),
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
@@ -1066,8 +1068,8 @@ void GameServer::sendGuess(const QString& username, const QString& rawText)
 	if (!roundActive_ || guesser == players_.end() || guesser->spectator
 		|| username == currentDrawer_ || guesser->guessed)
 		return;
-	const QString text = rawText.trimmed().left(100);
-	if (text.isEmpty())
+	const QString text = rawText.trimmed();
+	if (!isValidSingleLineText(text, 100))
 		return;
 	if (text.compare(currentWord_, Qt::CaseInsensitive) != 0) {
 		broadcast(makeMessage(QStringLiteral("ChatMessage"),

@@ -186,9 +186,9 @@ bool AccountStore::createAccount(const QString& username, const QString& passwor
 		setError(error, QStringLiteral("Password must be 8-128 characters"));
 		return false;
 	}
-	const QString safeDisplayName = displayName.trimmed().left(32);
-	if (safeDisplayName.isEmpty()) {
-		setError(error, QStringLiteral("Display name cannot be empty"));
+	const QString safeDisplayName = displayName.trimmed();
+	if (!isValidSingleLineText(safeDisplayName, 32)) {
+		setError(error, QStringLiteral("Display name must be 1-32 characters without control characters"));
 		return false;
 	}
 
@@ -215,6 +215,11 @@ bool AccountStore::createAccount(const QString& username, const QString& passwor
 std::optional<PlayerProfile> AccountStore::authenticate(const QString& username, const QString& password,
 														QString* error)
 {
+	static const QRegularExpression usernamePattern(QStringLiteral("^[a-zA-Z0-9_]{3,24}$"));
+	if (!usernamePattern.match(username.trimmed()).hasMatch() || password.size() < 8 || password.size() > 128) {
+		setError(error, QStringLiteral("Invalid username or password"));
+		return std::nullopt;
+	}
 	const QString normalized = normalizedUsername(username);
 	QSqlQuery query(database_);
 	query.prepare(QStringLiteral("SELECT password_salt, password_hash FROM accounts WHERE username = :username"));
@@ -275,9 +280,9 @@ bool AccountStore::updateCountry(const QString& username, const QString& country
 bool AccountStore::updateProfile(const QString& username, const QString& displayName, const QString& countryCode,
 	const QString& currentPassword, const QString& newPassword, QString* error)
 {
-	const QString safeDisplayName = displayName.trimmed().left(32);
-	if (safeDisplayName.isEmpty()) {
-		setError(error, QStringLiteral("Nickname cannot be empty"));
+	const QString safeDisplayName = displayName.trimmed();
+	if (!isValidSingleLineText(safeDisplayName, 32)) {
+		setError(error, QStringLiteral("Nickname must be 1-32 characters without control characters"));
 		return false;
 	}
 	const QString normalizedCountryCode = countryCode.trimmed().toUpper();
@@ -296,6 +301,10 @@ bool AccountStore::updateProfile(const QString& username, const QString& display
 	}
 	if (!newPassword.isEmpty() && (newPassword.size() < 8 || newPassword.size() > 128)) {
 		setError(error, QStringLiteral("New password must be 8-128 characters"));
+		return false;
+	}
+	if (!currentPassword.isEmpty() && (currentPassword.size() < 8 || currentPassword.size() > 128)) {
+		setError(error, QStringLiteral("Current password must be 8-128 characters"));
 		return false;
 	}
 	if (newPassword.isEmpty() != currentPassword.isEmpty()) {
