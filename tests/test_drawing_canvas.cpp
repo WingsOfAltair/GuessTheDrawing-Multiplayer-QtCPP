@@ -226,6 +226,64 @@ private slots:
 		QCOMPARE(localImage.pixelColor(50, 50), remoteImage.pixelColor(50, 50));
 	}
 
+	void undoRedoTracksActionsAcrossLayers()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Brush);
+		canvas.setCurrentColor(QStringLiteral("#1166dd"));
+		const gtd::CanvasLayer baseLayer{QStringLiteral("layer-default"), QStringLiteral("Background"), 0, true, false};
+		canvas.setScene(QJsonArray{baseLayer.toJson()}, {});
+		canvas.show();
+		QCoreApplication::processEvents();
+		auto drawStroke = [&canvas](int y) {
+			QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, y));
+			QMouseEvent move(QEvent::MouseMove, QPointF(80, y), Qt::NoButton,
+				Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(&canvas, &move);
+			QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, y));
+		};
+		drawStroke(30);
+		QVERIFY(canvas.canUndo());
+
+		canvas.addLayer(QStringLiteral("Overlay"));
+		const QString overlayLayerId = canvas.selectedLayerId();
+		QVERIFY(canvas.canUndo());
+		QVERIFY(!canvas.canRedo());
+		canvas.setCurrentColor(QStringLiteral("#dd3311"));
+		drawStroke(70);
+		QVERIFY(canvas.canUndo());
+
+		canvas.undo();
+		QCOMPARE(canvas.layers().size(), 2);
+		QCOMPARE(canvas.selectedLayerId(), overlayLayerId);
+		QImage image = canvas.renderImage();
+		QVERIFY(image.pixelColor(50, 30) != QColor(Qt::white));
+		QCOMPARE(image.pixelColor(50, 70), QColor(Qt::white));
+
+		canvas.undo();
+		QCOMPARE(canvas.layers().size(), 1);
+		QCOMPARE(canvas.selectedLayerId(), baseLayer.id);
+		image = canvas.renderImage();
+		QVERIFY(image.pixelColor(50, 30) != QColor(Qt::white));
+
+		canvas.undo();
+		image = canvas.renderImage();
+		QCOMPARE(image.pixelColor(50, 30), QColor(Qt::white));
+		QVERIFY(canvas.canRedo());
+
+		canvas.redo();
+		QVERIFY(canvas.renderImage().pixelColor(50, 30) != QColor(Qt::white));
+		canvas.redo();
+		QCOMPARE(canvas.layers().size(), 2);
+		QCOMPARE(canvas.selectedLayerId(), overlayLayerId);
+		canvas.redo();
+		QVERIFY(canvas.renderImage().pixelColor(50, 70) != QColor(Qt::white));
+		QVERIFY(!canvas.canRedo());
+	}
+
 	void pickColorSamplesOnlyTheSelectedLayer()
 	{
 		gtd::DrawingCanvas canvas;

@@ -69,9 +69,17 @@ private:
 		bool exists = false;
 		CanvasObject object;
 	};
+	struct HistoryLayerState {
+		bool exists = false;
+		CanvasLayer layer;
+	};
 	struct HistoryEntry {
 		QHash<QString, HistoryObjectState> before;
 		QHash<QString, HistoryObjectState> after;
+		QHash<QString, HistoryLayerState> beforeLayers;
+		QHash<QString, HistoryLayerState> afterLayers;
+		QString beforeActiveLayerId;
+		QString afterActiveLayerId;
 	};
 
 	QPointF normalizedPoint(const QPointF& position) const;
@@ -94,7 +102,12 @@ private:
 	void endHistoryTransaction();
 	void cancelHistoryTransaction();
 	void recordHistoryObject(const QString& objectId);
+	void recordHistoryLayer(const QString& layerId);
+	void recordHistoryOperation(const QJsonObject& operation);
 	void restoreHistoryObjects(const QHash<QString, HistoryObjectState>& objects);
+	void restoreHistoryEntry(const QHash<QString, HistoryObjectState>& objects,
+						 const QHash<QString, HistoryLayerState>& layers,
+						 const QString& activeLayerId);
 	void clearHistory();
 	void emitHistoryChanged();
 	void eraseFreehandAt(const QPointF& center, qreal radiusPixels);
@@ -112,6 +125,8 @@ private:
 	QList<HistoryEntry> undoHistory_;
 	QList<HistoryEntry> redoHistory_;
 	QHash<QString, HistoryObjectState> pendingHistoryBefore_;
+	QHash<QString, HistoryLayerState> pendingHistoryLayersBefore_;
+	QString pendingHistoryActiveLayerBefore_;
 	CanvasObject previewObject_;
 	CanvasObject originalObject_;
 	QString activeLayerId_;

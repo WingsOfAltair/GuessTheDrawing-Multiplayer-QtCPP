@@ -526,6 +526,8 @@ void DrawingCanvas::beginHistoryTransaction()
 	if (historyTransactionActive_)
 		return;
 	pendingHistoryBefore_.clear();
+	pendingHistoryLayersBefore_.clear();
+	pendingHistoryActiveLayerBefore_ = activeLayerId_;
 	historyTransactionActive_ = true;
 }
 
@@ -539,6 +541,46 @@ void DrawingCanvas::recordHistoryObject(const QString& objectId)
 		state.object = *object;
 	}
 	pendingHistoryBefore_.insert(objectId, state);
+}
+
+void DrawingCanvas::recordHistoryLayer(const QString& layerId)
+{
+	if (!historyTransactionActive_ || pendingHistoryLayersBefore_.contains(layerId))
+		return;
+	HistoryLayerState state;
+	if (const CanvasLayer* layer = findLayer(layerId)) {
+		state.exists = true;
+		state.layer = *layer;
+	}
+	pendingHistoryLayersBefore_.insert(layerId, state);
+}
+
+void DrawingCanvas::recordHistoryOperation(const QJsonObject& operation)
+{
+	const QString action = operation.value(QStringLiteral("action")).toString();
+	if (action == QStringLiteral("clear")) {
+		for (const CanvasObject& object : objects_)
+			recordHistoryObject(object.id);
+	} else if (action == QStringLiteral("clear_layer")) {
+		const QString layerId = operation.value(QStringLiteral("layerId")).toString();
+		for (const CanvasObject& object : objects_) {
+			if (object.layerId == layerId)
+				recordHistoryObject(object.id);
+		}
+	} else if (action == QStringLiteral("layer_upsert")) {
+		recordHistoryLayer(operation.value(QStringLiteral("layer")).toObject()
+			.value(QStringLiteral("id")).toString());
+	} else if (action == QStringLiteral("layer_delete")) {
+		const QString layerId = operation.value(QStringLiteral("layerId")).toString();
+		recordHistoryLayer(layerId);
+		for (const CanvasObject& object : objects_) {
+			if (object.layerId == layerId)
+				recordHistoryObject(object.id);
+		}
+	} else if (action == QStringLiteral("layer_reorder")) {
+		for (const CanvasLayer& layer : layers_)
+			recordHistoryLayer(layer.id);
+	}
 }
 
 void DrawingCanvas::endHistoryTransaction()
@@ -560,8 +602,29 @@ void DrawingCanvas::endHistoryTransaction()
 		entry.before.insert(iterator.key(), before);
 		entry.after.insert(iterator.key(), after);
 	}
+	for (auto iterator = pendingHistoryLayersBefore_.cbegin();
+		 iterator != pendingHistoryLayersBefore_.cend(); ++iterator) {
+		HistoryLayerState after;
+		if (const CanvasLayer* layer = findLayer(iterator.key())) {
+			after.exists = true;
+			after.layer = *layer;
+		}
+		const HistoryLayerState& before = iterator.value();
+		if (before.exists == after.exists
+			&& (!before.exists || before.layer.toJson() == after.layer.toJson()))
+			continue;
+		entry.beforeLayers.insert(iterator.key(), before);
+		entry.afterLayers.insert(iterator.key(), after);
+	}
+	if (pendingHistoryActiveLayerBefore_ != activeLayerId_) {
+		entry.beforeActiveLayerId = pendingHistoryActiveLayerBefore_;
+		entry.afterActiveLayerId = activeLayerId_;
+	}
 	pendingHistoryBefore_.clear();
-	if (entry.before.isEmpty())
+	pendingHistoryLayersBefore_.clear();
+	pendingHistoryActiveLayerBefore_.clear();
+	if (entry.before.isEmpty() && entry.beforeLayers.isEmpty()
+		&& entry.beforeActiveLayerId.isEmpty())
 		return;
 	undoHistory_.append(entry);
 	if (undoHistory_.size() > 50)
@@ -574,6 +637,8 @@ void DrawingCanvas::cancelHistoryTransaction()
 {
 	historyTransactionActive_ = false;
 	pendingHistoryBefore_.clear();
+	pendingHistoryLayersBefore_.clear();
+	pendingHistoryActiveLayerBefore_.clear();
 }
 
 void DrawingCanvas::restoreHistoryObjects(const QHash<QString, HistoryObjectState>& target)
@@ -592,13 +657,50 @@ void DrawingCanvas::restoreHistoryObjects(const QHash<QString, HistoryObjectStat
 	}
 }
 
+void DrawingCanvas::restoreHistoryEntry(const QHash<QString, HistoryObjectState>& objects,
+										   const QHash<QString, HistoryLayerState>& layers,
+										   const QString& activeLayerId)
+{
+	QStringList layerIds = layers.keys();
+	std::sort(layerIds.begin(), layerIds.end(), [&layers](const QString& left, const QString& right) {
+		const HistoryLayerState& leftState = layers.value(left);
+		const HistoryLayerState& rightState = layers.value(right);
+		if (leftState.exists != rightState.exists)
+			return leftState.exists;
+		if (!leftState.exists)
+			return left < right;
+		if (leftState.layer.order != rightState.layer.order)
+			return leftState.layer.order < rightState.layer.order;
+		return left < right;
+	});
+	for (const QString& id : layerIds) {
+		const HistoryLayerState& state = layers.value(id);
+		const CanvasLayer* current = findLayer(id);
+		if (state.exists && (!current || current->toJson() != state.layer.toJson()))
+			emitLayerUpsert(state.layer);
+	}
+	restoreHistoryObjects(objects);
+	for (const QString& id : layerIds) {
+		const HistoryLayerState& state = layers.value(id);
+		if (!state.exists && findLayer(id)) {
+			emitOperation({{QStringLiteral("action"), QStringLiteral("layer_delete")},
+				{QStringLiteral("layerId"), id}});
+		}
+	}
+	if (!activeLayerId.isEmpty() && activeLayerId_ != activeLayerId && findLayer(activeLayerId)) {
+		activeLayerId_ = activeLayerId;
+		emit selectedLayerChanged(activeLayerId_);
+		update();
+	}
+}
+
 void DrawingCanvas::undo()
 {
 	if (!drawingAllowed_ || undoHistory_.isEmpty())
 		return;
 	const HistoryEntry entry = undoHistory_.takeLast();
 	historyReplay_ = true;
-	restoreHistoryObjects(entry.before);
+	restoreHistoryEntry(entry.before, entry.beforeLayers, entry.beforeActiveLayerId);
 	historyReplay_ = false;
 	redoHistory_.append(entry);
 	emitHistoryChanged();
@@ -610,7 +712,7 @@ void DrawingCanvas::redo()
 		return;
 	const HistoryEntry entry = redoHistory_.takeLast();
 	historyReplay_ = true;
-	restoreHistoryObjects(entry.after);
+	restoreHistoryEntry(entry.after, entry.afterLayers, entry.afterActiveLayerId);
 	historyReplay_ = false;
 	undoHistory_.append(entry);
 	emitHistoryChanged();
@@ -673,9 +775,6 @@ void DrawingCanvas::setScene(const QJsonArray& layers, const QJsonArray& objects
 void DrawingCanvas::applyOperation(const QJsonObject& operation)
 {
 	const QString action = operation.value(QStringLiteral("action")).toString();
-	if (!historyReplay_ && action != QStringLiteral("object_upsert")
-		&& action != QStringLiteral("object_delete"))
-		clearHistory();
 	if (action == QStringLiteral("clear")) {
 		objects_.clear();
 		selectedObjectId_.clear();
@@ -819,9 +918,11 @@ void DrawingCanvas::addLayer(const QString& name)
 	if (!drawingAllowed_ || layers_.size() >= MaximumCanvasLayers || name.trimmed().isEmpty())
 		return;
 	CanvasLayer layer{newId(), name.trimmed().left(32), static_cast<int>(layers_.size()), true, false};
+	beginHistoryTransaction();
 	emitLayerUpsert(layer);
 	activeLayerId_ = layer.id;
 	emit selectedLayerChanged(activeLayerId_);
+	endHistoryTransaction();
 }
 
 void DrawingCanvas::deleteSelectedLayer()
@@ -958,30 +1059,23 @@ void DrawingCanvas::emitOperation(const QJsonObject& operation)
 {
 	if (!historyReplay_) {
 		const QString action = operation.value(QStringLiteral("action")).toString();
+		const bool ownTransaction = !historyTransactionActive_;
+		if (ownTransaction)
+			beginHistoryTransaction();
 		if (action == QStringLiteral("object_upsert")) {
 			const CanvasObject object = CanvasObject::fromJson(operation.value(QStringLiteral("object")).toObject());
-			const bool ownTransaction = !historyTransactionActive_;
-			if (ownTransaction)
-				beginHistoryTransaction();
 			recordHistoryObject(object.id);
-			applyOperation(operation);
-			emit operationGenerated(operation);
-			if (ownTransaction)
-				endHistoryTransaction();
-			return;
-		}
-		if (action == QStringLiteral("object_delete")) {
+		} else if (action == QStringLiteral("object_delete")) {
 			const QString objectId = operation.value(QStringLiteral("objectId")).toString();
-			const bool ownTransaction = !historyTransactionActive_;
-			if (ownTransaction)
-				beginHistoryTransaction();
 			recordHistoryObject(objectId);
-			applyOperation(operation);
-			emit operationGenerated(operation);
-			if (ownTransaction)
-				endHistoryTransaction();
-			return;
+		} else {
+			recordHistoryOperation(operation);
 		}
+		applyOperation(operation);
+		emit operationGenerated(operation);
+		if (ownTransaction)
+			endHistoryTransaction();
+		return;
 	}
 	applyOperation(operation);
 	emit operationGenerated(operation);
