@@ -25,6 +25,25 @@ private slots:
 		QTest::mouseMove(&canvas, QPoint(50, 50));
 	}
 
+	void renderImageContainsArtworkWithoutEditorFrame()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		gtd::CanvasObject shape = rectangleObject(QStringLiteral("shape"), QStringLiteral("visible"));
+		shape.color = QStringLiteral("#22aaee");
+		shape.filled = true;
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("visible"), QStringLiteral("Visible"), 0, true, false}.toJson(),
+				gtd::CanvasLayer{QStringLiteral("hidden"), QStringLiteral("Hidden"), 1, false, false}.toJson()},
+			QJsonArray{shape.toJson(), rectangleObject(QStringLiteral("hidden-shape"), QStringLiteral("hidden")).toJson()});
+
+		const QImage image = canvas.renderImage();
+		QCOMPARE(image.size(), QSize(100, 100));
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#22aaee")));
+		QCOMPARE(image.pixelColor(0, 0), QColor(Qt::white));
+	}
+
 	void brushAirbrushAndCurveUseSelectedColorAndWidth()
 	{
 		for (const auto& item : {qMakePair(gtd::DrawingCanvas::Tool::Brush, QStringLiteral("brush")),

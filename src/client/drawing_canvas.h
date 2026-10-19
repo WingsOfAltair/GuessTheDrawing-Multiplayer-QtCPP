@@ -3,6 +3,7 @@
 #include "shared/models.h"
 
 #include <QHash>
+#include <QImage>
 #include <QList>
 #include <QPointF>
 #include <QRectF>
@@ -46,6 +47,7 @@ public:
 	void moveSelectedLayer(int offset);
 	QList<CanvasLayer> layers() const;
 	QString selectedLayerId() const;
+	QImage renderImage() const;
 
 signals:
 	void operationGenerated(const QJsonObject& operation);
@@ -98,6 +100,7 @@ private:
 	void eraseFreehandAt(const QPointF& center, qreal radiusPixels);
 	void eraseSweep(const QPointF& from, const QPointF& to);
 	void eraseObjectsAt(const QPointF& position);
+	void paintScene(QPainter& painter) const;
 	void paintObject(QPainter& painter, const CanvasObject& object) const;
 	static QJsonObject upsertObjectOperation(const CanvasObject& object);
 

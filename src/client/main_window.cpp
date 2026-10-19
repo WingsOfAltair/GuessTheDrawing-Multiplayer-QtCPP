@@ -11,6 +11,9 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -1272,6 +1275,16 @@ QWidget* MainWindow::createLobbyPage()
 	auto* themeLabel = new QLabel(appSettingsPage);
 	setLocalizedText(themeLabel, QStringLiteral("Theme"), languageCode_);
 	appSettingsLayout->addRow(themeLabel, themeCombo_);
+	auto* exportDirectoryEdit = new QLineEdit(
+		config_.stringValue(QStringLiteral("client"), QStringLiteral("exportDirectory")), appSettingsPage);
+	auto* browseExportDirectoryButton = new QPushButton(QStringLiteral("Browse"), appSettingsPage);
+	setLocalizedText(browseExportDirectoryButton, QStringLiteral("Browse"), languageCode_);
+	auto* exportDirectoryRow = new QHBoxLayout;
+	exportDirectoryRow->addWidget(exportDirectoryEdit, 1);
+	exportDirectoryRow->addWidget(browseExportDirectoryButton);
+	auto* exportDirectoryLabel = new QLabel(appSettingsPage);
+	setLocalizedText(exportDirectoryLabel, QStringLiteral("Drawing export folder"), languageCode_);
+	appSettingsLayout->addRow(exportDirectoryLabel, exportDirectoryRow);
 	settingsStatusLabel_ = new QLabel(appSettingsPage);
 	settingsStatusLabel_->setWordWrap(true);
 	appSettingsLayout->addRow(settingsStatusLabel_);
@@ -1311,6 +1324,30 @@ QWidget* MainWindow::createLobbyPage()
 		}
 		settingsStatusLabel_->clear();
 		applyTheme(theme);
+	});
+	auto persistExportDirectory = [this, exportDirectoryEdit] {
+		const QString directory = exportDirectoryEdit->text().trimmed();
+		QString error;
+		if (directory.isEmpty() || !config_.setStringValue(QStringLiteral("client"),
+			QStringLiteral("exportDirectory"), directory, &error)) {
+			exportDirectoryEdit->setText(config_.stringValue(
+				QStringLiteral("client"), QStringLiteral("exportDirectory")));
+			setLocalizedFormattedText(settingsStatusLabel_, QStringLiteral("Could not save export folder: %1"),
+				{error.isEmpty() ? QStringLiteral("Folder cannot be empty") : error}, languageCode_);
+			return;
+		}
+		exportDirectoryEdit->setText(directory);
+		settingsStatusLabel_->clear();
+	};
+	connect(exportDirectoryEdit, &QLineEdit::editingFinished, this, persistExportDirectory);
+	connect(browseExportDirectoryButton, &QPushButton::clicked, this, [this, exportDirectoryEdit, persistExportDirectory] {
+		const QString directory = QFileDialog::getExistingDirectory(this,
+			localizedText(QStringLiteral("Drawing export folder"), languageCode_),
+			exportDirectoryEdit->text());
+		if (!directory.isEmpty()) {
+			exportDirectoryEdit->setText(directory);
+			persistExportDirectory();
+		}
 	});
 	connect(tabs, &QTabWidget::currentChanged, this, [this](int index) {
 		if (index == 1)
@@ -1532,6 +1569,9 @@ QWidget* MainWindow::createGamePage()
 	setLocalizedText(redoButton_, QStringLiteral("Redo"), languageCode_);
 	redoButton_->setEnabled(false);
 	toolbar->addWidget(redoButton_);
+	auto* exportDrawingButton = new QPushButton(QStringLiteral("Export drawing"), page);
+	setLocalizedText(exportDrawingButton, QStringLiteral("Export drawing"), languageCode_);
+	toolbar->addWidget(exportDrawingButton);
 	toolbar->addStretch();
 	layout->addLayout(toolbar);
 
@@ -1655,6 +1695,52 @@ QWidget* MainWindow::createGamePage()
 	connect(clearCanvasButton_, &QPushButton::clicked, this, [this] { canvas_->clearCanvas(); });
 	connect(undoButton_, &QPushButton::clicked, canvas_, &DrawingCanvas::undo);
 	connect(redoButton_, &QPushButton::clicked, canvas_, &DrawingCanvas::redo);
+	connect(exportDrawingButton, &QPushButton::clicked, this, [this] {
+		const QString exportDirectory = config_.stringValue(QStringLiteral("client"), QStringLiteral("exportDirectory"));
+		if (!QDir().mkpath(exportDirectory)) {
+			QMessageBox::warning(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+				localizedText(QStringLiteral("Could not create the export folder."), languageCode_));
+			return;
+		}
+		const QStringList filters{QStringLiteral("PNG image (*.png)"), QStringLiteral("JPEG image (*.jpg *.jpeg)"),
+			QStringLiteral("BMP image (*.bmp)")};
+		QFileDialog dialog(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+			QDir(exportDirectory).filePath(QStringLiteral("drawing.png")));
+		dialog.setAcceptMode(QFileDialog::AcceptSave);
+		dialog.setNameFilters(filters);
+		dialog.setDefaultSuffix(QStringLiteral("png"));
+		if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
+			return;
+		QString filePath = dialog.selectedFiles().first();
+		QFileInfo fileInfo(filePath);
+		QString format = fileInfo.suffix().toLower();
+		if (format.isEmpty()) {
+			const QString filter = dialog.selectedNameFilter();
+			format = filter == filters.at(1) ? QStringLiteral("jpg")
+				: filter == filters.at(2) ? QStringLiteral("bmp") : QStringLiteral("png");
+			filePath += QLatin1Char('.') + format;
+		}
+		if (format == QStringLiteral("jpeg"))
+			format = QStringLiteral("jpg");
+		if (format != QStringLiteral("png") && format != QStringLiteral("jpg") && format != QStringLiteral("bmp")) {
+			QMessageBox::warning(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+				localizedText(QStringLiteral("Choose a PNG, JPEG, or BMP file."), languageCode_));
+			return;
+		}
+		if (!QDir().mkpath(QFileInfo(filePath).absolutePath())) {
+			QMessageBox::warning(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+				localizedText(QStringLiteral("Could not create the export folder."), languageCode_));
+			return;
+		}
+		const QByteArray imageFormat = format == QStringLiteral("jpg") ? QByteArrayLiteral("JPEG") : format.toUpper().toLatin1();
+		if (!canvas_->renderImage().save(filePath, imageFormat.constData())) {
+			QMessageBox::warning(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+				localizedText(QStringLiteral("Could not save the drawing."), languageCode_));
+			return;
+		}
+		QMessageBox::information(this, localizedText(QStringLiteral("Export drawing"), languageCode_),
+			localizedText(QStringLiteral("Drawing exported successfully."), languageCode_));
+	});
 	connect(layerList_, &QListWidget::currentRowChanged, this, [this](int row) {
 		if (refreshingLayers_ || row < 0 || !layerList_->item(row))
 			return;

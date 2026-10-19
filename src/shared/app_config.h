@@ -8,6 +8,7 @@ namespace gtd {
 class AppConfig {
 public:
 	static QString defaultPath();
+	static QString defaultExportDirectory();
 
 	bool loadOrCreate(const QString& filePath, QString* error = nullptr);
 	QString stringValue(const QString& section, const QString& key) const;

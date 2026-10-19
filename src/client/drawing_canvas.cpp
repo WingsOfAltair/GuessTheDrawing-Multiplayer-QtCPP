@@ -1134,18 +1134,7 @@ void DrawingCanvas::paintEvent(QPaintEvent*)
 	painter.fillRect(rect(), Qt::white);
 	painter.setPen(QPen(QColor(QStringLiteral("#c9ced6")), 1));
 	painter.drawRect(rect().adjusted(0, 0, -1, -1));
-	QList<CanvasLayer> paintOrder = layers_;
-	std::stable_sort(paintOrder.begin(), paintOrder.end(), [](const CanvasLayer& left, const CanvasLayer& right) {
-		return left.order < right.order;
-	});
-	for (const CanvasLayer& layer : paintOrder) {
-		if (!layer.visible)
-			continue;
-		for (const CanvasObject& object : objects_) {
-			if (object.layerId == layer.id)
-				paintObject(painter, object);
-		}
-	}
+	paintScene(painter);
 	if (!previewObject_.id.isEmpty()) {
 		if (polygonInProgress_) {
 			CanvasObject preview = previewObject_;
@@ -1174,6 +1163,34 @@ void DrawingCanvas::paintEvent(QPaintEvent*)
 			QPointF(bounds.left(), bounds.center().y())};
 		for (const QPointF& handle : handles)
 			painter.drawRect(QRectF(handle - QPointF(4, 4), QSizeF(8, 8)));
+	}
+}
+
+QImage DrawingCanvas::renderImage() const
+{
+	if (size().isEmpty())
+		return {};
+	QImage image(size(), QImage::Format_RGB32);
+	image.fill(Qt::white);
+	QPainter painter(&image);
+	painter.setRenderHint(QPainter::Antialiasing);
+	paintScene(painter);
+	return image;
+}
+
+void DrawingCanvas::paintScene(QPainter& painter) const
+{
+	QList<CanvasLayer> paintOrder = layers_;
+	std::stable_sort(paintOrder.begin(), paintOrder.end(), [](const CanvasLayer& left, const CanvasLayer& right) {
+		return left.order < right.order;
+	});
+	for (const CanvasLayer& layer : paintOrder) {
+		if (!layer.visible)
+			continue;
+		for (const CanvasObject& object : objects_) {
+			if (object.layerId == layer.id)
+				paintObject(painter, object);
+		}
 	}
 }
 
