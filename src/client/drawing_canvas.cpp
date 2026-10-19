@@ -10,6 +10,7 @@
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPen>
+#include <QSet>
 #include <QUuid>
 
 #include <algorithm>
@@ -326,6 +327,32 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 			selectedObjectId_.clear();
 			dragMode_ = DragMode::None;
 		}
+	} else if (action == QStringLiteral("layer_reorder")) {
+		const QJsonArray layerIds = operation.value(QStringLiteral("layerIds")).toArray();
+		if (layerIds.size() != layers_.size())
+			return;
+		QSet<QString> seen;
+		QList<CanvasLayer> reorderedLayers;
+		reorderedLayers.reserve(layerIds.size());
+		for (const QJsonValue& value : layerIds) {
+			if (!value.isString())
+				return;
+			const QString id = value.toString();
+			const auto existing = std::find_if(layers_.cbegin(), layers_.cend(), [&id](const CanvasLayer& layer) {
+				return layer.id == id;
+			});
+			if (existing == layers_.cend() || seen.contains(id))
+				return;
+			seen.insert(id);
+			reorderedLayers.append(*existing);
+		}
+		for (int order = 0; order < reorderedLayers.size(); ++order)
+			reorderedLayers[order].order = order;
+		layers_ = reorderedLayers;
+		QJsonArray result;
+		for (const CanvasLayer& layer : layers_)
+			result.append(layer.toJson());
+		emit layersChanged(result);
 	} else if (action == QStringLiteral("layer_delete")) {
 		const QString id = operation.value(QStringLiteral("layerId")).toString();
 		layers_.erase(std::remove_if(layers_.begin(), layers_.end(), [&id](const CanvasLayer& layer) {
@@ -461,11 +488,13 @@ void DrawingCanvas::moveSelectedLayer(int offset)
 	const int target = qBound(0, index + offset, static_cast<int>(layers_.size()) - 1);
 	if (index < 0 || target == index)
 		return;
-	layers_.swapItemsAt(index, target);
-	for (int order = 0; order < layers_.size(); ++order) {
-		layers_[order].order = order;
-		emitLayerUpsert(layers_[order]);
-	}
+	QList<CanvasLayer> reorderedLayers = layers_;
+	reorderedLayers.swapItemsAt(index, target);
+	QJsonArray layerIds;
+	for (const CanvasLayer& layer : reorderedLayers)
+		layerIds.append(layer.id);
+	emitOperation({{QStringLiteral("action"), QStringLiteral("layer_reorder")},
+				   {QStringLiteral("layerIds"), QJsonValue(layerIds)}});
 }
 
 QList<CanvasLayer> DrawingCanvas::layers() const
@@ -717,7 +746,11 @@ void DrawingCanvas::paintEvent(QPaintEvent*)
 	painter.fillRect(rect(), Qt::white);
 	painter.setPen(QPen(QColor(QStringLiteral("#c9ced6")), 1));
 	painter.drawRect(rect().adjusted(0, 0, -1, -1));
-	for (const CanvasLayer& layer : layers_) {
+	QList<CanvasLayer> paintOrder = layers_;
+	std::stable_sort(paintOrder.begin(), paintOrder.end(), [](const CanvasLayer& left, const CanvasLayer& right) {
+		return left.order < right.order;
+	});
+	for (const CanvasLayer& layer : paintOrder) {
 		if (!layer.visible)
 			continue;
 		for (const CanvasObject& object : objects_) {

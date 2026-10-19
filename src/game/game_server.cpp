@@ -10,6 +10,7 @@
 #include <QJsonValue>
 #include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTcpSocket>
 #include <QHostAddress>
 #include <QDebug>
@@ -874,6 +875,43 @@ bool GameServer::applyCanvasOperation(const QJsonObject& operation, QJsonObject*
 			return left.order < right.order;
 		});
 		*normalized = {{QStringLiteral("action"), action}, {QStringLiteral("layer"), layer.toJson()}};
+		return true;
+	}
+	if (action == QStringLiteral("layer_reorder")) {
+		const QJsonArray layerIds = operation.value(QStringLiteral("layerIds")).toArray();
+		if (layerIds.size() != canvasLayers_.size()) {
+			if (error)
+				*error = QStringLiteral("Layer order does not match the room canvas");
+			return false;
+		}
+		QSet<QString> requestedIds;
+		QList<CanvasLayer> reorderedLayers;
+		reorderedLayers.reserve(layerIds.size());
+		for (const QJsonValue& value : layerIds) {
+			if (!value.isString()) {
+				if (error)
+					*error = QStringLiteral("Invalid layer order");
+				return false;
+			}
+			const QString id = value.toString();
+			const auto existing = std::find_if(canvasLayers_.cbegin(), canvasLayers_.cend(), [&id](const CanvasLayer& layer) {
+				return layer.id == id;
+			});
+			if (existing == canvasLayers_.cend() || requestedIds.contains(id)) {
+				if (error)
+					*error = QStringLiteral("Layer order must contain every room layer exactly once");
+				return false;
+			}
+			requestedIds.insert(id);
+			reorderedLayers.append(*existing);
+		}
+		for (int order = 0; order < reorderedLayers.size(); ++order)
+			reorderedLayers[order].order = order;
+		canvasLayers_ = reorderedLayers;
+		QJsonArray normalizedIds;
+		for (const CanvasLayer& layer : canvasLayers_)
+			normalizedIds.append(layer.id);
+		*normalized = {{QStringLiteral("action"), action}, {QStringLiteral("layerIds"), QJsonValue(normalizedIds)}};
 		return true;
 	}
 	if (action == QStringLiteral("layer_delete")) {

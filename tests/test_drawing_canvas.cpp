@@ -1,5 +1,8 @@
 #include "client/drawing_canvas.h"
 
+#include <QColor>
+#include <QCoreApplication>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -41,6 +44,134 @@ private slots:
 		const QJsonObject multilineObject = operations.first().first().toJsonObject()
 			.value(QStringLiteral("object")).toObject();
 		QVERIFY(multilineObject.value(QStringLiteral("height")).toDouble() > singleLineHeight * 2.0);
+	}
+
+	void movingLayerImmediatelyChangesRenderedStackingAndSyncsAtomically()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+
+		gtd::CanvasObject bottom = rectangleObject(QStringLiteral("bottom-shape"), QStringLiteral("layer-bottom"));
+		bottom.color = QStringLiteral("#ff0000");
+		bottom.filled = true;
+		gtd::CanvasObject top = rectangleObject(QStringLiteral("top-shape"), QStringLiteral("layer-top"));
+		top.color = QStringLiteral("#0000ff");
+		top.filled = true;
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-bottom"), QStringLiteral("Bottom"), 0, true, false}.toJson(),
+					   gtd::CanvasLayer{QStringLiteral("layer-top"), QStringLiteral("Top"), 1, true, false}.toJson()},
+			QJsonArray{bottom.toJson(), top.toJson()});
+		canvas.setSelectedLayer(QStringLiteral("layer-bottom"));
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		QImage image(canvas.size(), QImage::Format_ARGB32_Premultiplied);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#0000ff")));
+
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.moveSelectedLayer(1);
+		QCOMPARE(operations.size(), 1);
+		const QJsonObject reorder = operations.first().first().toJsonObject();
+		QCOMPARE(reorder.value(QStringLiteral("action")).toString(), QStringLiteral("layer_reorder"));
+		const QJsonArray expectedLayerIds{QStringLiteral("layer-top"), QStringLiteral("layer-bottom")};
+		QCOMPARE(reorder.value(QStringLiteral("layerIds")).toArray(), expectedLayerIds);
+		QCOMPARE(canvas.layers().at(0).id, QStringLiteral("layer-top"));
+		QCOMPARE(canvas.layers().at(0).order, 0);
+		QCOMPARE(canvas.layers().at(1).id, QStringLiteral("layer-bottom"));
+		QCOMPARE(canvas.layers().at(1).order, 1);
+
+		QCoreApplication::processEvents();
+		image.fill(Qt::transparent);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#ff0000")));
+
+		gtd::DrawingCanvas remoteCanvas;
+		remoteCanvas.setMinimumSize(0, 0);
+		remoteCanvas.resize(100, 100);
+		remoteCanvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-bottom"), QStringLiteral("Bottom"), 0, true, false}.toJson(),
+					   gtd::CanvasLayer{QStringLiteral("layer-top"), QStringLiteral("Top"), 1, true, false}.toJson()},
+			QJsonArray{bottom.toJson(), top.toJson()});
+		remoteCanvas.applyOperation(reorder);
+		remoteCanvas.show();
+		QCoreApplication::processEvents();
+		QImage remoteImage(remoteCanvas.size(), QImage::Format_ARGB32_Premultiplied);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#ff0000")));
+
+		canvas.moveSelectedLayer(-1);
+		QCOMPARE(operations.size(), 2);
+		QCoreApplication::processEvents();
+		image.fill(Qt::transparent);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#0000ff")));
+	}
+
+	void movingLayerChangesFreehandStrokeCompositing()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+
+		gtd::CanvasObject redStroke = freehandObject(QStringLiteral("red-stroke"), QStringLiteral("layer-red"));
+		redStroke.color = QStringLiteral("#ff0000");
+		redStroke.strokeWidth = 32;
+		gtd::CanvasObject blackStroke = freehandObject(QStringLiteral("black-stroke"), QStringLiteral("layer-black"));
+		blackStroke.color = QStringLiteral("#000000");
+		blackStroke.strokeWidth = 32;
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-red"), QStringLiteral("Red"), 0, true, false}.toJson(),
+					   gtd::CanvasLayer{QStringLiteral("layer-black"), QStringLiteral("Black"), 1, true, false}.toJson()},
+			QJsonArray{redStroke.toJson(), blackStroke.toJson()});
+		canvas.setSelectedLayer(QStringLiteral("layer-black"));
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		gtd::DrawingCanvas remoteCanvas;
+		remoteCanvas.setMinimumSize(0, 0);
+		remoteCanvas.resize(100, 100);
+		remoteCanvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-red"), QStringLiteral("Red"), 0, true, false}.toJson(),
+					   gtd::CanvasLayer{QStringLiteral("layer-black"), QStringLiteral("Black"), 1, true, false}.toJson()},
+			QJsonArray{redStroke.toJson(), blackStroke.toJson()});
+		remoteCanvas.show();
+
+		QImage image(canvas.size(), QImage::Format_ARGB32_Premultiplied);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#000000")));
+		QImage remoteImage(remoteCanvas.size(), QImage::Format_ARGB32_Premultiplied);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#000000")));
+
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.moveSelectedLayer(-1);
+		QCOMPARE(operations.size(), 1);
+		const QJsonArray expectedOrder{QStringLiteral("layer-black"), QStringLiteral("layer-red")};
+		QCOMPARE(operations.first().first().toJsonObject().value(QStringLiteral("layerIds")).toArray(),
+				 expectedOrder);
+		QCoreApplication::processEvents();
+		image.fill(Qt::transparent);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#ff0000")));
+		remoteCanvas.applyOperation(operations.first().first().toJsonObject());
+		remoteImage.fill(Qt::transparent);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#ff0000")));
+
+		canvas.moveSelectedLayer(1);
+		QCOMPARE(operations.size(), 2);
+		QCoreApplication::processEvents();
+		image.fill(Qt::transparent);
+		canvas.render(&image);
+		QCOMPARE(image.pixelColor(50, 50), QColor(QStringLiteral("#000000")));
+		remoteCanvas.applyOperation(operations.last().first().toJsonObject());
+		remoteImage.fill(Qt::transparent);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#000000")));
 	}
 
 	void freehandEraserOnlyChangesSelectedLayer()
