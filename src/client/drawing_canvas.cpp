@@ -1,15 +1,19 @@
 #include "client/drawing_canvas.h"
 
 #include <QColor>
+#include <QBitArray>
+#include <QBuffer>
 #include <QFont>
 #include <QFontMetrics>
 #include <QJsonObject>
+#include <QImage>
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPen>
+#include <QQueue>
 #include <QSet>
 #include <QUuid>
 
@@ -33,6 +37,20 @@ QPointF pointFromJson(const QJsonValue& value)
 QString newId()
 {
 	return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+quint32 stableSeed(const QString& id)
+{
+	quint32 seed = 2166136261u;
+	for (const char value : id.toUtf8())
+		seed = (seed ^ static_cast<quint8>(value)) * 16777619u;
+	return seed;
+}
+
+quint32 nextRandom(quint32* state)
+{
+	*state = *state * 1664525u + 1013904223u;
+	return *state;
 }
 
 QList<QList<QPointF>> clipPathOutsideCircle(const QList<QPointF>& path, const QPointF& center,
@@ -137,7 +155,9 @@ void DrawingCanvas::eraseFreehandAt(const QPointF& center, qreal radiusPixels)
 	QList<ChangedStroke> changedStrokes;
 	const QPointF centerPixels(center.x() * width(), center.y() * height());
 	for (const CanvasObject& object : objects_) {
-		if (object.type != QStringLiteral("freehand") || object.layerId != activeLayerId_)
+		if ((object.type != QStringLiteral("freehand") && object.type != QStringLiteral("brush")
+			&& object.type != QStringLiteral("airbrush") && object.type != QStringLiteral("curve"))
+			|| object.layerId != activeLayerId_)
 			continue;
 		const CanvasLayer* layer = findLayer(object.layerId);
 		if (!layer || !layer->visible || layer->locked)
@@ -209,17 +229,115 @@ void DrawingCanvas::setDrawingAllowed(bool allowed)
 {
 	drawingAllowed_ = allowed;
 	setCursor(allowed ? (tool_ == Tool::Select ? Qt::ArrowCursor : Qt::CrossCursor) : Qt::ForbiddenCursor);
-	if (!allowed)
+	if (!allowed) {
 		dragMode_ = DragMode::None;
+		polygonInProgress_ = false;
+		previewObject_ = CanvasObject{};
+	}
 }
 
 void DrawingCanvas::setTool(Tool tool)
 {
+	if (tool_ != tool && polygonInProgress_) {
+		polygonInProgress_ = false;
+		previewObject_ = CanvasObject{};
+	}
 	tool_ = tool;
 	setCursor(!drawingAllowed_ ? Qt::ForbiddenCursor
 							  : (tool == Tool::Select ? Qt::ArrowCursor : Qt::CrossCursor));
 	dragMode_ = DragMode::None;
 	update();
+}
+
+void DrawingCanvas::fillAt(const QPointF& position)
+{
+	const qreal scale = qMin<qreal>(1.0,
+		static_cast<qreal>(MaximumCanvasImageDimension) / qMax(width(), height()));
+	const QSize rasterSize(qMax(1, qRound(width() * scale)), qMax(1, qRound(height() * scale)));
+	QImage composite(rasterSize, QImage::Format_ARGB32_Premultiplied);
+	composite.fill(Qt::white);
+	QPainter scenePainter(&composite);
+	scenePainter.setRenderHint(QPainter::Antialiasing);
+	scenePainter.scale(static_cast<qreal>(rasterSize.width()) / qMax(1, width()),
+		static_cast<qreal>(rasterSize.height()) / qMax(1, height()));
+	QList<CanvasLayer> paintOrder = layers_;
+	std::stable_sort(paintOrder.begin(), paintOrder.end(), [](const CanvasLayer& left, const CanvasLayer& right) {
+		return left.order < right.order;
+	});
+	for (const CanvasLayer& layer : paintOrder) {
+		if (!layer.visible)
+			continue;
+		for (const CanvasObject& object : objects_) {
+			if (object.layerId == layer.id)
+				paintObject(scenePainter, object);
+		}
+	}
+	scenePainter.end();
+
+	const int seedX = qBound(0, qRound(position.x() * (rasterSize.width() - 1)), rasterSize.width() - 1);
+	const int seedY = qBound(0, qRound(position.y() * (rasterSize.height() - 1)), rasterSize.height() - 1);
+	const QColor target = composite.pixelColor(seedX, seedY);
+	QImage fillImage(rasterSize, QImage::Format_ARGB32_Premultiplied);
+	fillImage.fill(Qt::transparent);
+	QBitArray visited(rasterSize.width() * rasterSize.height(), false);
+	QQueue<int> pending;
+	const int seedIndex = seedY * rasterSize.width() + seedX;
+	visited.setBit(seedIndex, true);
+	pending.enqueue(seedIndex);
+	int left = seedX;
+	int right = seedX;
+	int top = seedY;
+	int bottom = seedY;
+	const auto enqueue = [&](int x, int y) {
+		if (x < 0 || x >= rasterSize.width() || y < 0 || y >= rasterSize.height())
+			return;
+		const int index = y * rasterSize.width() + x;
+		if (!visited.testBit(index)) {
+			visited.setBit(index, true);
+			pending.enqueue(index);
+		}
+	};
+	while (!pending.isEmpty()) {
+		const int index = pending.dequeue();
+		const int x = index % rasterSize.width();
+		const int y = index / rasterSize.width();
+		const QColor pixel = composite.pixelColor(x, y);
+		if (qAbs(pixel.red() - target.red()) > 12 || qAbs(pixel.green() - target.green()) > 12
+			|| qAbs(pixel.blue() - target.blue()) > 12)
+			continue;
+		fillImage.setPixelColor(x, y, QColor(currentColor_));
+		left = qMin(left, x);
+		right = qMax(right, x);
+		top = qMin(top, y);
+		bottom = qMax(bottom, y);
+		enqueue(x - 1, y);
+		enqueue(x + 1, y);
+		enqueue(x, y - 1);
+		enqueue(x, y + 1);
+	}
+
+	const QRect region(left, top, right - left + 1, bottom - top + 1);
+	QByteArray pngData;
+	QBuffer buffer(&pngData);
+	if (!buffer.open(QIODevice::WriteOnly) || !fillImage.copy(region).save(&buffer, "PNG"))
+		return;
+	const QByteArray encoded = pngData.toBase64();
+	if (encoded.size() > MaximumCanvasImageDataLength)
+		return;
+	CanvasObject fill;
+	fill.id = newId();
+	fill.layerId = activeLayerId_;
+	fill.type = QStringLiteral("fill");
+	fill.color = currentColor_;
+	fill.fillColor = currentColor_;
+	fill.imageData = QString::fromLatin1(encoded);
+	fill.x = static_cast<double>(left) / rasterSize.width();
+	fill.y = static_cast<double>(top) / rasterSize.height();
+	fill.width = static_cast<double>(region.width()) / rasterSize.width();
+	fill.height = static_cast<double>(region.height()) / rasterSize.height();
+	fill.strokeWidth = strokeWidth_;
+	fill.filled = true;
+	emitObjectUpsert(fill);
 }
 
 void DrawingCanvas::setCurrentColor(const QString& color)
@@ -288,6 +406,8 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 		selectedObjectId_.clear();
 		dragMode_ = DragMode::None;
 		previewObject_ = CanvasObject{};
+	polygonInProgress_ = false;
+		polygonInProgress_ = false;
 	} else if (action == QStringLiteral("clear_layer")) {
 		const QString layerId = operation.value(QStringLiteral("layerId")).toString();
 		objects_.erase(std::remove_if(objects_.begin(), objects_.end(), [&layerId](const CanvasObject& item) {
@@ -296,6 +416,8 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 		const CanvasObject* selected = findObject(selectedObjectId_);
 		if (!selected || selected->layerId == layerId) {
 			selectedObjectId_.clear();
+	polygonInProgress_ = false;
+	previewObject_ = CanvasObject{};
 			dragMode_ = DragMode::None;
 			previewObject_ = CanvasObject{};
 		}
@@ -637,18 +759,42 @@ void DrawingCanvas::updateBoundsFromPoints(CanvasObject* object) const
 	object->height = bottom - top;
 }
 
+void DrawingCanvas::finishPolygon(const QPointF& position, bool appendPoint)
+{
+	if (!polygonInProgress_)
+		return;
+	if (appendPoint && previewObject_.points.size() < MaximumObjectPoints) {
+		const QPointF point = normalizedPoint(position);
+		const QPointF last = previewObject_.points.isEmpty()
+			? QPointF(-1.0, -1.0) : pointFromJson(previewObject_.points.last());
+		if (previewObject_.points.isEmpty() || QLineF(last, point).length() > 0.002)
+			previewObject_.points.append(pointJson(point));
+	}
+	if (previewObject_.points.size() >= 3) {
+		updateBoundsFromPoints(&previewObject_);
+		emitObjectUpsert(previewObject_);
+	}
+	polygonInProgress_ = false;
+	previewObject_ = CanvasObject{};
+	update();
+}
+
 void DrawingCanvas::paintObject(QPainter& painter, const CanvasObject& object) const
 {
 	QColor color(object.color);
 	if (!color.isValid())
 		color = QColor(QStringLiteral("#202124"));
+	const Qt::PenCapStyle cap = object.type == QStringLiteral("freehand") ? Qt::FlatCap : Qt::RoundCap;
 	QPen pen(color, qMax<qreal>(1.0, object.strokeWidth * qMin(width(), height()) / 600.0),
-			 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+			 Qt::SolidLine, cap, Qt::RoundJoin);
 	painter.setPen(pen);
 	painter.setBrush(object.filled ? QBrush(color) : Qt::NoBrush);
 	const QRectF bounds = objectRect(object);
 	if (object.type == QStringLiteral("rectangle")) {
 		painter.drawRect(bounds);
+	} else if (object.type == QStringLiteral("rounded_rectangle")) {
+		const qreal radius = qMin<qreal>(16.0, qMin(bounds.width(), bounds.height()) / 4.0);
+		painter.drawRoundedRect(bounds, radius, radius);
 	} else if (object.type == QStringLiteral("ellipse")) {
 		painter.drawEllipse(bounds);
 	} else if (object.type == QStringLiteral("line")) {
@@ -657,20 +803,73 @@ void DrawingCanvas::paintObject(QPainter& painter, const CanvasObject& object) c
 							 pointFromJson(object.points.at(0)).y() * height(),
 							 pointFromJson(object.points.at(1)).x() * width(),
 							 pointFromJson(object.points.at(1)).y() * height());
-	} else if (object.type == QStringLiteral("freehand")) {
+	} else if (object.type == QStringLiteral("freehand") || object.type == QStringLiteral("brush")
+		|| object.type == QStringLiteral("airbrush") || object.type == QStringLiteral("curve")) {
 		if (object.points.isEmpty())
 			return;
 		QPainterPath path;
 		const QPointF first = pointFromJson(object.points.first());
 		path.moveTo(first.x() * width(), first.y() * height());
 		QPointF last = first;
-		for (qsizetype index = 1; index < object.points.size(); ++index) {
-			last = pointFromJson(object.points.at(index));
+		if (object.type == QStringLiteral("curve") && object.points.size() > 2) {
+			for (qsizetype index = 1; index + 1 < object.points.size(); ++index) {
+				const QPointF control = pointFromJson(object.points.at(index));
+				const QPointF next = pointFromJson(object.points.at(index + 1));
+				const QPointF midpoint = (control + next) / 2.0;
+				path.quadTo(control.x() * width(), control.y() * height(),
+							midpoint.x() * width(), midpoint.y() * height());
+			}
+			last = pointFromJson(object.points.last());
 			path.lineTo(last.x() * width(), last.y() * height());
+		} else {
+			for (qsizetype index = 1; index < object.points.size(); ++index) {
+				last = pointFromJson(object.points.at(index));
+				path.lineTo(last.x() * width(), last.y() * height());
+			}
 		}
-		painter.drawPath(path);
-		if (object.points.size() == 1)
-			painter.drawPoint(last.x() * width(), last.y() * height());
+		if (object.type == QStringLiteral("airbrush")) {
+			const qreal radius = qMax<qreal>(2.0, pen.widthF() * 2.0);
+			const int particlesPerPoint = qBound(8, object.strokeWidth, 32);
+			quint32 randomState = stableSeed(object.id);
+			painter.save();
+			painter.setPen(Qt::NoPen);
+			for (const QJsonValue& value : object.points) {
+				const QPointF center = pointFromJson(value);
+				for (int index = 0; index < particlesPerPoint; ++index) {
+					const qreal angle = (nextRandom(&randomState) / 4294967296.0) * 6.283185307179586;
+					const qreal distance = std::sqrt(nextRandom(&randomState) / 4294967296.0) * radius;
+					const qreal dotSize = 0.5 + (nextRandom(&randomState) / 4294967296.0) * 1.2;
+					QColor dotColor = color;
+					dotColor.setAlpha(55 + static_cast<int>(nextRandom(&randomState) % 100));
+					painter.setBrush(dotColor);
+					const QPointF centerPixels(center.x() * width() + std::cos(angle) * distance,
+									   center.y() * height() + std::sin(angle) * distance);
+					painter.drawEllipse(centerPixels, dotSize, dotSize);
+				}
+			}
+			painter.restore();
+		} else {
+			painter.drawPath(path);
+			if (object.points.size() == 1)
+				painter.drawPoint(last.x() * width(), last.y() * height());
+		}
+	} else if (object.type == QStringLiteral("polygon")) {
+		if (object.points.isEmpty())
+			return;
+		QPainterPath polygon;
+		const QPointF first = pointFromJson(object.points.first());
+		polygon.moveTo(first.x() * width(), first.y() * height());
+		for (qsizetype index = 1; index < object.points.size(); ++index) {
+			const QPointF point = pointFromJson(object.points.at(index));
+			polygon.lineTo(point.x() * width(), point.y() * height());
+		}
+		if (object.points.size() >= 3)
+			polygon.closeSubpath();
+		painter.drawPath(polygon);
+	} else if (object.type == QStringLiteral("fill")) {
+		const QImage fillImage = QImage::fromData(QByteArray::fromBase64(object.imageData.toLatin1()), "PNG");
+		if (!fillImage.isNull())
+			painter.drawImage(bounds, fillImage);
 	} else if (object.type == QStringLiteral("text")) {
 		QFont textFont = font();
 		textFont.setPixelSize(qMax(8, object.fontSize * width() / 1024));
@@ -758,8 +957,15 @@ void DrawingCanvas::paintEvent(QPaintEvent*)
 				paintObject(painter, object);
 		}
 	}
-	if (!previewObject_.id.isEmpty())
-		paintObject(painter, previewObject_);
+	if (!previewObject_.id.isEmpty()) {
+		if (polygonInProgress_) {
+			CanvasObject preview = previewObject_;
+			preview.points.append(pointJson(polygonCursor_));
+			paintObject(painter, preview);
+		} else {
+			paintObject(painter, previewObject_);
+		}
+	}
 
 	CanvasObject* selected = findObject(selectedObjectId_);
 	if (selected && drawingAllowed_) {
@@ -831,6 +1037,37 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		event->accept();
 		return;
 	}
+	if (tool_ == Tool::Fill) {
+		fillAt(point);
+		event->accept();
+		return;
+	}
+	if (tool_ == Tool::Polygon) {
+		if (!polygonInProgress_) {
+			previewObject_ = CanvasObject{};
+			previewObject_.id = newId();
+			previewObject_.layerId = activeLayerId_;
+			previewObject_.type = QStringLiteral("polygon");
+			previewObject_.color = currentColor_;
+			previewObject_.strokeWidth = strokeWidth_;
+			previewObject_.filled = filled_;
+			polygonInProgress_ = true;
+		} else if (previewObject_.points.size() >= 3) {
+			const QPointF first = pointFromJson(previewObject_.points.first());
+			if (QLineF(first, point).length() < 0.02) {
+				finishPolygon(point, false);
+				event->accept();
+				return;
+			}
+		}
+		if (previewObject_.points.size() < MaximumObjectPoints)
+			previewObject_.points.append(pointJson(point));
+		updateBoundsFromPoints(&previewObject_);
+		polygonCursor_ = point;
+		update();
+		event->accept();
+		return;
+	}
 
 	previewObject_ = CanvasObject{};
 	previewObject_.id = newId();
@@ -841,9 +1078,13 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 	previewObject_.x = point.x();
 	previewObject_.y = point.y();
 	previewObject_.type = tool_ == Tool::Pen ? QStringLiteral("freehand")
+		: tool_ == Tool::Brush ? QStringLiteral("brush")
+		: tool_ == Tool::Airbrush ? QStringLiteral("airbrush")
+		: tool_ == Tool::Curve ? QStringLiteral("curve")
 		: tool_ == Tool::Rectangle ? QStringLiteral("rectangle")
+		: tool_ == Tool::RoundedRectangle ? QStringLiteral("rounded_rectangle")
 		: tool_ == Tool::Ellipse ? QStringLiteral("ellipse") : QStringLiteral("line");
-	if (tool_ == Tool::Pen) {
+	if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush || tool_ == Tool::Curve) {
 		previewObject_.points.append(pointJson(point));
 		updateBoundsFromPoints(&previewObject_);
 		selectedObjectId_ = previewObject_.id;
@@ -865,7 +1106,10 @@ void DrawingCanvas::mouseMoveEvent(QMouseEvent* event)
 		QWidget::mouseMoveEvent(event);
 		return;
 	}
-	if (dragMode_ == DragMode::Move || dragMode_ == DragMode::Resize) {
+	if (polygonInProgress_) {
+		polygonCursor_ = normalizedPoint(event->position());
+		update();
+	} else if (dragMode_ == DragMode::Move || dragMode_ == DragMode::Resize) {
 		updateDrag(event->position());
 	} else if (dragMode_ == DragMode::Erase && (event->buttons() & Qt::LeftButton)) {
 		const QPointF point = normalizedPoint(event->position());
@@ -876,7 +1120,7 @@ void DrawingCanvas::mouseMoveEvent(QMouseEvent* event)
 		dragStart_ = point;
 	} else if (dragMode_ == DragMode::Draw && (event->buttons() & Qt::LeftButton)) {
 		const QPointF point = normalizedPoint(event->position());
-		if (tool_ == Tool::Pen) {
+		if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush || tool_ == Tool::Curve) {
 			CanvasObject* item = findObject(selectedObjectId_);
 			if (item && item->points.size() < MaximumObjectPoints) {
 				CanvasObject updated = *item;
@@ -911,20 +1155,32 @@ void DrawingCanvas::mouseMoveEvent(QMouseEvent* event)
 void DrawingCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
 	if (event->button() == Qt::LeftButton) {
-		if (dragMode_ == DragMode::Draw && tool_ != Tool::Pen) {
+		const bool pathTool = tool_ == Tool::Pen || tool_ == Tool::Brush
+			|| tool_ == Tool::Airbrush || tool_ == Tool::Curve;
+		if (dragMode_ == DragMode::Draw && !pathTool) {
 			if (tool_ == Tool::Line)
 				updateBoundsFromPoints(&previewObject_);
 			if (previewObject_.width > 0.001 || previewObject_.height > 0.001)
 				emitObjectUpsert(previewObject_);
 			previewObject_ = CanvasObject{};
 		}
-		if (dragMode_ == DragMode::Draw && tool_ == Tool::Pen)
+		if (dragMode_ == DragMode::Draw && pathTool)
 			selectedObjectId_.clear();
 		dragMode_ = DragMode::None;
 		resizeHandle_ = -1;
 		update();
 	}
 	QWidget::mouseReleaseEvent(event);
+}
+
+void DrawingCanvas::mouseDoubleClickEvent(QMouseEvent* event)
+{
+	if (drawingAllowed_ && tool_ == Tool::Polygon && event->button() == Qt::LeftButton) {
+		finishPolygon(event->position(), true);
+		event->accept();
+		return;
+	}
+	QWidget::mouseDoubleClickEvent(event);
 }
 
 }

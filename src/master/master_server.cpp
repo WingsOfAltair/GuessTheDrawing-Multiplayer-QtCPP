@@ -93,6 +93,16 @@ MasterServer::MasterServer(AccountStore* accountStore, QString serverSecret, QSt
 	expiryTimer_.start();
 }
 
+MasterServer::~MasterServer()
+{
+	listener_.close();
+	const auto sockets = listener_.findChildren<QTcpSocket*>();
+	for (QTcpSocket* socket : sockets) {
+		disconnect(socket, nullptr, this, nullptr);
+		socket->abort();
+	}
+}
+
 bool MasterServer::start(const QHostAddress& address, quint16 port)
 {
 	if (!listener_.listen(address, port))
@@ -394,12 +404,23 @@ void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& me
 	} else if (type == QStringLiteral("ScoreUpdate")) {
 		const QString username = message.value(QStringLiteral("username")).toString();
 		const int points = message.value(QStringLiteral("points")).toInt(-1);
-		const bool drawingPoints = message.value(QStringLiteral("drawingPoints")).toBool(false);
+		const QJsonValue drawingPointsValue = message.value(QStringLiteral("drawingPoints"));
+		const bool drawingPoints = drawingPointsValue.toBool();
+		bool sequenceOk = false;
+		const quint64 sequence = message.value(QStringLiteral("requestId")).toString().toULongLong(&sequenceOk);
+		const bool validPointAward = points == 2 || points == 5 || points == 7 || points == 10;
+		if (!sequenceOk || sequence == 0 || sequence <= lastScoreUpdateSequence_.value(socket, 0)
+			|| !message.value(QStringLiteral("points")).isDouble() || !drawingPointsValue.isBool()
+			|| username.isEmpty() || !validPointAward || (drawingPoints && points != 2)) {
+			sendError(socket, message, QStringLiteral("Invalid or replayed score update"));
+			return;
+		}
 		QString error;
 		if (!accountStore_->addScore(username, points, drawingPoints, &error)) {
 			sendError(socket, message, error);
 			return;
 		}
+		lastScoreUpdateSequence_.insert(socket, sequence);
 		const auto profile = accountStore_->profile(username, &error);
 		sendMessage(socket, withRequestId(QStringLiteral("ScoreStored"), message,
 			{{QStringLiteral("username"), username},
@@ -418,8 +439,11 @@ void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& me
 			sendError(socket, message, QStringLiteral("Round result account does not match its session"));
 			return;
 		}
-		if (sequence <= lastRoundResultSequence_.value(socket, 0))
+		if (!message.value(QStringLiteral("roundWon")).isBool()
+			|| sequence <= lastRoundResultSequence_.value(socket, 0)) {
+			sendError(socket, message, QStringLiteral("Invalid or replayed round result"));
 			return;
+		}
 		if (!accountStore_->recordRoundResult(username, message.value(QStringLiteral("roundWon")).toBool(), &error)) {
 			sendError(socket, message, error);
 			return;
@@ -536,6 +560,7 @@ void MasterServer::removeSocket(QTcpSocket* socket, bool logDisconnect)
 	pendingData_.remove(socket);
 	const bool clientRemoved = authenticatedClients_.remove(socket) > 0;
 	lastRoundResultSequence_.remove(socket);
+	lastScoreUpdateSequence_.remove(socket);
 	const QString serverId = serverIdsBySocket_.take(socket);
 	if (serverId.isEmpty()) {
 		if (clientRemoved)

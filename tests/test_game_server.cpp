@@ -130,6 +130,26 @@ private slots:
 			QStringLiteral("valid after oversized input")).isEmpty());
 		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), oversizedChat).isEmpty());
 
+		for (int index = 0; index < 10; ++index) {
+			QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+				{{QStringLiteral("text"), QStringLiteral("flood-%1").arg(index)}})));
+		}
+		auto hasFloodMessage = [&received, drawer] {
+			for (const QJsonObject& message : received.value(drawer)) {
+				if (message.value(QStringLiteral("text")).toString().startsWith(QStringLiteral("flood-")))
+					return true;
+			}
+			return false;
+		};
+		QTRY_VERIFY(hasFloodMessage());
+		QTest::qWait(50);
+		int floodMessages = 0;
+		for (const QJsonObject& message : received.value(drawer)) {
+			if (message.value(QStringLiteral("text")).toString().startsWith(QStringLiteral("flood-")))
+				++floodMessages;
+		}
+		QVERIFY(floodMessages <= 8);
+
 		const QByteArray audio(640, '\x2a');
 		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("VoiceFrame"),
 			{{QStringLiteral("sampleRate"), 16000},
@@ -139,6 +159,28 @@ private slots:
 			.value(QStringLiteral("username")).toString(),
 			drawerUsername == QStringLiteral("voice-first") ? QStringLiteral("voice-second") : QStringLiteral("voice-first"));
 		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
+
+		gtd::CanvasObject fill;
+		fill.id = QStringLiteral("shared-fill");
+		fill.layerId = QStringLiteral("layer-default");
+		fill.type = QStringLiteral("fill");
+		fill.color = QStringLiteral("#22aaee");
+		fill.fillColor = fill.color;
+		fill.imageData = QStringLiteral("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGZsAAAAASUVORK5CYII=");
+		fill.x = 0.25;
+		fill.y = 0.25;
+		fill.width = 0.5;
+		fill.height = 0.5;
+		const QJsonObject fillOperation{
+			{QStringLiteral("action"), QStringLiteral("object_upsert")},
+			{QStringLiteral("object"), fill.toJson()}};
+		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("CanvasOperation"),
+			{{QStringLiteral("operation"), fillOperation}})));
+		QTRY_VERIFY(!findMessage(listener, QStringLiteral("CanvasOperation")).isEmpty());
+		const QJsonObject canvasMessage = findMessage(listener, QStringLiteral("CanvasOperation"));
+		QCOMPARE(canvasMessage.value(QStringLiteral("operation")).toObject()
+			.value(QStringLiteral("object")).toObject().value(QStringLiteral("type")).toString(),
+			QStringLiteral("fill"));
 
 		received[listener].clear();
 		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("VoiceFrame"),

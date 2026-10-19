@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMouseEvent>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -22,6 +23,133 @@ private slots:
 		canvas.show();
 
 		QTest::mouseMove(&canvas, QPoint(50, 50));
+	}
+
+	void brushAirbrushAndCurveUseSelectedColorAndWidth()
+	{
+		for (const auto& item : {qMakePair(gtd::DrawingCanvas::Tool::Brush, QStringLiteral("brush")),
+								 qMakePair(gtd::DrawingCanvas::Tool::Airbrush, QStringLiteral("airbrush")),
+								 qMakePair(gtd::DrawingCanvas::Tool::Curve, QStringLiteral("curve"))}) {
+			gtd::DrawingCanvas canvas;
+			canvas.setMinimumSize(0, 0);
+			canvas.resize(100, 100);
+			canvas.setDrawingAllowed(true);
+			canvas.setTool(item.first);
+			canvas.setCurrentColor(QStringLiteral("#123456"));
+			canvas.setStrokeWidth(11);
+			QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+			canvas.show();
+			QCoreApplication::processEvents();
+			QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+			QMouseEvent firstMove(QEvent::MouseMove, QPointF(50, 35), Qt::NoButton,
+				Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(&canvas, &firstMove);
+			QMouseEvent secondMove(QEvent::MouseMove, QPointF(80, 70), Qt::NoButton,
+				Qt::LeftButton, Qt::NoModifier);
+			QCoreApplication::sendEvent(&canvas, &secondMove);
+			QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, 70));
+			QVERIFY(!operations.isEmpty());
+			const QJsonObject operation = operations.last().first().toJsonObject();
+			const gtd::CanvasObject object = gtd::CanvasObject::fromJson(
+				operation.value(QStringLiteral("object")).toObject());
+			QCOMPARE(object.type, item.second);
+			QCOMPARE(object.color, QStringLiteral("#123456"));
+			QCOMPARE(object.strokeWidth, 11);
+			QVERIFY(object.points.size() >= 3);
+		}
+	}
+
+	void roundedRectangleUsesCurrentShapeSettings()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::RoundedRectangle);
+		canvas.setCurrentColor(QStringLiteral("#00aa44"));
+		canvas.setStrokeWidth(9);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+		QMouseEvent move(QEvent::MouseMove, QPointF(80, 80), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &move);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, 80));
+		QCOMPARE(operations.size(), 1);
+		const gtd::CanvasObject object = gtd::CanvasObject::fromJson(
+			operations.first().first().toJsonObject().value(QStringLiteral("object")).toObject());
+		QCOMPARE(object.type, QStringLiteral("rounded_rectangle"));
+		QCOMPARE(object.color, QStringLiteral("#00aa44"));
+		QCOMPARE(object.strokeWidth, 9);
+	}
+
+	void polygonCompletesOnDoubleClick()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Polygon);
+		canvas.setCurrentColor(QStringLiteral("#a020f0"));
+		canvas.setStrokeWidth(6);
+		canvas.setFilled(true);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, 20));
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, 80));
+		QTest::mouseDClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, 80));
+		QCOMPARE(operations.size(), 1);
+		const gtd::CanvasObject object = gtd::CanvasObject::fromJson(
+			operations.first().first().toJsonObject().value(QStringLiteral("object")).toObject());
+		QCOMPARE(object.type, QStringLiteral("polygon"));
+		QCOMPARE(object.points.size(), 4);
+		QCOMPARE(object.color, QStringLiteral("#a020f0"));
+		QCOMPARE(object.strokeWidth, 6);
+		QVERIFY(object.filled);
+	}
+
+	void fillWithColorFloodFillsAndSynchronizes()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Fill);
+		canvas.setCurrentColor(QStringLiteral("#22aaee"));
+		canvas.setStrokeWidth(7);
+		const gtd::CanvasLayer layer{QStringLiteral("layer-default"), QStringLiteral("Background"), 0, true, false};
+		gtd::CanvasObject border = rectangleObject(QStringLiteral("border"), layer.id);
+		canvas.setScene(QJsonArray{layer.toJson()}, QJsonArray{border.toJson()});
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+		QCOMPARE(operations.size(), 1);
+		const QJsonObject operation = operations.first().first().toJsonObject();
+		const gtd::CanvasObject fill = gtd::CanvasObject::fromJson(
+			operation.value(QStringLiteral("object")).toObject());
+		QCOMPARE(fill.type, QStringLiteral("fill"));
+		QCOMPARE(fill.color, QStringLiteral("#22aaee"));
+		QCOMPARE(fill.strokeWidth, 7);
+		QVERIFY(gtd::isValidCanvasObject(fill));
+
+		gtd::DrawingCanvas remoteCanvas;
+		remoteCanvas.setMinimumSize(0, 0);
+		remoteCanvas.resize(100, 100);
+		remoteCanvas.setScene(QJsonArray{layer.toJson()}, QJsonArray{border.toJson()});
+		remoteCanvas.applyOperation(operation);
+		canvas.show();
+		remoteCanvas.show();
+		QCoreApplication::processEvents();
+		QImage localImage(canvas.size(), QImage::Format_ARGB32_Premultiplied);
+		QImage remoteImage(remoteCanvas.size(), QImage::Format_ARGB32_Premultiplied);
+		canvas.render(&localImage);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(localImage.pixelColor(50, 50), QColor(QStringLiteral("#22aaee")));
+		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#22aaee")));
 	}
 
 	void multilineTextAllocatesVerticalSpace()

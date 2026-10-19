@@ -17,7 +17,8 @@ class DrawingCanvas final : public QWidget {
 	Q_OBJECT
 
 public:
-	enum class Tool { Select, Pen, Eraser, ObjectEraser, Rectangle, Ellipse, Line, Text };
+	enum class Tool { Select, Pen, Brush, Airbrush, Curve, Polygon, Eraser, ObjectEraser,
+					  Rectangle, RoundedRectangle, Ellipse, Line, Fill, Text };
 
 	explicit DrawingCanvas(QWidget* parent = nullptr);
 	void setDrawingAllowed(bool allowed);
@@ -52,6 +53,7 @@ protected:
 	void mousePressEvent(QMouseEvent* event) override;
 	void mouseMoveEvent(QMouseEvent* event) override;
 	void mouseReleaseEvent(QMouseEvent* event) override;
+	void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
 	QPointF normalizedPoint(const QPointF& position) const;
@@ -67,6 +69,8 @@ private:
 	CanvasObject* findObject(const QString& objectId);
 	void updateDrag(const QPointF& position);
 	void updateBoundsFromPoints(CanvasObject* object) const;
+	void fillAt(const QPointF& position);
+	void finishPolygon(const QPointF& position, bool appendPoint);
 	void eraseFreehandAt(const QPointF& center, qreal radiusPixels);
 	void eraseSweep(const QPointF& from, const QPointF& to);
 	void eraseObjectsAt(const QPointF& position);
@@ -81,6 +85,7 @@ private:
 	QString activeLayerId_;
 	QString selectedObjectId_;
 	QPointF dragStart_;
+	QPointF polygonCursor_;
 	int resizeHandle_ = -1;
 	DragMode dragMode_ = DragMode::None;
 	Tool tool_ = Tool::Pen;
@@ -89,6 +94,7 @@ private:
 	int fontSize_ = 24;
 	bool filled_ = false;
 	bool drawingAllowed_ = false;
+	bool polygonInProgress_ = false;
 };
 
 }

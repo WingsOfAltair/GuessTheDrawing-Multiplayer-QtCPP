@@ -73,6 +73,46 @@ private slots:
 		path.points[0] = QJsonObject{{QStringLiteral("x"), 1.2}, {QStringLiteral("y"), 0.3}};
 		QVERIFY(!gtd::isValidCanvasObject(path));
 	}
+
+	void validatesNewDrawingObjectTypesAndFillPayloads()
+	{
+		const QJsonArray strokePoints{
+			QJsonObject{{QStringLiteral("x"), 0.2}, {QStringLiteral("y"), 0.3}},
+			QJsonObject{{QStringLiteral("x"), 0.8}, {QStringLiteral("y"), 0.7}}};
+		for (const QString& type : {QStringLiteral("brush"), QStringLiteral("airbrush"), QStringLiteral("curve")}) {
+			gtd::CanvasObject stroke;
+			stroke.id = QStringLiteral("stroke-a");
+			stroke.layerId = QStringLiteral("layer-a");
+			stroke.type = type;
+			stroke.points = strokePoints;
+			QVERIFY2(gtd::isValidCanvasObject(stroke), qPrintable(type));
+		}
+
+		gtd::CanvasObject polygon;
+		polygon.id = QStringLiteral("polygon-a");
+		polygon.layerId = QStringLiteral("layer-a");
+		polygon.type = QStringLiteral("polygon");
+		polygon.points = QJsonArray{strokePoints.first(), strokePoints.last(),
+			QJsonObject{{QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.9}}};
+		QVERIFY(gtd::isValidCanvasObject(polygon));
+
+		gtd::CanvasObject roundedRectangle;
+		roundedRectangle.id = QStringLiteral("rounded-a");
+		roundedRectangle.layerId = QStringLiteral("layer-a");
+		roundedRectangle.type = QStringLiteral("rounded_rectangle");
+		QVERIFY(gtd::isValidCanvasObject(roundedRectangle));
+
+		gtd::CanvasObject fill;
+		fill.id = QStringLiteral("fill-a");
+		fill.layerId = QStringLiteral("layer-a");
+		fill.type = QStringLiteral("fill");
+		fill.imageData = QStringLiteral("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGZsAAAAASUVORK5CYII=");
+		const gtd::CanvasObject decodedFill = gtd::CanvasObject::fromJson(fill.toJson());
+		QVERIFY(gtd::isValidCanvasObject(decodedFill));
+		QCOMPARE(decodedFill.imageData, fill.imageData);
+		fill.imageData = QStringLiteral("not-an-image");
+		QVERIFY(!gtd::isValidCanvasObject(fill));
+	}
 };
 
 QTEST_GUILESS_MAIN(CanvasModelTests)

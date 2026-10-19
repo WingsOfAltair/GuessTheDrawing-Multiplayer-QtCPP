@@ -87,6 +87,7 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	room_.roundSeconds = clampRoundSeconds(room_.roundSeconds);
 	room_.maxPlayers = qBound(2, room_.maxPlayers, 32);
 	resetCanvas();
+	actionRateLimitClock_.start();
 
 	connect(&listener_, &QTcpServer::newConnection, this, [this] { acceptConnections(); });
 	masterSocket_.setReadBufferSize(MaximumFrameBytes);
@@ -183,12 +184,73 @@ void GameServer::acceptConnections()
 		QTcpSocket* socket = listener_.nextPendingConnection();
 		socket->setReadBufferSize(MaximumFrameBytes);
 		playerBuffers_.insert(socket, {});
+		socketRateLimits_.insert(socket, {});
 		connect(socket, &QTcpSocket::readyRead, this, [this, socket] { readPlayer(socket); });
 		connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
 			removePlayer(socket);
 			socket->deleteLater();
 		});
 	}
+}
+
+bool GameServer::allowAction(QTcpSocket* socket, const QString& type)
+{
+	int limit = 30;
+	QString bucket = QStringLiteral("other");
+	if (type == QStringLiteral("Ping")) {
+		bucket = type;
+		limit = 20;
+	} else if (type == QStringLiteral("JoinRoom")) {
+		bucket = type;
+		limit = 3;
+	} else if (type == QStringLiteral("Guess")) {
+		bucket = type;
+		limit = 8;
+	} else if (type == QStringLiteral("RoomChat")) {
+		bucket = type;
+		limit = 8;
+	} else if (type == QStringLiteral("VoiceFrame")) {
+		bucket = type;
+		limit = 60;
+	} else if (type == QStringLiteral("DrawStroke")) {
+		bucket = type;
+		limit = 100;
+	} else if (type == QStringLiteral("CanvasOperation")) {
+		bucket = type;
+		limit = 60;
+	} else if (type == QStringLiteral("ClearCanvas")) {
+		bucket = type;
+		limit = 10;
+	} else if (type == QStringLiteral("ChangeRole") || type == QStringLiteral("PromoteToPlayer")) {
+		bucket = QStringLiteral("role");
+		limit = 5;
+	} else if (type == QStringLiteral("LeaveRoom")) {
+		bucket = type;
+		limit = 2;
+	}
+
+	const qint64 now = actionRateLimitClock_.elapsed();
+	SocketRateLimit& socketLimit = socketRateLimits_[socket];
+	ActionWindow& actionWindow = socketLimit.actions[bucket];
+	if (actionWindow.startedAtMs < 0 || now - actionWindow.startedAtMs >= 1000) {
+		actionWindow.startedAtMs = now;
+		actionWindow.count = 0;
+	}
+	if (actionWindow.count < limit) {
+		++actionWindow.count;
+		return true;
+	}
+
+	if (socketLimit.strikeWindowStartedAtMs < 0 || now - socketLimit.strikeWindowStartedAtMs >= 60000) {
+		socketLimit.strikeWindowStartedAtMs = now;
+		socketLimit.strikes = 0;
+	}
+	if (++socketLimit.strikes >= 10) {
+		qWarning().noquote() << QStringLiteral("Disconnecting %1 after repeated rate-limit violations")
+			.arg(playersBySocket_.value(socket, socket->peerAddress().toString()));
+		socket->disconnectFromHost();
+	}
+	return false;
 }
 
 void GameServer::readPlayer(QTcpSocket* socket)
@@ -208,6 +270,8 @@ void GameServer::readPlayer(QTcpSocket* socket)
 void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (!allowAction(socket, type))
+		return;
 	if (type == QStringLiteral("Ping")) {
 		sendMessage(socket, reply(QStringLiteral("Pong"), message));
 		return;
@@ -432,6 +496,7 @@ void GameServer::changePlayerRole(QTcpSocket* socket, const QJsonObject& request
 void GameServer::removePlayer(QTcpSocket* socket)
 {
 	playerBuffers_.remove(socket);
+	socketRateLimits_.remove(socket);
 	const QString username = playersBySocket_.take(socket);
 	if (username.isEmpty())
 		return;
@@ -772,7 +837,8 @@ void GameServer::reportScore(const Player& player, int points, bool drawingPoint
 	if (!masterRegistered_)
 		return;
 	sendMessage(&masterSocket_, makeMessage(QStringLiteral("ScoreUpdate"),
-		{{QStringLiteral("username"), player.username}, {QStringLiteral("points"), points},
+		{{QStringLiteral("requestId"), QString::number(scoreUpdateSequence_++)},
+		 {QStringLiteral("username"), player.username}, {QStringLiteral("points"), points},
 		 {QStringLiteral("drawingPoints"), drawingPoints}}));
 }
 

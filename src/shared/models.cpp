@@ -1,6 +1,8 @@
 #include "shared/models.h"
 
+#include <QByteArray>
 #include <QRegularExpression>
+#include <QtEndian>
 #include <cmath>
 
 namespace gtd {
@@ -41,6 +43,25 @@ bool validPoints(const QJsonArray& points)
 			return false;
 	}
 	return true;
+}
+
+bool validCanvasImageData(const QString& imageData)
+{
+	if (imageData.isEmpty() || imageData.size() > MaximumCanvasImageDataLength)
+		return false;
+	const QByteArray encoded = imageData.toLatin1();
+	if (QString::fromLatin1(encoded) != imageData)
+		return false;
+	const QByteArray decoded = QByteArray::fromBase64(encoded);
+	if (decoded.toBase64() != encoded || decoded.size() < 24
+		|| decoded.left(8) != QByteArray::fromHex("89504e470d0a1a0a")
+		|| decoded.mid(12, 4) != QByteArrayLiteral("IHDR"))
+		return false;
+	const auto* header = reinterpret_cast<const uchar*>(decoded.constData() + 16);
+	const quint32 width = qFromBigEndian<quint32>(header);
+	const quint32 height = qFromBigEndian<quint32>(header + 4);
+	return width > 0 && height > 0 && width <= MaximumCanvasImageDimension
+		&& height <= MaximumCanvasImageDimension;
 }
 
 }
@@ -150,7 +171,7 @@ QJsonObject CanvasObject::toJson() const
 	return {{QStringLiteral("id"), id}, {QStringLiteral("layerId"), layerId},
 			{QStringLiteral("type"), type}, {QStringLiteral("color"), color},
 			{QStringLiteral("fillColor"), fillColor}, {QStringLiteral("text"), text},
-			{QStringLiteral("points"), points}, {QStringLiteral("x"), x},
+			{QStringLiteral("imageData"), imageData}, {QStringLiteral("points"), points}, {QStringLiteral("x"), x},
 			{QStringLiteral("y"), y}, {QStringLiteral("width"), width},
 			{QStringLiteral("height"), height}, {QStringLiteral("strokeWidth"), strokeWidth},
 			{QStringLiteral("fontSize"), fontSize}, {QStringLiteral("filled"), filled}};
@@ -165,6 +186,7 @@ CanvasObject CanvasObject::fromJson(const QJsonObject& object)
 	item.color = object.value(QStringLiteral("color")).toString(QStringLiteral("#202124"));
 	item.fillColor = object.value(QStringLiteral("fillColor")).toString(QStringLiteral("#ffffff"));
 	item.text = object.value(QStringLiteral("text")).toString();
+	item.imageData = object.value(QStringLiteral("imageData")).toString();
 	item.points = object.value(QStringLiteral("points")).toArray();
 	item.x = object.value(QStringLiteral("x")).toDouble();
 	item.y = object.value(QStringLiteral("y")).toDouble();
@@ -210,8 +232,11 @@ bool isValidCanvasObject(const CanvasObject& item, QString* error)
 		setValidationError(error, QStringLiteral("Invalid object or layer ID"));
 		return false;
 	}
-	if (item.type != QStringLiteral("freehand") && item.type != QStringLiteral("rectangle")
-		&& item.type != QStringLiteral("ellipse") && item.type != QStringLiteral("line")
+	if (item.type != QStringLiteral("freehand") && item.type != QStringLiteral("brush")
+		&& item.type != QStringLiteral("airbrush") && item.type != QStringLiteral("curve")
+		&& item.type != QStringLiteral("polygon") && item.type != QStringLiteral("rectangle")
+		&& item.type != QStringLiteral("rounded_rectangle") && item.type != QStringLiteral("ellipse")
+		&& item.type != QStringLiteral("line") && item.type != QStringLiteral("fill")
 		&& item.type != QStringLiteral("text")) {
 		setValidationError(error, QStringLiteral("Unsupported canvas object type"));
 		return false;
@@ -239,9 +264,24 @@ bool isValidCanvasObject(const CanvasObject& item, QString* error)
 		setValidationError(error, QStringLiteral("Only text objects may contain text"));
 		return false;
 	}
-	if (item.type == QStringLiteral("freehand")) {
+	if (item.type == QStringLiteral("fill")) {
+		if (!validCanvasImageData(item.imageData) || !item.points.isEmpty()) {
+			setValidationError(error, QStringLiteral("Fill objects require a valid bounded PNG image"));
+			return false;
+		}
+	} else if (!item.imageData.isEmpty()) {
+		setValidationError(error, QStringLiteral("Only fill objects may contain image data"));
+		return false;
+	}
+	if (item.type == QStringLiteral("freehand") || item.type == QStringLiteral("brush")
+		|| item.type == QStringLiteral("airbrush") || item.type == QStringLiteral("curve")) {
 		if (item.points.isEmpty() || !validPoints(item.points)) {
-			setValidationError(error, QStringLiteral("Freehand points are invalid or exceed the limit"));
+			setValidationError(error, QStringLiteral("Stroke points are invalid or exceed the limit"));
+			return false;
+		}
+	} else if (item.type == QStringLiteral("polygon")) {
+		if (item.points.size() < 3 || !validPoints(item.points)) {
+			setValidationError(error, QStringLiteral("Polygons require at least three normalized points"));
 			return false;
 		}
 	} else if (item.type == QStringLiteral("line")) {

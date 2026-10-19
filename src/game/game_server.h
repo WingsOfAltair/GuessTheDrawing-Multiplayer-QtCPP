@@ -3,6 +3,7 @@
 #include "shared/models.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QTcpServer>
@@ -43,9 +44,19 @@ private:
 		bool spectator = false;
 		bool queuedForPlayer = false;
 	};
+	struct ActionWindow {
+		qint64 startedAtMs = -1;
+		int count = 0;
+	};
+	struct SocketRateLimit {
+		QHash<QString, ActionWindow> actions;
+		qint64 strikeWindowStartedAtMs = -1;
+		int strikes = 0;
+	};
 
 	void acceptConnections();
 	void readPlayer(QTcpSocket* socket);
+	bool allowAction(QTcpSocket* socket, const QString& type);
 	void handlePlayerMessage(QTcpSocket* socket, const QJsonObject& message);
 	void joinRoom(QTcpSocket* socket, const QJsonObject& message);
 	void promoteToPlayer(QTcpSocket* socket, const QJsonObject& request);
@@ -98,7 +109,9 @@ private:
 	QTimer reconnectTimer_;
 	QTimer roundTimer_;
 	QTimer countdownTimer_;
+	QElapsedTimer actionRateLimitClock_;
 	QHash<QTcpSocket*, QByteArray> playerBuffers_;
+	QHash<QTcpSocket*, SocketRateLimit> socketRateLimits_;
 	QHash<QTcpSocket*, QString> playersBySocket_;
 	QHash<QString, Player> players_;
 	QHash<QString, QString> pendingProfiles_;
@@ -116,6 +129,7 @@ private:
 	int roundNumber_ = 0;
 	int correctGuesses_ = 0;
 	quint64 roundResultSequence_ = 1;
+	quint64 scoreUpdateSequence_ = 1;
 	int lastStatusPlayerCount_ = -1;
 	int lastStatusSpectatorCount_ = -1;
 	int lastStatusQueueCount_ = -1;

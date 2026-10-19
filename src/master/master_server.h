@@ -16,6 +16,7 @@ class MasterServer final : public QObject {
 public:
 	explicit MasterServer(AccountStore* accountStore, QString serverSecret, QString sessionSecret,
 						  QObject* parent = nullptr);
+	~MasterServer() override;
 	bool start(const QHostAddress& address, quint16 port);
 	QHostAddress serverAddress() const;
 	quint16 serverPort() const;
@@ -52,6 +53,7 @@ private:
 	QHash<QTcpSocket*, QString> serverIdsBySocket_;
 	QHash<QTcpSocket*, QString> authenticatedClients_;
 	QHash<QTcpSocket*, quint64> lastRoundResultSequence_;
+	QHash<QTcpSocket*, quint64> lastScoreUpdateSequence_;
 	QHash<QString, Registration> registrations_;
 	int lastRoomCount_ = -1;
 	int lastConnectedCount_ = -1;

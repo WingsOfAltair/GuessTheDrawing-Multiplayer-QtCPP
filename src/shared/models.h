@@ -53,6 +53,8 @@ struct DrawingStroke {
 inline constexpr int MaximumCanvasLayers = 32;
 inline constexpr int MaximumCanvasObjects = 1000;
 inline constexpr int MaximumObjectPoints = 2000;
+inline constexpr qsizetype MaximumCanvasImageDataLength = 700 * 1024;
+inline constexpr int MaximumCanvasImageDimension = 512;
 
 struct CanvasLayer {
 	QString id;
@@ -72,6 +74,7 @@ struct CanvasObject {
 	QString color = QStringLiteral("#202124");
 	QString fillColor = QStringLiteral("#ffffff");
 	QString text;
+	QString imageData;
 	QJsonArray points;
 	double x = 0.0;
 	double y = 0.0;
