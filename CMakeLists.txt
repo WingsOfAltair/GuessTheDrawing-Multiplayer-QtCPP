@@ -38,6 +38,14 @@ add_executable(gtd_game_server src/game/main.cpp src/game/game_server.cpp src/ga
 target_link_libraries(gtd_game_server PRIVATE gtd_shared Qt6::Core Qt6::Network)
 
 add_executable(gtd_client src/client/main.cpp src/client/main_window.cpp src/client/main_window.h src/client/drawing_canvas.cpp src/client/drawing_canvas.h)
+foreach(dictionary_target IN ITEMS gtd_game_server gtd_client)
+	add_custom_command(TARGET ${dictionary_target} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_SOURCE_DIR}/dictionary"
+			"$<TARGET_FILE_DIR:${dictionary_target}>/dictionary"
+		VERBATIM
+	)
+endforeach()
 file(GLOB COUNTRY_FLAG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/country-flags/*.png")
 qt_add_resources(gtd_client country_flags
 	PREFIX "/country-flags"
@@ -69,6 +77,12 @@ if(BUILD_TESTING)
 	add_test(NAME gtd_drawing_canvas_tests COMMAND gtd_drawing_canvas_tests)
 	add_executable(gtd_game_server_tests tests/test_game_server.cpp src/game/game_server.cpp src/game/game_server.h)
 	target_link_libraries(gtd_game_server_tests PRIVATE gtd_shared Qt6::Test)
+	add_custom_command(TARGET gtd_game_server_tests POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_SOURCE_DIR}/dictionary"
+			"$<TARGET_FILE_DIR:gtd_game_server_tests>/dictionary"
+		VERBATIM
+	)
 	add_test(NAME gtd_game_server_tests COMMAND gtd_game_server_tests)
 	add_executable(gtd_master_tests tests/test_master_server.cpp src/master/master_server.cpp src/master/master_server.h)
 	target_link_libraries(gtd_master_tests PRIVATE gtd_storage gtd_shared Qt6::Test)

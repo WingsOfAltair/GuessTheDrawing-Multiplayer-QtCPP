@@ -9,6 +9,7 @@ class AppConfig {
 public:
 	static QString defaultPath();
 	static QString defaultExportDirectory();
+	static QString defaultDictionaryPath();
 
 	bool loadOrCreate(const QString& filePath, QString* error = nullptr);
 	QString stringValue(const QString& section, const QString& key) const;

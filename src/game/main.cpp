@@ -89,7 +89,8 @@ int main(int argc, char* argv[])
 	gtd::GameServer server(room, serverId,
 						   publicHost,
 						   masterAddress,
-						   static_cast<quint16>(masterPort), serverSecret, sessionSecret);
+						   static_cast<quint16>(masterPort), serverSecret, sessionSecret,
+						   config.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")));
 	if (!server.start(&error)) {
 		QTextStream(stderr) << "Unable to start game server: " << error << '\n';
 		return 1;

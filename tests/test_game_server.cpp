@@ -5,8 +5,10 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFile>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTemporaryDir>
 #include <QtTest>
 
 class GameServerTests final : public QObject {
@@ -47,6 +49,14 @@ private slots:
 
 	void relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly()
 	{
+		QTemporaryDir dictionaryDirectory;
+		QVERIFY(dictionaryDirectory.isValid());
+		const QString dictionaryPath = dictionaryDirectory.filePath(QStringLiteral("words.txt"));
+		QFile dictionary(dictionaryPath);
+		QVERIFY(dictionary.open(QIODevice::WriteOnly | QIODevice::Text));
+		QCOMPARE(dictionary.write("customword\n"), qint64(11));
+		dictionary.close();
+
 		QTcpServer master;
 		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
 
@@ -56,7 +66,7 @@ private slots:
 		room.maxPlayers = 2;
 		gtd::GameServer server(room, QStringLiteral("server-chat-voice"), QStringLiteral("127.0.0.1"),
 			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
-			QStringLiteral("session-secret"));
+			QStringLiteral("session-secret"), dictionaryPath);
 		QString error;
 		QVERIFY2(server.start(&error), qPrintable(error));
 		QTRY_VERIFY(master.hasPendingConnections());
@@ -105,6 +115,9 @@ private slots:
 		QVERIFY(drawerUsername == QStringLiteral("voice-first") || drawerUsername == QStringLiteral("voice-second"));
 		QTcpSocket* drawer = drawerUsername == QStringLiteral("voice-first") ? &firstPlayer : &secondPlayer;
 		QTcpSocket* listener = drawer == &firstPlayer ? &secondPlayer : &firstPlayer;
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("WordAssigned")).isEmpty());
+		QCOMPARE(findMessage(drawer, QStringLiteral("WordAssigned"))
+			.value(QStringLiteral("word")).toString(), QStringLiteral("customword"));
 
 		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("RoomChat"),
 			{{QStringLiteral("requestId"), QStringLiteral("drawer-chat")},

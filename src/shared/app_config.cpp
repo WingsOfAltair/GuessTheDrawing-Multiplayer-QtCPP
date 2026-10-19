@@ -54,6 +54,11 @@ QString AppConfig::defaultExportDirectory()
 	return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("Saved/Drawings"));
 }
 
+QString AppConfig::defaultDictionaryPath()
+{
+	return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("dictionary"));
+}
+
 QJsonObject AppConfig::defaults()
 {
 	return {
@@ -80,7 +85,8 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("masterPort"), 45450},
 			{QStringLiteral("language"), QStringLiteral("en")},
 			{QStringLiteral("theme"), QStringLiteral("system")},
-			{QStringLiteral("exportDirectory"), defaultExportDirectory()}}}
+			{QStringLiteral("exportDirectory"), defaultExportDirectory()},
+			{QStringLiteral("dictionaryPath"), defaultDictionaryPath()}}}
 	};
 }
 
@@ -178,7 +184,8 @@ bool AppConfig::validate(QString* error) const
 		|| !requirePort(game, QStringLiteral("masterPort"), false, error)
 		|| !requirePort(client, QStringLiteral("masterPort"), false, error)
 		|| !requireString(client, QStringLiteral("masterAddress"), error)
-		|| !requireString(client, QStringLiteral("exportDirectory"), error))
+		|| !requireString(client, QStringLiteral("exportDirectory"), error)
+		|| !requireString(client, QStringLiteral("dictionaryPath"), error))
 		return false;
 
 	const int roundSeconds = game.value(QStringLiteral("roundSeconds")).toInt(-1);

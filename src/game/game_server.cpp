@@ -5,7 +5,10 @@
 #include "shared/protocol.h"
 
 #include <algorithm>
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QRandomGenerator>
@@ -71,7 +74,7 @@ void writeConsoleStatus(const QString& status)
 
 GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 					   quint16 masterPort, QString serverSecret, QString sessionSecret,
-					   QObject* parent)
+					   QString dictionaryPath, QObject* parent)
 	: QObject(parent),
 	  room_(std::move(room)),
 	  serverId_(std::move(serverId)),
@@ -79,7 +82,10 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	  masterHost_(std::move(masterHost)),
 	  masterPort_(masterPort),
 	  serverSecret_(std::move(serverSecret)),
-	  sessionSecret_(std::move(sessionSecret))
+	  sessionSecret_(std::move(sessionSecret)),
+	  dictionaryPath_(dictionaryPath.trimmed().isEmpty()
+		? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("dictionary"))
+		: std::move(dictionaryPath))
 {
 	room_.serverId = serverId_;
 	room_.roomId = room_.roomId.trimmed();
@@ -162,6 +168,8 @@ bool GameServer::start(QString* error)
 			*error = QStringLiteral("Server ID, room ID/name, and secrets are required");
 		return false;
 	}
+	if (!loadDictionary(error))
+		return false;
 	if (!listener_.listen(QHostAddress::AnyIPv4, room_.port)) {
 		if (error)
 			*error = listener_.errorString();
@@ -1205,13 +1213,31 @@ bool GameServer::validStroke(const QJsonObject& object, DrawingStroke* stroke) c
 
 QString GameServer::selectWord() const
 {
-	static const QStringList words{
-		QStringLiteral("cat"), QStringLiteral("bicycle"), QStringLiteral("castle"),
-		QStringLiteral("guitar"), QStringLiteral("rainbow"), QStringLiteral("airplane"),
-		QStringLiteral("watermelon"), QStringLiteral("turtle"), QStringLiteral("volcano"),
-		QStringLiteral("lighthouse"), QStringLiteral("snowman"), QStringLiteral("rocket"),
-		QStringLiteral("piano"), QStringLiteral("sunflower"), QStringLiteral("octopus")};
-	return words.at(QRandomGenerator::global()->bounded(static_cast<int>(words.size())));
+	return words_.at(QRandomGenerator::global()->bounded(static_cast<int>(words_.size())));
+}
+
+bool GameServer::loadDictionary(QString* error)
+{
+	QFile dictionary(dictionaryPath_);
+	if (!dictionary.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		if (error)
+			*error = QStringLiteral("Unable to open dictionary '%1': %2").arg(dictionaryPath_, dictionary.errorString());
+		return false;
+	}
+	QStringList loadedWords;
+	while (!dictionary.atEnd()) {
+		const QString word = QString::fromUtf8(dictionary.readLine()).trimmed();
+		if (word.isEmpty() || word.size() > 40 || !isValidSingleLineText(word, 40))
+			continue;
+		loadedWords.append(word);
+	}
+	if (loadedWords.isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Dictionary '%1' contains no usable words").arg(dictionaryPath_);
+		return false;
+	}
+	words_ = std::move(loadedWords);
+	return true;
 }
 
 }

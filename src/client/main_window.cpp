@@ -1285,6 +1285,16 @@ QWidget* MainWindow::createLobbyPage()
 	auto* exportDirectoryLabel = new QLabel(appSettingsPage);
 	setLocalizedText(exportDirectoryLabel, QStringLiteral("Drawing export folder"), languageCode_);
 	appSettingsLayout->addRow(exportDirectoryLabel, exportDirectoryRow);
+	auto* dictionaryPathEdit = new QLineEdit(
+		config_.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")), appSettingsPage);
+	auto* browseDictionaryButton = new QPushButton(QStringLiteral("Browse"), appSettingsPage);
+	setLocalizedText(browseDictionaryButton, QStringLiteral("Browse"), languageCode_);
+	auto* dictionaryPathRow = new QHBoxLayout;
+	dictionaryPathRow->addWidget(dictionaryPathEdit, 1);
+	dictionaryPathRow->addWidget(browseDictionaryButton);
+	auto* dictionaryPathLabel = new QLabel(appSettingsPage);
+	setLocalizedText(dictionaryPathLabel, QStringLiteral("Guess word dictionary file"), languageCode_);
+	appSettingsLayout->addRow(dictionaryPathLabel, dictionaryPathRow);
 	settingsStatusLabel_ = new QLabel(appSettingsPage);
 	settingsStatusLabel_->setWordWrap(true);
 	appSettingsLayout->addRow(settingsStatusLabel_);
@@ -1347,6 +1357,30 @@ QWidget* MainWindow::createLobbyPage()
 		if (!directory.isEmpty()) {
 			exportDirectoryEdit->setText(directory);
 			persistExportDirectory();
+		}
+	});
+	auto persistDictionaryPath = [this, dictionaryPathEdit] {
+		const QString path = dictionaryPathEdit->text().trimmed();
+		QString error;
+		if (path.isEmpty() || !config_.setStringValue(QStringLiteral("client"),
+			QStringLiteral("dictionaryPath"), path, &error)) {
+			dictionaryPathEdit->setText(config_.stringValue(
+				QStringLiteral("client"), QStringLiteral("dictionaryPath")));
+			setLocalizedFormattedText(settingsStatusLabel_, QStringLiteral("Could not save dictionary path: %1"),
+				{error.isEmpty() ? QStringLiteral("File path cannot be empty") : error}, languageCode_);
+			return;
+		}
+		dictionaryPathEdit->setText(path);
+		settingsStatusLabel_->clear();
+	};
+	connect(dictionaryPathEdit, &QLineEdit::editingFinished, this, persistDictionaryPath);
+	connect(browseDictionaryButton, &QPushButton::clicked, this, [this, dictionaryPathEdit, persistDictionaryPath] {
+		const QString path = QFileDialog::getOpenFileName(this,
+			localizedText(QStringLiteral("Guess word dictionary file"), languageCode_),
+			dictionaryPathEdit->text(), QStringLiteral("Text files (*.txt);;All files (*)"));
+		if (!path.isEmpty()) {
+			dictionaryPathEdit->setText(path);
+			persistDictionaryPath();
 		}
 	});
 	connect(tabs, &QTabWidget::currentChanged, this, [this](int index) {

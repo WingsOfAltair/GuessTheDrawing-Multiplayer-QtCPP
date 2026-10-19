@@ -17,7 +17,7 @@ class GameServer final : public QObject {
 public:
 	GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 			   quint16 masterPort, QString serverSecret, QString sessionSecret,
-			   QObject* parent = nullptr);
+			   QString dictionaryPath = {}, QObject* parent = nullptr);
 	~GameServer() override;
 	bool start(QString* error = nullptr);
 	quint16 port() const;
@@ -94,6 +94,7 @@ private:
 	void sendGuess(const QString& username, const QString& text);
 	bool validStroke(const QJsonObject& object, DrawingStroke* stroke) const;
 	QString selectWord() const;
+	bool loadDictionary(QString* error);
 
 	RoomInfo room_;
 	QString serverId_;
@@ -102,6 +103,8 @@ private:
 	quint16 masterPort_ = 0;
 	QString serverSecret_;
 	QString sessionSecret_;
+	QString dictionaryPath_;
+	QStringList words_;
 	QTcpServer listener_;
 	QTcpSocket masterSocket_;
 	QByteArray masterBuffer_;

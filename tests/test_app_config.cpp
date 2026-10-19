@@ -33,6 +33,8 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("theme")), QStringLiteral("system"));
 	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("exportDirectory")),
 		gtd::AppConfig::defaultExportDirectory());
+	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
+		gtd::AppConfig::defaultDictionaryPath());
 
 	gtd::AppConfig second;
 	QVERIFY2(second.loadOrCreate(path, &error), qPrintable(error));
@@ -45,11 +47,15 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	const QString exportDirectory = directory.filePath(QStringLiteral("custom-drawings"));
 	QVERIFY2(second.setStringValue(QStringLiteral("client"), QStringLiteral("exportDirectory"), exportDirectory, &error),
 		qPrintable(error));
+	const QString dictionaryPath = directory.filePath(QStringLiteral("custom-dictionary.txt"));
+	QVERIFY2(second.setStringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath"), dictionaryPath, &error),
+		qPrintable(error));
 	gtd::AppConfig third;
 	QVERIFY2(third.loadOrCreate(path, &error), qPrintable(error));
 	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("language")), QStringLiteral("ar"));
 	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("theme")), QStringLiteral("dark"));
 	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("exportDirectory")), exportDirectory);
+	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")), dictionaryPath);
 	QCOMPARE(second.resolvedPath(QStringLiteral("master"), QStringLiteral("database")),
 			 directory.filePath(QStringLiteral("gtd.sqlite")));
 }
