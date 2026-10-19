@@ -15,6 +15,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -43,6 +44,22 @@
 namespace gtd {
 
 namespace {
+
+QIcon countryFlagIcon(const QString& countryCode)
+{
+	const QString code = countryCode.toUpper();
+	if (code.size() != 2 && code.size() != 6)
+		return {};
+	for (int index = 0; index < code.size(); ++index) {
+		if (code.size() == 6 && index == 2) {
+			if (code[index] != QLatin1Char('-'))
+				return {};
+		} else if (code[index] < QLatin1Char('A') || code[index] > QLatin1Char('Z')) {
+			return {};
+		}
+	}
+	return QIcon(QStringLiteral(":/country-flags/%1.png").arg(code.toLower()));
+}
 
 QString localizedText(const QString& source, const QString& languageCode)
 {
@@ -1080,18 +1097,19 @@ QWidget* MainWindow::createLobbyPage()
 	topRow->addWidget(connectionStatusLabel_, 0, 1);
 	countryCombo_ = new QComboBox(page);
 	countryCombo_->setObjectName(QStringLiteral("countryCombo"));
+	countryCombo_->setIconSize(QSize(24, 16));
 	countryCombo_->addItem(QStringLiteral("Choose country…"), QString());
 	const QStringList countryCodes = QStringLiteral(
 		"AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT "
 		"BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH "
-		"ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT "
+		"ER ES ET FI FJ FK FM FO FR GA GB GB-ENG GB-NIR GB-SCT GB-WLS GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT "
 		"HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS "
 		"LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI "
 		"NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG "
 		"SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG "
-		"UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW").split(QLatin1Char(' '), Qt::SkipEmptyParts);
+		"UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW").split(QLatin1Char(' '), Qt::SkipEmptyParts);
 	for (const QString& countryCode : countryCodes)
-		countryCombo_->addItem(countryCode, countryCode);
+		countryCombo_->addItem(countryFlagIcon(countryCode), countryCode, countryCode);
 	auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), page);
 	setLocalizedText(refreshButton, QStringLiteral("Refresh"), languageCode_);
 	topRow->addWidget(refreshButton, 0, 2);
@@ -1228,7 +1246,10 @@ QWidget* MainWindow::createLobbyPage()
 	settingsPage->setProperty("gtdTabSourceText", QStringLiteral("Settings"));
 	tabs->addTab(settingsPage, localizedText(QStringLiteral("Settings"), languageCode_));
 	layout->addWidget(tabs, 1);
-	connect(refreshButton, &QPushButton::clicked, this, [this] { requestRooms(); });
+	connect(refreshButton, &QPushButton::clicked, this, [this] {
+		requestRooms();
+		requestLeaderboards();
+	});
 	connect(saveProfileButton, &QPushButton::clicked, this, [this] { saveProfile(); });
 	connect(languageCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
 		const QString languageCode = languageCombo_->itemData(index).toString();
@@ -1400,6 +1421,7 @@ QWidget* MainWindow::createGamePage()
 	setLocalizedText(rosterLabel, QStringLiteral("Players and spectators"), languageCode_);
 	sidePanel->addWidget(rosterLabel);
 	rosterList_ = new QListWidget(page);
+	rosterList_->setIconSize(QSize(24, 16));
 	rosterList_->setMinimumHeight(90);
 	rosterList_->setMaximumHeight(140);
 	sidePanel->addWidget(rosterList_);
@@ -1749,18 +1771,13 @@ void MainWindow::populateLeaderboard(QTableWidget* table, const QJsonArray& play
 	for (int row = 0; row < players.size(); ++row) {
 		const PlayerProfile profile = PlayerProfile::fromJson(players.at(row).toObject());
 		const int rank = drawingPoints ? profile.drawingLeaderboardRank : profile.guessingLeaderboardRank;
-		QString flag = QStringLiteral("🏳");
-		if (profile.countryCode.size() == 2 && profile.countryCode[0].isLetter() && profile.countryCode[1].isLetter()) {
-			const char32_t flagCharacters[] = {
-				static_cast<char32_t>(profile.countryCode[0].toUpper().unicode() - QLatin1Char('A').unicode() + 0x1F1E6),
-				static_cast<char32_t>(profile.countryCode[1].toUpper().unicode() - QLatin1Char('A').unicode() + 0x1F1E6)};
-			flag = QString::fromUcs4(flagCharacters, 2);
-			flag.append(QStringLiteral(" %1").arg(profile.countryCode));
-		}
 		const int points = drawingPoints ? profile.drawingScore : profile.guessingScore;
 		table->setItem(row, 0, new QTableWidgetItem(QString::number(rank)));
 		table->setItem(row, 1, new QTableWidgetItem(QStringLiteral("%1 (@%2)").arg(profile.displayName, profile.username)));
-		table->setItem(row, 2, new QTableWidgetItem(flag));
+		auto* countryItem = new QTableWidgetItem(profile.countryCode.isEmpty()
+			? localizedText(QStringLiteral("Country not set"), languageCode_) : profile.countryCode);
+		countryItem->setIcon(countryFlagIcon(profile.countryCode));
+		table->setItem(row, 2, countryItem);
 		table->item(row, 2)->setToolTip(profile.countryCode.isEmpty()
 			? localizedText(QStringLiteral("Country not set"), languageCode_) : profile.countryCode);
 		table->setItem(row, 3, new QTableWidgetItem(QString::number(points)));
@@ -2441,7 +2458,11 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		QString rosterText = localizedText(QStringLiteral("%1%2%3 (@%4)\nRoom: %5 · Total: %6"), languageCode_);
 		rosterText = rosterText.arg(profile.displayName, role, drawing, profile.username)
 			.arg(entry.value(QStringLiteral("roomScore")).toInt()).arg(profile.totalScore);
+		const QString countryText = profile.countryCode.isEmpty()
+			? localizedText(QStringLiteral("Country not set"), languageCode_) : profile.countryCode;
+		rosterText.insert(rosterText.indexOf(QLatin1Char('\n')), QStringLiteral(" · %1").arg(countryText));
 		auto* rosterItem = new QListWidgetItem(rosterText, rosterList_);
+		rosterItem->setIcon(countryFlagIcon(profile.countryCode));
 		const QString globalRank = profile.leaderboardRank > 0
 			? QStringLiteral("#%1").arg(profile.leaderboardRank)
 			: localizedText(QStringLiteral("Unranked"), languageCode_);
@@ -2462,6 +2483,15 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 			.arg(profile.guessingScore).arg(guessingRank, guessingLeaderboardRank)
 			.arg(profile.drawingScore).arg(drawingRank, drawingLeaderboardRank)
 			.arg(profile.totalScore).arg(globalRank).arg(profile.roundsWon).arg(profile.roundsLost).arg(ratio);
+		rosterToolTip = rosterToolTip.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"));
+		if (profile.countryCode.isEmpty()) {
+			rosterToolTip += QStringLiteral("<br>%1")
+				.arg(localizedText(QStringLiteral("Country not set"), languageCode_).toHtmlEscaped());
+		} else {
+			const QString countryCode = profile.countryCode.toLower();
+			rosterToolTip += QStringLiteral("<br>Country: <img src=\":/country-flags/%1.png\" width=\"24\" height=\"16\"> %2")
+				.arg(countryCode, profile.countryCode.toHtmlEscaped());
+		}
 		rosterItem->setToolTip(rosterToolTip);
 	}
 	updateRoundControls();

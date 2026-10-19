@@ -38,6 +38,12 @@ add_executable(gtd_game_server src/game/main.cpp src/game/game_server.cpp src/ga
 target_link_libraries(gtd_game_server PRIVATE gtd_shared Qt6::Core Qt6::Network)
 
 add_executable(gtd_client src/client/main.cpp src/client/main_window.cpp src/client/main_window.h src/client/drawing_canvas.cpp src/client/drawing_canvas.h)
+file(GLOB COUNTRY_FLAG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/country-flags/*.png")
+qt_add_resources(gtd_client country_flags
+	PREFIX "/country-flags"
+	BASE "${CMAKE_CURRENT_SOURCE_DIR}/country-flags"
+	FILES ${COUNTRY_FLAG_FILES}
+)
 if(WIN32)
 	set_target_properties(gtd_client PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()

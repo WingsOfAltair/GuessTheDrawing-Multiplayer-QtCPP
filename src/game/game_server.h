@@ -27,6 +27,7 @@ private:
 		QString username;
 		QString displayName;
 		QString avatarUrl;
+		QString countryCode;
 		QString authToken;
 		int roomScore = 0;
 		int guessingScore = 0;

@@ -173,6 +173,7 @@ private slots:
 						 {QStringLiteral("profile"), QJsonObject{
 							 {QStringLiteral("username"), QStringLiteral("ranked-player")},
 							 {QStringLiteral("displayName"), QStringLiteral("Ranked Player")},
+							 {QStringLiteral("countryCode"), QStringLiteral("XK")},
 							 {QStringLiteral("guessingScore"), 10},
 							 {QStringLiteral("drawingScore"), 10},
 							 {QStringLiteral("totalScore"), 20},
@@ -220,6 +221,7 @@ private slots:
 		QCOMPARE(latestRosterProfile.value(QStringLiteral("drawingLeaderboardRank")).toInt(), 1);
 		QCOMPARE(latestRosterProfile.value(QStringLiteral("guessingRank")).toString(), QStringLiteral("Word Seeker I"));
 		QCOMPARE(latestRosterProfile.value(QStringLiteral("drawingRank")).toString(), QStringLiteral("Pencil I"));
+		QCOMPARE(latestRosterProfile.value(QStringLiteral("countryCode")).toString(), QStringLiteral("XK"));
 	}
 
 	void reconnectsWhenMasterStartsLater()

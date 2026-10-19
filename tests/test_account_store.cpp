@@ -111,6 +111,10 @@ private slots:
 		for (const QString& username : {QStringLiteral("alpha"), QStringLiteral("bravo"), QStringLiteral("charlie")})
 			QVERIFY2(store.createAccount(username, QStringLiteral("password1"), username, &error), qPrintable(error));
 		QVERIFY2(store.updateCountry(QStringLiteral("alpha"), QStringLiteral("us"), &error), qPrintable(error));
+		for (const QString& countryCode : {QStringLiteral("XK"), QStringLiteral("GB-ENG"),
+			QStringLiteral("GB-NIR"), QStringLiteral("GB-SCT"), QStringLiteral("GB-WLS")})
+			QVERIFY2(store.updateCountry(QStringLiteral("alpha"), countryCode, &error), qPrintable(error));
+		QVERIFY2(store.updateCountry(QStringLiteral("alpha"), QStringLiteral("US"), &error), qPrintable(error));
 		QVERIFY(!store.updateCountry(QStringLiteral("bravo"), QStringLiteral("ZZ"), &error));
 		QVERIFY2(store.addScore(QStringLiteral("alpha"), 100, false, &error), qPrintable(error));
 		QVERIFY2(store.addScore(QStringLiteral("bravo"), 200, false, &error), qPrintable(error));
@@ -143,6 +147,10 @@ private slots:
 			QStringLiteral("Old Nickname"), &error), qPrintable(error));
 		QVERIFY2(store.updateProfile(QStringLiteral("profileuser"), QStringLiteral("New Nickname"),
 			QStringLiteral("ca"), QString(), QString(), &error), qPrintable(error));
+		for (const QString& countryCode : {QStringLiteral("XK"), QStringLiteral("GB-ENG"),
+			QStringLiteral("GB-NIR"), QStringLiteral("GB-SCT"), QStringLiteral("GB-WLS")})
+			QVERIFY2(store.updateProfile(QStringLiteral("profileuser"), QStringLiteral("New Nickname"),
+				countryCode, QString(), QString(), &error), qPrintable(error));
 		QVERIFY(!store.updateProfile(QStringLiteral("profileuser"), QStringLiteral("Changed"),
 			QStringLiteral("US"), QStringLiteral("wrongpassword"), QStringLiteral("newpassword"), &error));
 		QVERIFY(!store.updateProfile(QStringLiteral("profileuser"), QStringLiteral("Changed"),

@@ -595,6 +595,7 @@ QJsonArray GameServer::roster() const
 		profile.username = player.username;
 		profile.displayName = player.displayName;
 		profile.avatarUrl = player.avatarUrl;
+		profile.countryCode = player.countryCode;
 		profile.guessingScore = player.guessingScore;
 		profile.drawingScore = player.drawingScore;
 		profile.totalScore = player.guessingScore + player.drawingScore;
@@ -675,6 +676,7 @@ void GameServer::readMaster()
 					message.value(QStringLiteral("profile")).toObject());
 				player->displayName = profile.displayName;
 				player->avatarUrl = profile.avatarUrl;
+				player->countryCode = profile.countryCode;
 				player->guessingScore = profile.guessingScore;
 				player->drawingScore = profile.drawingScore;
 				player->roundsWon = profile.roundsWon;
@@ -694,6 +696,7 @@ void GameServer::readMaster()
 					message.value(QStringLiteral("profile")).toObject());
 				player->roundsWon = profile.roundsWon;
 				player->roundsLost = profile.roundsLost;
+				player->countryCode = profile.countryCode;
 				player->guessingScore = profile.guessingScore;
 				player->drawingScore = profile.drawingScore;
 				player->leaderboardRank = profile.leaderboardRank;
@@ -712,6 +715,7 @@ void GameServer::readMaster()
 				player->guessingScore = profile.guessingScore;
 				player->drawingScore = profile.drawingScore;
 				player->avatarUrl = profile.avatarUrl;
+				player->countryCode = profile.countryCode;
 				player->roundsWon = profile.roundsWon;
 				player->roundsLost = profile.roundsLost;
 				player->leaderboardRank = profile.leaderboardRank;
