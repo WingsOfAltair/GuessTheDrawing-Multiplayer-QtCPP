@@ -230,6 +230,10 @@ void DrawingCanvas::setDrawingAllowed(bool allowed)
 	drawingAllowed_ = allowed;
 	setCursor(allowed ? (tool_ == Tool::Select ? Qt::ArrowCursor : Qt::CrossCursor) : Qt::ForbiddenCursor);
 	if (!allowed) {
+		if (polygonInProgress_)
+			cancelHistoryTransaction();
+		else
+			endHistoryTransaction();
 		dragMode_ = DragMode::None;
 		polygonInProgress_ = false;
 		previewObject_ = CanvasObject{};
@@ -239,8 +243,11 @@ void DrawingCanvas::setDrawingAllowed(bool allowed)
 void DrawingCanvas::setTool(Tool tool)
 {
 	if (tool_ != tool && polygonInProgress_) {
+		cancelHistoryTransaction();
 		polygonInProgress_ = false;
 		previewObject_ = CanvasObject{};
+	} else if (tool_ != tool) {
+		endHistoryTransaction();
 	}
 	tool_ = tool;
 	setCursor(!drawingAllowed_ ? Qt::ForbiddenCursor
@@ -340,10 +347,35 @@ void DrawingCanvas::fillAt(const QPointF& position)
 	emitObjectUpsert(fill);
 }
 
+void DrawingCanvas::pickColorAt(const QPointF& position)
+{
+	const qreal scale = qMin<qreal>(1.0,
+		static_cast<qreal>(MaximumCanvasImageDimension) / qMax(width(), height()));
+	const QSize rasterSize(qMax(1, qRound(width() * scale)), qMax(1, qRound(height() * scale)));
+	QImage layerImage(rasterSize, QImage::Format_ARGB32_Premultiplied);
+	layerImage.fill(Qt::transparent);
+	QPainter painter(&layerImage);
+	painter.setRenderHint(QPainter::Antialiasing);
+	painter.scale(static_cast<qreal>(rasterSize.width()) / qMax(1, width()),
+		static_cast<qreal>(rasterSize.height()) / qMax(1, height()));
+	for (const CanvasObject& object : objects_) {
+		if (object.layerId == activeLayerId_)
+			paintObject(painter, object);
+	}
+	painter.end();
+	const int x = qBound(0, qRound(position.x() * (rasterSize.width() - 1)), rasterSize.width() - 1);
+	const int y = qBound(0, qRound(position.y() * (rasterSize.height() - 1)), rasterSize.height() - 1);
+	const QColor sampled = layerImage.pixelColor(x, y);
+	if (sampled.alpha() > 0)
+		setCurrentColor(sampled.name(QColor::HexRgb));
+}
+
 void DrawingCanvas::setCurrentColor(const QString& color)
 {
-	if (QColor(color).isValid())
+	if (QColor(color).isValid() && currentColor_ != color) {
 		currentColor_ = color;
+		emit currentColorChanged(currentColor_);
+	}
 }
 
 void DrawingCanvas::setStrokeWidth(int width)
@@ -361,8 +393,130 @@ void DrawingCanvas::setFilled(bool filled)
 	filled_ = filled;
 }
 
+bool DrawingCanvas::canUndo() const
+{
+	return !undoHistory_.isEmpty();
+}
+
+bool DrawingCanvas::canRedo() const
+{
+	return !redoHistory_.isEmpty();
+}
+
+void DrawingCanvas::beginHistoryTransaction()
+{
+	if (historyTransactionActive_)
+		return;
+	pendingHistoryBefore_.clear();
+	historyTransactionActive_ = true;
+}
+
+void DrawingCanvas::recordHistoryObject(const QString& objectId)
+{
+	if (!historyTransactionActive_ || pendingHistoryBefore_.contains(objectId))
+		return;
+	HistoryObjectState state;
+	if (const CanvasObject* object = findObject(objectId)) {
+		state.exists = true;
+		state.object = *object;
+	}
+	pendingHistoryBefore_.insert(objectId, state);
+}
+
+void DrawingCanvas::endHistoryTransaction()
+{
+	if (!historyTransactionActive_)
+		return;
+	historyTransactionActive_ = false;
+	HistoryEntry entry;
+	for (auto iterator = pendingHistoryBefore_.cbegin(); iterator != pendingHistoryBefore_.cend(); ++iterator) {
+		HistoryObjectState after;
+		if (const CanvasObject* object = findObject(iterator.key())) {
+			after.exists = true;
+			after.object = *object;
+		}
+		const HistoryObjectState& before = iterator.value();
+		if (before.exists == after.exists
+			&& (!before.exists || before.object.toJson() == after.object.toJson()))
+			continue;
+		entry.before.insert(iterator.key(), before);
+		entry.after.insert(iterator.key(), after);
+	}
+	pendingHistoryBefore_.clear();
+	if (entry.before.isEmpty())
+		return;
+	undoHistory_.append(entry);
+	if (undoHistory_.size() > 50)
+		undoHistory_.removeFirst();
+	redoHistory_.clear();
+	emitHistoryChanged();
+}
+
+void DrawingCanvas::cancelHistoryTransaction()
+{
+	historyTransactionActive_ = false;
+	pendingHistoryBefore_.clear();
+}
+
+void DrawingCanvas::restoreHistoryObjects(const QHash<QString, HistoryObjectState>& target)
+{
+	QStringList objectIds = target.keys();
+	std::sort(objectIds.begin(), objectIds.end());
+	for (const QString& id : objectIds) {
+		if (!target.value(id).exists && findObject(id))
+			emitOperation({{QStringLiteral("action"), QStringLiteral("object_delete")},
+						   {QStringLiteral("objectId"), id}});
+	}
+	for (const QString& id : objectIds) {
+		const HistoryObjectState& state = target.value(id);
+		if (state.exists)
+			emitObjectUpsert(state.object);
+	}
+}
+
+void DrawingCanvas::undo()
+{
+	if (!drawingAllowed_ || undoHistory_.isEmpty())
+		return;
+	const HistoryEntry entry = undoHistory_.takeLast();
+	historyReplay_ = true;
+	restoreHistoryObjects(entry.before);
+	historyReplay_ = false;
+	redoHistory_.append(entry);
+	emitHistoryChanged();
+}
+
+void DrawingCanvas::redo()
+{
+	if (!drawingAllowed_ || redoHistory_.isEmpty())
+		return;
+	const HistoryEntry entry = redoHistory_.takeLast();
+	historyReplay_ = true;
+	restoreHistoryObjects(entry.after);
+	historyReplay_ = false;
+	undoHistory_.append(entry);
+	emitHistoryChanged();
+}
+
+void DrawingCanvas::clearHistory()
+{
+	undoHistory_.clear();
+	redoHistory_.clear();
+	cancelHistoryTransaction();
+	emitHistoryChanged();
+}
+
+void DrawingCanvas::emitHistoryChanged()
+{
+	emit historyChanged(canUndo(), canRedo());
+}
+
 void DrawingCanvas::setScene(const QJsonArray& layers, const QJsonArray& objects)
 {
+	clearHistory();
+	previewObject_ = CanvasObject{};
+	polygonInProgress_ = false;
+	dragMode_ = DragMode::None;
 	const QString oldSelection = activeLayerId_;
 	layers_.clear();
 	objects_.clear();
@@ -401,12 +555,14 @@ void DrawingCanvas::setScene(const QJsonArray& layers, const QJsonArray& objects
 void DrawingCanvas::applyOperation(const QJsonObject& operation)
 {
 	const QString action = operation.value(QStringLiteral("action")).toString();
+	if (!historyReplay_ && action != QStringLiteral("object_upsert")
+		&& action != QStringLiteral("object_delete"))
+		clearHistory();
 	if (action == QStringLiteral("clear")) {
 		objects_.clear();
 		selectedObjectId_.clear();
 		dragMode_ = DragMode::None;
 		previewObject_ = CanvasObject{};
-	polygonInProgress_ = false;
 		polygonInProgress_ = false;
 	} else if (action == QStringLiteral("clear_layer")) {
 		const QString layerId = operation.value(QStringLiteral("layerId")).toString();
@@ -416,8 +572,7 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 		const CanvasObject* selected = findObject(selectedObjectId_);
 		if (!selected || selected->layerId == layerId) {
 			selectedObjectId_.clear();
-	polygonInProgress_ = false;
-	previewObject_ = CanvasObject{};
+			polygonInProgress_ = false;
 			dragMode_ = DragMode::None;
 			previewObject_ = CanvasObject{};
 		}
@@ -633,6 +788,10 @@ void DrawingCanvas::setSelectedLayer(const QString& layerId)
 {
 	if (!findLayer(layerId) || activeLayerId_ == layerId)
 		return;
+	if (polygonInProgress_)
+		cancelHistoryTransaction();
+	else
+		endHistoryTransaction();
 	activeLayerId_ = layerId;
 	selectedObjectId_.clear();
 	dragMode_ = DragMode::None;
@@ -679,6 +838,33 @@ int DrawingCanvas::handleAt(const QRectF& bounds, const QPointF& point) const
 
 void DrawingCanvas::emitOperation(const QJsonObject& operation)
 {
+	if (!historyReplay_) {
+		const QString action = operation.value(QStringLiteral("action")).toString();
+		if (action == QStringLiteral("object_upsert")) {
+			const CanvasObject object = CanvasObject::fromJson(operation.value(QStringLiteral("object")).toObject());
+			const bool ownTransaction = !historyTransactionActive_;
+			if (ownTransaction)
+				beginHistoryTransaction();
+			recordHistoryObject(object.id);
+			applyOperation(operation);
+			emit operationGenerated(operation);
+			if (ownTransaction)
+				endHistoryTransaction();
+			return;
+		}
+		if (action == QStringLiteral("object_delete")) {
+			const QString objectId = operation.value(QStringLiteral("objectId")).toString();
+			const bool ownTransaction = !historyTransactionActive_;
+			if (ownTransaction)
+				beginHistoryTransaction();
+			recordHistoryObject(objectId);
+			applyOperation(operation);
+			emit operationGenerated(operation);
+			if (ownTransaction)
+				endHistoryTransaction();
+			return;
+		}
+	}
 	applyOperation(operation);
 	emit operationGenerated(operation);
 }
@@ -773,6 +959,9 @@ void DrawingCanvas::finishPolygon(const QPointF& position, bool appendPoint)
 	if (previewObject_.points.size() >= 3) {
 		updateBoundsFromPoints(&previewObject_);
 		emitObjectUpsert(previewObject_);
+		endHistoryTransaction();
+	} else {
+		cancelHistoryTransaction();
 	}
 	polygonInProgress_ = false;
 	previewObject_ = CanvasObject{};
@@ -1007,6 +1196,7 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 			selectedObjectId_.clear();
 			dragMode_ = DragMode::None;
 		} else {
+			beginHistoryTransaction();
 			const CanvasObject& item = objects_.at(hit);
 			selectedObjectId_ = item.id;
 			originalObject_ = item;
@@ -1019,6 +1209,7 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		return;
 	}
 	if (tool_ == Tool::Eraser) {
+		beginHistoryTransaction();
 		dragMode_ = DragMode::Erase;
 		dragStart_ = point;
 		eraseSweep(point, point);
@@ -1026,6 +1217,7 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		return;
 	}
 	if (tool_ == Tool::ObjectEraser) {
+		beginHistoryTransaction();
 		dragMode_ = DragMode::Erase;
 		dragStart_ = point;
 		eraseObjectsAt(event->position());
@@ -1042,8 +1234,14 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		event->accept();
 		return;
 	}
+	if (tool_ == Tool::PickColor) {
+		pickColorAt(point);
+		event->accept();
+		return;
+	}
 	if (tool_ == Tool::Polygon) {
 		if (!polygonInProgress_) {
+			beginHistoryTransaction();
 			previewObject_ = CanvasObject{};
 			previewObject_.id = newId();
 			previewObject_.layerId = activeLayerId_;
@@ -1084,6 +1282,7 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		: tool_ == Tool::Rectangle ? QStringLiteral("rectangle")
 		: tool_ == Tool::RoundedRectangle ? QStringLiteral("rounded_rectangle")
 		: tool_ == Tool::Ellipse ? QStringLiteral("ellipse") : QStringLiteral("line");
+	beginHistoryTransaction();
 	if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush || tool_ == Tool::Curve) {
 		previewObject_.points.append(pointJson(point));
 		updateBoundsFromPoints(&previewObject_);
@@ -1166,6 +1365,9 @@ void DrawingCanvas::mouseReleaseEvent(QMouseEvent* event)
 		}
 		if (dragMode_ == DragMode::Draw && pathTool)
 			selectedObjectId_.clear();
+		if (dragMode_ == DragMode::Draw || dragMode_ == DragMode::Erase
+			|| dragMode_ == DragMode::Move || dragMode_ == DragMode::Resize)
+			endHistoryTransaction();
 		dragMode_ = DragMode::None;
 		resizeHandle_ = -1;
 		update();

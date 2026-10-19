@@ -426,19 +426,20 @@ QString localizedText(const QString& source, const QString& languageCode)
 		QStringLiteral("Brush"), QStringLiteral("Airbrush"), QStringLiteral("Curve"),
 		QStringLiteral("Polygon"), QStringLiteral("Eraser · cut strokes"), QStringLiteral("Object Eraser"),
 		QStringLiteral("Rectangle"), QStringLiteral("Rounded rectangle"), QStringLiteral("Ellipse"),
-		QStringLiteral("Line"), QStringLiteral("Fill with color"), QStringLiteral("Text")};
+		QStringLiteral("Line"), QStringLiteral("Fill with color"), QStringLiteral("Text"),
+		QStringLiteral("Pick color"), QStringLiteral("Undo"), QStringLiteral("Redo")};
 	static const QHash<QString, QStringList> drawingToolTranslations{
-		{QStringLiteral("es"), {QStringLiteral("Seleccionar / mover / escalar"), QStringLiteral("Lápiz"), QStringLiteral("Pincel"), QStringLiteral("Aerógrafo"), QStringLiteral("Curva"), QStringLiteral("Polígono"), QStringLiteral("Borrador · cortar trazos"), QStringLiteral("Borrador de objetos"), QStringLiteral("Rectángulo"), QStringLiteral("Rectángulo redondeado"), QStringLiteral("Elipse"), QStringLiteral("Línea"), QStringLiteral("Rellenar con color"), QStringLiteral("Texto")}},
-		{QStringLiteral("fr"), {QStringLiteral("Sélectionner / déplacer / redimensionner"), QStringLiteral("Crayon"), QStringLiteral("Pinceau"), QStringLiteral("Aérographe"), QStringLiteral("Courbe"), QStringLiteral("Polygone"), QStringLiteral("Gomme · couper les traits"), QStringLiteral("Gomme d’objets"), QStringLiteral("Rectangle"), QStringLiteral("Rectangle arrondi"), QStringLiteral("Ellipse"), QStringLiteral("Ligne"), QStringLiteral("Remplir avec une couleur"), QStringLiteral("Texte")}},
-		{QStringLiteral("de"), {QStringLiteral("Auswählen / bewegen / skalieren"), QStringLiteral("Stift"), QStringLiteral("Pinsel"), QStringLiteral("Airbrush"), QStringLiteral("Kurve"), QStringLiteral("Polygon"), QStringLiteral("Radierer · Striche schneiden"), QStringLiteral("Objektradierer"), QStringLiteral("Rechteck"), QStringLiteral("Abgerundetes Rechteck"), QStringLiteral("Ellipse"), QStringLiteral("Linie"), QStringLiteral("Mit Farbe füllen"), QStringLiteral("Text")}},
-		{QStringLiteral("pt"), {QStringLiteral("Selecionar / mover / redimensionar"), QStringLiteral("Caneta"), QStringLiteral("Pincel"), QStringLiteral("Aerógrafo"), QStringLiteral("Curva"), QStringLiteral("Polígono"), QStringLiteral("Borracha · cortar traços"), QStringLiteral("Borracha de objetos"), QStringLiteral("Retângulo"), QStringLiteral("Retângulo arredondado"), QStringLiteral("Elipse"), QStringLiteral("Linha"), QStringLiteral("Preencher com cor"), QStringLiteral("Texto")}},
-		{QStringLiteral("it"), {QStringLiteral("Seleziona / sposta / ridimensiona"), QStringLiteral("Penna"), QStringLiteral("Pennello"), QStringLiteral("Aerografo"), QStringLiteral("Curva"), QStringLiteral("Poligono"), QStringLiteral("Gomma · taglia tratti"), QStringLiteral("Gomma oggetti"), QStringLiteral("Rettangolo"), QStringLiteral("Rettangolo arrotondato"), QStringLiteral("Ellisse"), QStringLiteral("Linea"), QStringLiteral("Riempi con colore"), QStringLiteral("Testo")}},
-		{QStringLiteral("ru"), {QStringLiteral("Выбор / перемещение / масштаб"), QStringLiteral("Кисть"), QStringLiteral("Кисть"), QStringLiteral("Аэрограф"), QStringLiteral("Кривая"), QStringLiteral("Многоугольник"), QStringLiteral("Ластик · стирать штрихи"), QStringLiteral("Ластик объектов"), QStringLiteral("Прямоугольник"), QStringLiteral("Скругленный прямоугольник"), QStringLiteral("Эллипс"), QStringLiteral("Линия"), QStringLiteral("Заливка цветом"), QStringLiteral("Текст")}},
-		{QStringLiteral("zh"), {QStringLiteral("选择 / 移动 / 缩放"), QStringLiteral("画笔"), QStringLiteral("画刷"), QStringLiteral("喷枪"), QStringLiteral("曲线"), QStringLiteral("多边形"), QStringLiteral("橡皮擦 · 删除笔画"), QStringLiteral("对象橡皮擦"), QStringLiteral("矩形"), QStringLiteral("圆角矩形"), QStringLiteral("椭圆"), QStringLiteral("直线"), QStringLiteral("用颜色填充"), QStringLiteral("文字")}},
-		{QStringLiteral("ja"), {QStringLiteral("選択 / 移動 / 拡大縮小"), QStringLiteral("ペン"), QStringLiteral("ブラシ"), QStringLiteral("エアブラシ"), QStringLiteral("曲線"), QStringLiteral("多角形"), QStringLiteral("消しゴム · 線を消す"), QStringLiteral("オブジェクト消しゴム"), QStringLiteral("長方形"), QStringLiteral("角丸長方形"), QStringLiteral("楕円"), QStringLiteral("線"), QStringLiteral("色で塗りつぶす"), QStringLiteral("テキスト")}},
-		{QStringLiteral("ko"), {QStringLiteral("선택 / 이동 / 크기 조절"), QStringLiteral("펜"), QStringLiteral("브러시"), QStringLiteral("에어브러시"), QStringLiteral("곡선"), QStringLiteral("다각형"), QStringLiteral("지우개 · 획 자르기"), QStringLiteral("개체 지우개"), QStringLiteral("직사각형"), QStringLiteral("둥근 사각형"), QStringLiteral("타원"), QStringLiteral("선"), QStringLiteral("색으로 채우기"), QStringLiteral("텍스트")}},
-		{QStringLiteral("ar"), {QStringLiteral("تحديد / تحريك / تغيير الحجم"), QStringLiteral("قلم"), QStringLiteral("فرشاة"), QStringLiteral("بخاخ"), QStringLiteral("منحنى"), QStringLiteral("مضلع"), QStringLiteral("ممحاة · قص الخطوط"), QStringLiteral("ممحاة الكائنات"), QStringLiteral("مستطيل"), QStringLiteral("مستطيل بزوايا مستديرة"), QStringLiteral("قطع ناقص"), QStringLiteral("خط"), QStringLiteral("تعبئة باللون"), QStringLiteral("نص")}},
-		{QStringLiteral("hi"), {QStringLiteral("चुनें / खिसकाएँ / आकार बदलें"), QStringLiteral("पेन"), QStringLiteral("ब्रश"), QStringLiteral("एयरब्रश"), QStringLiteral("वक्र"), QStringLiteral("बहुभुज"), QStringLiteral("इरेज़र · स्ट्रोक काटें"), QStringLiteral("ऑब्जेक्ट इरेज़र"), QStringLiteral("आयत"), QStringLiteral("गोल कोनों वाला आयत"), QStringLiteral("दीर्घवृत्त"), QStringLiteral("रेखा"), QStringLiteral("रंग से भरें"), QStringLiteral("पाठ")}}
+		{QStringLiteral("es"), {QStringLiteral("Seleccionar / mover / escalar"), QStringLiteral("Lápiz"), QStringLiteral("Pincel"), QStringLiteral("Aerógrafo"), QStringLiteral("Curva"), QStringLiteral("Polígono"), QStringLiteral("Borrador · cortar trazos"), QStringLiteral("Borrador de objetos"), QStringLiteral("Rectángulo"), QStringLiteral("Rectángulo redondeado"), QStringLiteral("Elipse"), QStringLiteral("Línea"), QStringLiteral("Rellenar con color"), QStringLiteral("Texto"), QStringLiteral("Cuentagotas"), QStringLiteral("Deshacer"), QStringLiteral("Rehacer")}},
+		{QStringLiteral("fr"), {QStringLiteral("Sélectionner / déplacer / redimensionner"), QStringLiteral("Crayon"), QStringLiteral("Pinceau"), QStringLiteral("Aérographe"), QStringLiteral("Courbe"), QStringLiteral("Polygone"), QStringLiteral("Gomme · couper les traits"), QStringLiteral("Gomme d’objets"), QStringLiteral("Rectangle"), QStringLiteral("Rectangle arrondi"), QStringLiteral("Ellipse"), QStringLiteral("Ligne"), QStringLiteral("Remplir avec une couleur"), QStringLiteral("Texte"), QStringLiteral("Pipette"), QStringLiteral("Annuler"), QStringLiteral("Rétablir")}},
+		{QStringLiteral("de"), {QStringLiteral("Auswählen / bewegen / skalieren"), QStringLiteral("Stift"), QStringLiteral("Pinsel"), QStringLiteral("Airbrush"), QStringLiteral("Kurve"), QStringLiteral("Polygon"), QStringLiteral("Radierer · Striche schneiden"), QStringLiteral("Objektradierer"), QStringLiteral("Rechteck"), QStringLiteral("Abgerundetes Rechteck"), QStringLiteral("Ellipse"), QStringLiteral("Linie"), QStringLiteral("Mit Farbe füllen"), QStringLiteral("Text"), QStringLiteral("Pipette"), QStringLiteral("Rückgängig"), QStringLiteral("Wiederholen")}},
+		{QStringLiteral("pt"), {QStringLiteral("Selecionar / mover / redimensionar"), QStringLiteral("Caneta"), QStringLiteral("Pincel"), QStringLiteral("Aerógrafo"), QStringLiteral("Curva"), QStringLiteral("Polígono"), QStringLiteral("Borracha · cortar traços"), QStringLiteral("Borracha de objetos"), QStringLiteral("Retângulo"), QStringLiteral("Retângulo arredondado"), QStringLiteral("Elipse"), QStringLiteral("Linha"), QStringLiteral("Preencher com cor"), QStringLiteral("Texto"), QStringLiteral("Conta-gotas"), QStringLiteral("Desfazer"), QStringLiteral("Refazer")}},
+		{QStringLiteral("it"), {QStringLiteral("Seleziona / sposta / ridimensiona"), QStringLiteral("Penna"), QStringLiteral("Pennello"), QStringLiteral("Aerografo"), QStringLiteral("Curva"), QStringLiteral("Poligono"), QStringLiteral("Gomma · taglia tratti"), QStringLiteral("Gomma oggetti"), QStringLiteral("Rettangolo"), QStringLiteral("Rettangolo arrotondato"), QStringLiteral("Ellisse"), QStringLiteral("Linea"), QStringLiteral("Riempi con colore"), QStringLiteral("Testo"), QStringLiteral("Contagocce"), QStringLiteral("Annulla"), QStringLiteral("Ripristina")}},
+		{QStringLiteral("ru"), {QStringLiteral("Выбор / перемещение / масштаб"), QStringLiteral("Кисть"), QStringLiteral("Кисть"), QStringLiteral("Аэрограф"), QStringLiteral("Кривая"), QStringLiteral("Многоугольник"), QStringLiteral("Ластик · стирать штрихи"), QStringLiteral("Ластик объектов"), QStringLiteral("Прямоугольник"), QStringLiteral("Скругленный прямоугольник"), QStringLiteral("Эллипс"), QStringLiteral("Линия"), QStringLiteral("Заливка цветом"), QStringLiteral("Текст"), QStringLiteral("Пипетка"), QStringLiteral("Отменить"), QStringLiteral("Повторить")}},
+		{QStringLiteral("zh"), {QStringLiteral("选择 / 移动 / 缩放"), QStringLiteral("画笔"), QStringLiteral("画刷"), QStringLiteral("喷枪"), QStringLiteral("曲线"), QStringLiteral("多边形"), QStringLiteral("橡皮擦 · 删除笔画"), QStringLiteral("对象橡皮擦"), QStringLiteral("矩形"), QStringLiteral("圆角矩形"), QStringLiteral("椭圆"), QStringLiteral("直线"), QStringLiteral("用颜色填充"), QStringLiteral("文字"), QStringLiteral("取色器"), QStringLiteral("撤销"), QStringLiteral("重做")}},
+		{QStringLiteral("ja"), {QStringLiteral("選択 / 移動 / 拡大縮小"), QStringLiteral("ペン"), QStringLiteral("ブラシ"), QStringLiteral("エアブラシ"), QStringLiteral("曲線"), QStringLiteral("多角形"), QStringLiteral("消しゴム · 線を消す"), QStringLiteral("オブジェクト消しゴム"), QStringLiteral("長方形"), QStringLiteral("角丸長方形"), QStringLiteral("楕円"), QStringLiteral("線"), QStringLiteral("色で塗りつぶす"), QStringLiteral("テキスト"), QStringLiteral("スポイト"), QStringLiteral("元に戻す"), QStringLiteral("やり直し")}},
+		{QStringLiteral("ko"), {QStringLiteral("선택 / 이동 / 크기 조절"), QStringLiteral("펜"), QStringLiteral("브러시"), QStringLiteral("에어브러시"), QStringLiteral("곡선"), QStringLiteral("다각형"), QStringLiteral("지우개 · 획 자르기"), QStringLiteral("개체 지우개"), QStringLiteral("직사각형"), QStringLiteral("둥근 사각형"), QStringLiteral("타원"), QStringLiteral("선"), QStringLiteral("색으로 채우기"), QStringLiteral("텍스트"), QStringLiteral("스포이트"), QStringLiteral("실행 취소"), QStringLiteral("다시 실행")}},
+		{QStringLiteral("ar"), {QStringLiteral("تحديد / تحريك / تغيير الحجم"), QStringLiteral("قلم"), QStringLiteral("فرشاة"), QStringLiteral("بخاخ"), QStringLiteral("منحنى"), QStringLiteral("مضلع"), QStringLiteral("ممحاة · قص الخطوط"), QStringLiteral("ممحاة الكائنات"), QStringLiteral("مستطيل"), QStringLiteral("مستطيل بزوايا مستديرة"), QStringLiteral("قطع ناقص"), QStringLiteral("خط"), QStringLiteral("تعبئة باللون"), QStringLiteral("نص"), QStringLiteral("قطارة"), QStringLiteral("تراجع"), QStringLiteral("إعادة")}},
+		{QStringLiteral("hi"), {QStringLiteral("चुनें / खिसकाएँ / आकार बदलें"), QStringLiteral("पेन"), QStringLiteral("ब्रश"), QStringLiteral("एयरब्रश"), QStringLiteral("वक्र"), QStringLiteral("बहुभुज"), QStringLiteral("इरेज़र · स्ट्रोक काटें"), QStringLiteral("ऑब्जेक्ट इरेज़र"), QStringLiteral("आयत"), QStringLiteral("गोल कोनों वाला आयत"), QStringLiteral("दीर्घवृत्त"), QStringLiteral("रेखा"), QStringLiteral("रंग से भरें"), QStringLiteral("पाठ"), QStringLiteral("रंग चुनें"), QStringLiteral("पूर्ववत करें"), QStringLiteral("फिर से करें")}}
 	};
 	const int drawingToolIndex = drawingToolSources.indexOf(source);
 	if (drawingToolIndex >= 0) {
@@ -1483,6 +1484,7 @@ QWidget* MainWindow::createGamePage()
 		{QStringLiteral("Ellipse"), DrawingCanvas::Tool::Ellipse},
 		{QStringLiteral("Line"), DrawingCanvas::Tool::Line},
 		{QStringLiteral("Fill with color"), DrawingCanvas::Tool::Fill},
+		{QStringLiteral("Pick color"), DrawingCanvas::Tool::PickColor},
 		{QStringLiteral("Text"), DrawingCanvas::Tool::Text}};
 	for (const auto& tool : tools)
 		toolCombo_->addItem(tool.first, static_cast<int>(tool.second));
@@ -1493,6 +1495,7 @@ QWidget* MainWindow::createGamePage()
 	toolbar->addWidget(toolCombo_);
 	colorButton_ = new QPushButton(QStringLiteral("Color"), page);
 	setLocalizedText(colorButton_, QStringLiteral("Color"), languageCode_);
+	colorButton_->setProperty("canvasColor", QStringLiteral("#202124"));
 	colorButton_->setStyleSheet(QStringLiteral("background-color: #202124; color: white"));
 	toolbar->addWidget(colorButton_);
 	auto* widthLabel = new QLabel(QStringLiteral("Brush / eraser size"), page);
@@ -1521,6 +1524,14 @@ QWidget* MainWindow::createGamePage()
 	clearCanvasButton_ = new QPushButton(QStringLiteral("Clear All Layers"), page);
 	setLocalizedText(clearCanvasButton_, QStringLiteral("Clear All Layers"), languageCode_);
 	toolbar->addWidget(clearCanvasButton_);
+	undoButton_ = new QPushButton(QStringLiteral("Undo"), page);
+	setLocalizedText(undoButton_, QStringLiteral("Undo"), languageCode_);
+	undoButton_->setEnabled(false);
+	toolbar->addWidget(undoButton_);
+	redoButton_ = new QPushButton(QStringLiteral("Redo"), page);
+	setLocalizedText(redoButton_, QStringLiteral("Redo"), languageCode_);
+	redoButton_->setEnabled(false);
+	toolbar->addWidget(redoButton_);
 	toolbar->addStretch();
 	layout->addLayout(toolbar);
 
@@ -1607,6 +1618,14 @@ QWidget* MainWindow::createGamePage()
 		sendGameMessage(makeMessage(QStringLiteral("CanvasOperation"),
 			{{QStringLiteral("operation"), operation}}));
 	});
+	connect(canvas_, &DrawingCanvas::currentColorChanged, this, [this](const QString& color) {
+		updateColorButton(color);
+	});
+	connect(canvas_, &DrawingCanvas::historyChanged, this, [this](bool canUndo, bool canRedo) {
+		const bool isDrawer = roundActive_ && currentDrawer_ == username_ && !isSpectator_;
+		undoButton_->setEnabled(isDrawer && canUndo);
+		redoButton_->setEnabled(isDrawer && canRedo);
+	});
 	connect(canvas_, &DrawingCanvas::layersChanged, this, [this](const QJsonArray& layers) {
 		updateLayerList(layers);
 	});
@@ -1634,6 +1653,8 @@ QWidget* MainWindow::createGamePage()
 	connect(filledCheck_, &QCheckBox::toggled, this, [this](bool filled) { canvas_->setFilled(filled); });
 	connect(clearLayerButton_, &QPushButton::clicked, this, [this] { canvas_->clearSelectedLayer(); });
 	connect(clearCanvasButton_, &QPushButton::clicked, this, [this] { canvas_->clearCanvas(); });
+	connect(undoButton_, &QPushButton::clicked, canvas_, &DrawingCanvas::undo);
+	connect(redoButton_, &QPushButton::clicked, canvas_, &DrawingCanvas::redo);
 	connect(layerList_, &QListWidget::currentRowChanged, this, [this](int row) {
 		if (refreshingLayers_ || row < 0 || !layerList_->item(row))
 			return;
@@ -1755,9 +1776,18 @@ void MainWindow::chooseColor()
 		return;
 	const QString colorName = color.name(QColor::HexRgb);
 	canvas_->setCurrentColor(colorName);
+	updateColorButton(colorName);
+}
+
+void MainWindow::updateColorButton(const QString& color)
+{
+	const QColor parsed(color);
+	if (!parsed.isValid())
+		return;
+	const QString colorName = parsed.name(QColor::HexRgb);
 	colorButton_->setProperty("canvasColor", colorName);
 	colorButton_->setStyleSheet(QStringLiteral("background-color: %1; color: %2")
-		.arg(colorName, color.lightness() < 128 ? QStringLiteral("white") : QStringLiteral("black")));
+		.arg(colorName, parsed.lightness() < 128 ? QStringLiteral("white") : QStringLiteral("black")));
 }
 
 void MainWindow::connectMaster()
@@ -2546,6 +2576,8 @@ void MainWindow::updateRoundControls()
 	promoteToPlayerButton_->setEnabled(inRoom_ && pendingRoleChangeRequestId_.isEmpty());
 	clearLayerButton_->setEnabled(isDrawer && !selectedLayerLocked);
 	clearCanvasButton_->setEnabled(isDrawer);
+	undoButton_->setEnabled(isDrawer && canvas_->canUndo());
+	redoButton_->setEnabled(isDrawer && canvas_->canRedo());
 	toolCombo_->setEnabled(isDrawer);
 	colorButton_->setEnabled(isDrawer);
 	strokeWidthSpin_->setEnabled(isDrawer);

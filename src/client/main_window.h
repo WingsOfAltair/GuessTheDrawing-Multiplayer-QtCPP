@@ -77,6 +77,7 @@ private:
 	void updateLayerList(const QJsonArray& layers);
 	void chooseTextAt(const QPointF& position);
 	void chooseColor();
+	void updateColorButton(const QString& color);
 	QString nextRequestId();
 
 	AppConfig& config_;
@@ -155,6 +156,8 @@ private:
 	QLabel* voiceStatusLabel_ = nullptr;
 	QPushButton* clearLayerButton_ = nullptr;
 	QPushButton* clearCanvasButton_ = nullptr;
+	QPushButton* undoButton_ = nullptr;
+	QPushButton* redoButton_ = nullptr;
 	QPushButton* promoteToPlayerButton_ = nullptr;
 	QComboBox* toolCombo_ = nullptr;
 	QPushButton* colorButton_ = nullptr;

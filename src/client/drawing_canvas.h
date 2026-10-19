@@ -2,6 +2,7 @@
 
 #include "shared/models.h"
 
+#include <QHash>
 #include <QList>
 #include <QPointF>
 #include <QRectF>
@@ -18,7 +19,7 @@ class DrawingCanvas final : public QWidget {
 
 public:
 	enum class Tool { Select, Pen, Brush, Airbrush, Curve, Polygon, Eraser, ObjectEraser,
-					  Rectangle, RoundedRectangle, Ellipse, Line, Fill, Text };
+					  Rectangle, RoundedRectangle, Ellipse, Line, Fill, PickColor, Text };
 
 	explicit DrawingCanvas(QWidget* parent = nullptr);
 	void setDrawingAllowed(bool allowed);
@@ -27,6 +28,10 @@ public:
 	void setStrokeWidth(int width);
 	void setFontSize(int size);
 	void setFilled(bool filled);
+	bool canUndo() const;
+	bool canRedo() const;
+	void undo();
+	void redo();
 	void setScene(const QJsonArray& layers, const QJsonArray& objects);
 	void applyOperation(const QJsonObject& operation);
 	void setSelectedLayer(const QString& layerId);
@@ -47,6 +52,8 @@ signals:
 	void layersChanged(const QJsonArray& layers);
 	void selectedLayerChanged(const QString& layerId);
 	void textRequested(const QPointF& position);
+	void currentColorChanged(const QString& color);
+	void historyChanged(bool canUndo, bool canRedo);
 
 protected:
 	void paintEvent(QPaintEvent* event) override;
@@ -56,6 +63,15 @@ protected:
 	void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
+	struct HistoryObjectState {
+		bool exists = false;
+		CanvasObject object;
+	};
+	struct HistoryEntry {
+		QHash<QString, HistoryObjectState> before;
+		QHash<QString, HistoryObjectState> after;
+	};
+
 	QPointF normalizedPoint(const QPointF& position) const;
 	QRectF objectRect(const CanvasObject& object) const;
 	int hitTest(const QPointF& point) const;
@@ -70,7 +86,15 @@ private:
 	void updateDrag(const QPointF& position);
 	void updateBoundsFromPoints(CanvasObject* object) const;
 	void fillAt(const QPointF& position);
+	void pickColorAt(const QPointF& position);
 	void finishPolygon(const QPointF& position, bool appendPoint);
+	void beginHistoryTransaction();
+	void endHistoryTransaction();
+	void cancelHistoryTransaction();
+	void recordHistoryObject(const QString& objectId);
+	void restoreHistoryObjects(const QHash<QString, HistoryObjectState>& objects);
+	void clearHistory();
+	void emitHistoryChanged();
 	void eraseFreehandAt(const QPointF& center, qreal radiusPixels);
 	void eraseSweep(const QPointF& from, const QPointF& to);
 	void eraseObjectsAt(const QPointF& position);
@@ -80,6 +104,9 @@ private:
 	enum class DragMode { None, Draw, Move, Resize, Erase };
 	QList<CanvasLayer> layers_;
 	QList<CanvasObject> objects_;
+	QList<HistoryEntry> undoHistory_;
+	QList<HistoryEntry> redoHistory_;
+	QHash<QString, HistoryObjectState> pendingHistoryBefore_;
 	CanvasObject previewObject_;
 	CanvasObject originalObject_;
 	QString activeLayerId_;
@@ -95,6 +122,8 @@ private:
 	bool filled_ = false;
 	bool drawingAllowed_ = false;
 	bool polygonInProgress_ = false;
+	bool historyTransactionActive_ = false;
+	bool historyReplay_ = false;
 };
 
 }

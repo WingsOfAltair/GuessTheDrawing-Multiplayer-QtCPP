@@ -152,6 +152,92 @@ private slots:
 		QCOMPARE(remoteImage.pixelColor(50, 50), QColor(QStringLiteral("#22aaee")));
 	}
 
+	void undoRedoGroupsAStrokeAndSynchronizes()
+	{
+		gtd::DrawingCanvas canvas;
+		gtd::DrawingCanvas remoteCanvas;
+		canvas.setMinimumSize(0, 0);
+		remoteCanvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		remoteCanvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Brush);
+		canvas.setCurrentColor(QStringLiteral("#1166dd"));
+		const gtd::CanvasLayer layer{QStringLiteral("layer-default"), QStringLiteral("Background"), 0, true, false};
+		canvas.setScene(QJsonArray{layer.toJson()}, {});
+		remoteCanvas.setScene(QJsonArray{layer.toJson()}, {});
+		connect(&canvas, &gtd::DrawingCanvas::operationGenerated, &remoteCanvas,
+			&gtd::DrawingCanvas::applyOperation);
+		canvas.show();
+		remoteCanvas.show();
+		QCoreApplication::processEvents();
+
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(20, 50));
+		QMouseEvent move(QEvent::MouseMove, QPointF(80, 50), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &move);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(80, 50));
+		QVERIFY(canvas.canUndo());
+		QVERIFY(!canvas.canRedo());
+		QImage localImage(canvas.size(), QImage::Format_ARGB32_Premultiplied);
+		QImage remoteImage(remoteCanvas.size(), QImage::Format_ARGB32_Premultiplied);
+		canvas.render(&localImage);
+		remoteCanvas.render(&remoteImage);
+		QVERIFY(localImage.pixelColor(50, 50) != QColor(Qt::white));
+		QCOMPARE(localImage.pixelColor(50, 50), remoteImage.pixelColor(50, 50));
+
+		canvas.undo();
+		QVERIFY(!canvas.canUndo());
+		QVERIFY(canvas.canRedo());
+		localImage.fill(Qt::transparent);
+		remoteImage.fill(Qt::transparent);
+		canvas.render(&localImage);
+		remoteCanvas.render(&remoteImage);
+		QCOMPARE(localImage.pixelColor(50, 50), QColor(Qt::white));
+		QCOMPARE(localImage.pixelColor(50, 50), remoteImage.pixelColor(50, 50));
+
+		canvas.redo();
+		QVERIFY(canvas.canUndo());
+		QVERIFY(!canvas.canRedo());
+		localImage.fill(Qt::transparent);
+		remoteImage.fill(Qt::transparent);
+		canvas.render(&localImage);
+		remoteCanvas.render(&remoteImage);
+		QVERIFY(localImage.pixelColor(50, 50) != QColor(Qt::white));
+		QCOMPARE(localImage.pixelColor(50, 50), remoteImage.pixelColor(50, 50));
+	}
+
+	void pickColorSamplesOnlyTheSelectedLayer()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::PickColor);
+		canvas.setCurrentColor(QStringLiteral("#123456"));
+		gtd::CanvasObject bottom = rectangleObject(QStringLiteral("bottom"), QStringLiteral("layer-bottom"));
+		bottom.color = QStringLiteral("#ff0000");
+		bottom.filled = true;
+		gtd::CanvasObject top = rectangleObject(QStringLiteral("top"), QStringLiteral("layer-top"));
+		top.color = QStringLiteral("#0000ff");
+		top.filled = true;
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("layer-bottom"), QStringLiteral("Bottom"), 0, true, false}.toJson(),
+					   gtd::CanvasLayer{QStringLiteral("layer-top"), QStringLiteral("Top"), 1, true, false}.toJson()},
+			QJsonArray{bottom.toJson(), top.toJson()});
+		canvas.setSelectedLayer(QStringLiteral("layer-bottom"));
+		QSignalSpy colors(&canvas, &gtd::DrawingCanvas::currentColorChanged);
+		canvas.show();
+		QCoreApplication::processEvents();
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+		QCOMPARE(colors.size(), 1);
+		QCOMPARE(colors.first().first().toString(), QStringLiteral("#ff0000"));
+
+		colors.clear();
+		QTest::mouseClick(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(10, 10));
+		QVERIFY(colors.isEmpty());
+	}
+
 	void multilineTextAllocatesVerticalSpace()
 	{
 		gtd::DrawingCanvas canvas;
