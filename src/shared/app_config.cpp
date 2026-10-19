@@ -72,7 +72,8 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("maxPlayers"), 8}}},
 		{QStringLiteral("client"), QJsonObject{
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},
-			{QStringLiteral("masterPort"), 45450}}}
+			{QStringLiteral("masterPort"), 45450},
+			{QStringLiteral("language"), QStringLiteral("en")}}}
 	};
 }
 
@@ -204,6 +205,23 @@ bool AppConfig::save(QString* error) const
 QString AppConfig::stringValue(const QString& section, const QString& key) const
 {
 	return values_.value(section).toObject().value(key).toString();
+}
+
+bool AppConfig::setStringValue(const QString& section, const QString& key, const QString& value,
+	QString* error)
+{
+	QJsonObject sectionValues = values_.value(section).toObject();
+	const QJsonValue previousValue = sectionValues.value(key);
+	sectionValues.insert(key, value);
+	values_.insert(section, sectionValues);
+	if (save(error))
+		return true;
+	if (previousValue.isUndefined())
+		sectionValues.remove(key);
+	else
+		sectionValues.insert(key, previousValue);
+	values_.insert(section, sectionValues);
+	return false;
 }
 
 int AppConfig::intValue(const QString& section, const QString& key) const

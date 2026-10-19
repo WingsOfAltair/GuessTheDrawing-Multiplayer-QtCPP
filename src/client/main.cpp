@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 		return 2;
 	}
 
-	gtd::MainWindow window(masterAddress,
+	gtd::MainWindow window(config, masterAddress,
 						   static_cast<quint16>(masterPort));
 	window.show();
 	return application.exec();

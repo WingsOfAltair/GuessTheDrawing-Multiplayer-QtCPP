@@ -35,6 +35,11 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QVERIFY2(second.loadOrCreate(path, &error), qPrintable(error));
 	QCOMPARE(second.stringValue(QStringLiteral("security"), QStringLiteral("serverSecret")), serverSecret);
 	QCOMPARE(second.stringValue(QStringLiteral("security"), QStringLiteral("sessionSecret")), sessionSecret);
+	QVERIFY2(second.setStringValue(QStringLiteral("client"), QStringLiteral("language"), QStringLiteral("ar"), &error),
+		qPrintable(error));
+	gtd::AppConfig third;
+	QVERIFY2(third.loadOrCreate(path, &error), qPrintable(error));
+	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("language")), QStringLiteral("ar"));
 	QCOMPARE(second.resolvedPath(QStringLiteral("master"), QStringLiteral("database")),
 			 directory.filePath(QStringLiteral("gtd.sqlite")));
 }

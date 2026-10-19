@@ -1,5 +1,6 @@
 #pragma once
 
+#include "shared/app_config.h"
 #include "shared/models.h"
 
 #include <QAudioFormat>
@@ -36,7 +37,7 @@ class MainWindow final : public QMainWindow {
 	Q_OBJECT
 
 public:
-	MainWindow(QString masterHost, quint16 masterPort, QWidget* parent = nullptr);
+	MainWindow(AppConfig& config, QString masterHost, quint16 masterPort, QWidget* parent = nullptr);
 
 private:
 	QWidget* createLoginPage();
@@ -71,11 +72,13 @@ private:
 	void requestLeaderboards();
 	void populateLeaderboard(QTableWidget* table, const QJsonArray& players, bool drawingPoints);
 	void saveProfile();
+	void applyLanguage(const QString& languageCode);
 	void updateLayerList(const QJsonArray& layers);
 	void chooseTextAt(const QPointF& position);
 	void chooseColor();
 	QString nextRequestId();
 
+	AppConfig& config_;
 	QString masterHost_;
 	quint16 masterPort_ = 0;
 	QTcpSocket masterSocket_;
@@ -125,10 +128,12 @@ private:
 	QTableWidget* guessingLeaderboardTable_ = nullptr;
 	QTableWidget* drawingLeaderboardTable_ = nullptr;
 	QComboBox* countryCombo_ = nullptr;
+	QComboBox* languageCombo_ = nullptr;
 	QLineEdit* nicknameEdit_ = nullptr;
 	QLineEdit* currentPasswordEdit_ = nullptr;
 	QLineEdit* newPasswordEdit_ = nullptr;
 	QLabel* profileStatusLabel_ = nullptr;
+	QLabel* settingsStatusLabel_ = nullptr;
 	QPushButton* joinRoomButton_ = nullptr;
 	QComboBox* joinRoleCombo_ = nullptr;
 	QLabel* gameRoomLabel_ = nullptr;
@@ -163,6 +168,7 @@ private:
 	QPushButton* layerUpButton_ = nullptr;
 	QPushButton* layerDownButton_ = nullptr;
 	QString authToken_;
+	QString languageCode_ = QStringLiteral("en");
 	QString username_;
 	QString currentDrawer_;
 	QJsonArray roomRoster_;

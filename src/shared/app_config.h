@@ -11,6 +11,8 @@ public:
 
 	bool loadOrCreate(const QString& filePath, QString* error = nullptr);
 	QString stringValue(const QString& section, const QString& key) const;
+	bool setStringValue(const QString& section, const QString& key, const QString& value,
+		QString* error = nullptr);
 	int intValue(const QString& section, const QString& key) const;
 	QString resolvedPath(const QString& section, const QString& key) const;
 	QString filePath() const;
