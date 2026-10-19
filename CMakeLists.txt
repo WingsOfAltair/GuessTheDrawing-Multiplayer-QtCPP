@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Network Sql Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Multimedia Network Sql Widgets)
 
 add_library(gtd_shared
 	src/shared/app_config.cpp
@@ -41,7 +41,7 @@ add_executable(gtd_client src/client/main.cpp src/client/main_window.cpp src/cli
 if(WIN32)
 	set_target_properties(gtd_client PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
-target_link_libraries(gtd_client PRIVATE gtd_shared Qt6::Core Qt6::Network Qt6::Widgets)
+target_link_libraries(gtd_client PRIVATE gtd_shared Qt6::Core Qt6::Multimedia Qt6::Network Qt6::Widgets)
 
 include(CTest)
 if(BUILD_TESTING)

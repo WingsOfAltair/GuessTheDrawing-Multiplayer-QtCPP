@@ -2,18 +2,23 @@
 
 #include "shared/models.h"
 
+#include <QAudioFormat>
 #include <QJsonArray>
 #include <QMainWindow>
 #include <QHash>
 #include <QElapsedTimer>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QVector>
 
 class QCheckBox;
+class QAudioSink;
+class QAudioSource;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QIODevice;
 class QProgressBar;
 class QPushButton;
 class QSpinBox;
@@ -49,6 +54,12 @@ private:
 	void leaveRoom();
 	void sendGameMessage(const QJsonObject& message);
 	void sendGuess();
+	void sendRoomChat();
+	void startVoiceInput();
+	void stopVoiceInput();
+	void clearVoiceOutputs();
+	void flushVoiceOutputs();
+	void handleVoiceFrame(const QJsonObject& message);
 	void appendGameMessage(const QString& message);
 	void updateRoundControls();
 	void updateRoster(const QJsonArray& players, const QJsonObject& room);
@@ -74,6 +85,18 @@ private:
 	QTimer roomRefreshTimer_;
 	QTimer refreshAgeTimer_;
 	QTimer activePingTimer_;
+	QAudioSource* voiceInput_ = nullptr;
+	QIODevice* voiceInputDevice_ = nullptr;
+	QHash<QString, QAudioSink*> voiceOutputs_;
+	QHash<QString, QIODevice*> voiceOutputDevices_;
+	QHash<QString, QAudioFormat> voiceOutputFormats_;
+	QHash<QString, QByteArray> voiceOutputPending_;
+	QTimer voiceOutputFlushTimer_;
+	QByteArray voiceCaptureBuffer_;
+	QByteArray voiceInputBuffer_;
+	QAudioFormat voiceInputFormat_;
+	QVector<float> voiceResampleInput_;
+	double voiceResamplePosition_ = 0.0;
 	QElapsedTimer roomsRefreshElapsed_;
 	QElapsedTimer activePingElapsed_;
 	struct RoomPingProbe {
@@ -119,6 +142,10 @@ private:
 	QListWidget* chatList_ = nullptr;
 	QLineEdit* guessEdit_ = nullptr;
 	QPushButton* sendGuessButton_ = nullptr;
+	QLineEdit* roomChatEdit_ = nullptr;
+	QPushButton* sendChatButton_ = nullptr;
+	QPushButton* voiceButton_ = nullptr;
+	QLabel* voiceStatusLabel_ = nullptr;
 	QPushButton* clearLayerButton_ = nullptr;
 	QPushButton* clearCanvasButton_ = nullptr;
 	QPushButton* promoteToPlayerButton_ = nullptr;

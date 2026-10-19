@@ -4,7 +4,7 @@ A Qt 6/C++20 multiplayer drawing-and-guessing game with three executables: a Qt 
 
 ## Requirements
 
-- Qt 6.4 or newer with Core, Network, Sql, and Widgets modules
+- Qt 6.4 or newer with Core, Multimedia, Network, Sql, and Widgets modules
 - CMake 3.21 or newer
 - A C++20 compiler supported by Qt
 

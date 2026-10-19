@@ -45,6 +45,101 @@ private slots:
 		QTRY_COMPARE(pongRequestId, QStringLiteral("room-ping-probe"));
 	}
 
+	void relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly()
+	{
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("room-chat-voice");
+		room.roomName = QStringLiteral("Chat and voice room");
+		room.maxPlayers = 2;
+		gtd::GameServer server(room, QStringLiteral("server-chat-voice"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"));
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+
+		QHash<QTcpSocket*, QByteArray> buffers;
+		QHash<QTcpSocket*, QList<QJsonObject>> received;
+		auto monitor = [this, &buffers, &received](QTcpSocket* socket) {
+			connect(socket, &QTcpSocket::readyRead, this, [socket, &buffers, &received] {
+				const QList<QJsonObject> messages = gtd::takeMessages(&buffers[socket], socket->readAll());
+				for (const QJsonObject& message : messages)
+					received[socket].append(message);
+			});
+		};
+		auto findMessage = [&received](QTcpSocket* socket, const QString& type, const QString& value = QString()) {
+			for (const QJsonObject& message : received.value(socket)) {
+				if (message.value(QStringLiteral("type")).toString() == type
+					&& (value.isEmpty() || message.value(QStringLiteral("text")).toString() == value
+						|| message.value(QStringLiteral("requestId")).toString() == value))
+					return message;
+			}
+			return QJsonObject{};
+		};
+		auto join = [&](QTcpSocket* socket, const QString& username, const QString& requestId) {
+			monitor(socket);
+			socket->connectToHost(QHostAddress::LocalHost, server.port());
+			QTRY_COMPARE(socket->state(), QAbstractSocket::ConnectedState);
+			const QString token = gtd::createSessionToken(username, username, QStringLiteral("session-secret"),
+				QDateTime::currentSecsSinceEpoch() + 300);
+			QVERIFY(gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("JoinRoom"),
+				{{QStringLiteral("requestId"), requestId}, {QStringLiteral("roomId"), room.roomId},
+				 {QStringLiteral("authToken"), token}})));
+			QTRY_VERIFY(!findMessage(socket, QStringLiteral("JoinResult"), requestId).isEmpty());
+			QVERIFY(findMessage(socket, QStringLiteral("JoinResult"), requestId)
+				.value(QStringLiteral("ok")).toBool());
+		};
+
+		QTcpSocket firstPlayer;
+		QTcpSocket secondPlayer;
+		join(&firstPlayer, QStringLiteral("voice-first"), QStringLiteral("join-first"));
+		join(&secondPlayer, QStringLiteral("voice-second"), QStringLiteral("join-second"));
+		QTRY_VERIFY(!findMessage(&firstPlayer, QStringLiteral("RoundStarted")).isEmpty());
+		const QString drawerUsername = findMessage(&firstPlayer, QStringLiteral("RoundStarted"))
+			.value(QStringLiteral("drawerUsername")).toString();
+		QVERIFY(drawerUsername == QStringLiteral("voice-first") || drawerUsername == QStringLiteral("voice-second"));
+		QTcpSocket* drawer = drawerUsername == QStringLiteral("voice-first") ? &firstPlayer : &secondPlayer;
+		QTcpSocket* listener = drawer == &firstPlayer ? &secondPlayer : &firstPlayer;
+
+		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("drawer-chat")},
+			 {QStringLiteral("text"), QStringLiteral("not allowed")}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("Error"), QStringLiteral("drawer-chat")).isEmpty());
+		QVERIFY(findMessage(listener, QStringLiteral("ChatMessage"), QStringLiteral("not allowed")).isEmpty());
+
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("room-chat")},
+			 {QStringLiteral("text"), QStringLiteral("hello room")}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("hello room")).isEmpty());
+		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("hello room"))
+			.value(QStringLiteral("roomChat")).toBool());
+
+		const QByteArray audio(640, '\x2a');
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("VoiceFrame"),
+			{{QStringLiteral("sampleRate"), 16000},
+			 {QStringLiteral("audio"), QString::fromLatin1(audio.toBase64())}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("VoiceFrame")).isEmpty());
+		QCOMPARE(findMessage(drawer, QStringLiteral("VoiceFrame"))
+			.value(QStringLiteral("username")).toString(),
+			drawerUsername == QStringLiteral("voice-first") ? QStringLiteral("voice-second") : QStringLiteral("voice-first"));
+		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
+
+		received[listener].clear();
+		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("VoiceFrame"),
+			{{QStringLiteral("sampleRate"), 16000},
+			 {QStringLiteral("audio"), QString::fromLatin1(audio.toBase64())}})));
+		QVERIFY(gtd::sendMessage(drawer, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("drawer-chat-barrier")},
+			 {QStringLiteral("text"), QStringLiteral("still blocked")}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("Error"), QStringLiteral("drawer-chat-barrier")).isEmpty());
+		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
+	}
+
 	void profileLeaderboardRanksReachRoster()
 	{
 		QTcpServer master;

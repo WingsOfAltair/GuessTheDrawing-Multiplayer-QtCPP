@@ -3,6 +3,10 @@
 #include "client/drawing_canvas.h"
 #include "shared/protocol.h"
 
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QAudioSink>
+#include <QAudioSource>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -14,19 +18,128 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMediaDevices>
 #include <QMessageBox>
 #include <QPaintEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QPainter>
 #include <QSpinBox>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QVector>
 
+#include <QtEndian>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
 namespace gtd {
+
+namespace {
+
+int audioBytesPerSample(QAudioFormat::SampleFormat sampleFormat)
+{
+	switch (sampleFormat) {
+	case QAudioFormat::UInt8: return 1;
+	case QAudioFormat::Int16: return 2;
+	case QAudioFormat::Int32:
+	case QAudioFormat::Float: return 4;
+	default: return 0;
+	}
+}
+
+bool usableAudioFormat(const QAudioFormat& format)
+{
+	return format.isValid() && format.sampleRate() > 0 && format.channelCount() > 0
+		&& audioBytesPerSample(format.sampleFormat()) > 0;
+}
+
+float decodeAudioSample(const char* data, const QAudioFormat& format)
+{
+	switch (format.sampleFormat()) {
+	case QAudioFormat::UInt8:
+		return (static_cast<unsigned char>(*data) - 128.0f) / 128.0f;
+	case QAudioFormat::Int16: {
+		qint16 sample;
+		std::memcpy(&sample, data, sizeof(sample));
+		return static_cast<float>(sample) / 32768.0f;
+	}
+	case QAudioFormat::Int32: {
+		qint32 sample;
+		std::memcpy(&sample, data, sizeof(sample));
+		return static_cast<float>(sample) / 2147483648.0f;
+	}
+	case QAudioFormat::Float: {
+		float sample;
+		std::memcpy(&sample, data, sizeof(sample));
+		return std::isfinite(sample) ? std::clamp(sample, -1.0f, 1.0f) : 0.0f;
+	}
+	default:
+		return 0.0f;
+	}
+}
+
+void encodeAudioSample(QByteArray& destination, float sample, const QAudioFormat& format)
+{
+	sample = std::clamp(sample, -1.0f, 1.0f);
+	switch (format.sampleFormat()) {
+	case QAudioFormat::UInt8:
+		destination.append(static_cast<char>(std::clamp(qRound(sample * 127.0f + 128.0f), 0, 255)));
+		break;
+	case QAudioFormat::Int16: {
+		const qint16 value = static_cast<qint16>(std::clamp(qRound(sample * 32767.0f), -32768, 32767));
+		char bytes[sizeof(value)];
+		std::memcpy(bytes, &value, sizeof(value));
+		destination.append(bytes, sizeof(bytes));
+		break;
+	}
+	case QAudioFormat::Int32: {
+		const qint32 value = static_cast<qint32>(std::clamp(static_cast<double>(sample) * 2147483647.0,
+			-2147483648.0, 2147483647.0));
+		char bytes[sizeof(value)];
+		std::memcpy(bytes, &value, sizeof(value));
+		destination.append(bytes, sizeof(bytes));
+		break;
+	}
+	case QAudioFormat::Float: {
+		char bytes[sizeof(float)];
+		std::memcpy(bytes, &sample, sizeof(sample));
+		destination.append(bytes, sizeof(bytes));
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+QByteArray convertServerFrameForOutput(const QByteArray& pcm, const QAudioFormat& format)
+{
+	constexpr int sourceSamples = 320;
+	const int outputFrames = qMax(1, qRound(sourceSamples * format.sampleRate() / 16000.0));
+	QByteArray converted;
+	converted.reserve(outputFrames * format.channelCount() * audioBytesPerSample(format.sampleFormat()));
+	for (int frame = 0; frame < outputFrames; ++frame) {
+		const double sourcePosition = frame * 16000.0 / format.sampleRate();
+		const int first = qBound(0, static_cast<int>(sourcePosition), sourceSamples - 1);
+		const int second = qMin(first + 1, sourceSamples - 1);
+		const float fraction = static_cast<float>(sourcePosition - first);
+		const float firstSample = static_cast<float>(qFromLittleEndian<qint16>(
+			reinterpret_cast<const uchar*>(pcm.constData() + first * 2))) / 32768.0f;
+		const float secondSample = static_cast<float>(qFromLittleEndian<qint16>(
+			reinterpret_cast<const uchar*>(pcm.constData() + second * 2))) / 32768.0f;
+		const float sample = firstSample + (secondSample - firstSample) * fraction;
+		for (int channel = 0; channel < format.channelCount(); ++channel)
+			encodeAudioSample(converted, sample, format);
+	}
+	return converted;
+}
+
+} // namespace
 
 class LatencyIndicator final : public QWidget {
 public:
@@ -153,6 +266,8 @@ MainWindow::MainWindow(QString masterHost, quint16 masterPort, QWidget* parent)
 	connect(&gameSocket_, &QTcpSocket::readyRead, this, [this] { readGameServer(); });
 	connect(&gameSocket_, &QTcpSocket::disconnected, this, [this] {
 		activePingTimer_.stop();
+		stopVoiceInput();
+		clearVoiceOutputs();
 		pendingActivePingRequestId_.clear();
 		activePingMs_ = -1;
 		if (activeLatencyIndicator_)
@@ -171,6 +286,8 @@ MainWindow::MainWindow(QString masterHost, quint16 masterPort, QWidget* parent)
 	});
 	activePingTimer_.setInterval(2000);
 	connect(&activePingTimer_, &QTimer::timeout, this, [this] { sendActivePing(); });
+	voiceOutputFlushTimer_.setInterval(5);
+	connect(&voiceOutputFlushTimer_, &QTimer::timeout, this, [this] { flushVoiceOutputs(); });
 
 	roomRefreshTimer_.setInterval(5000);
 	connect(&roomRefreshTimer_, &QTimer::timeout, this, [this] {
@@ -476,7 +593,7 @@ QWidget* MainWindow::createGamePage()
 	rosterList_->setMinimumHeight(90);
 	rosterList_->setMaximumHeight(140);
 	sidePanel->addWidget(rosterList_);
-	sidePanel->addWidget(new QLabel(QStringLiteral("Guesses"), page));
+	sidePanel->addWidget(new QLabel(QStringLiteral("Room chat and guesses"), page));
 	chatList_ = new QListWidget(page);
 	chatList_->setMinimumHeight(100);
 	sidePanel->addWidget(chatList_, 1);
@@ -488,6 +605,21 @@ QWidget* MainWindow::createGamePage()
 	guessRow->addWidget(guessEdit_, 0, 0);
 	guessRow->addWidget(sendGuessButton_, 0, 1);
 	sidePanel->addLayout(guessRow);
+	auto* roomChatRow = new QHBoxLayout;
+	roomChatEdit_ = new QLineEdit(page);
+	roomChatEdit_->setPlaceholderText(QStringLiteral("Send a room message"));
+	roomChatEdit_->setMaxLength(300);
+	sendChatButton_ = new QPushButton(QStringLiteral("Send"), page);
+	roomChatRow->addWidget(roomChatEdit_, 1);
+	roomChatRow->addWidget(sendChatButton_);
+	sidePanel->addLayout(roomChatRow);
+	auto* voiceRow = new QHBoxLayout;
+	voiceButton_ = new QPushButton(QStringLiteral("Enable microphone"), page);
+	voiceButton_->setCheckable(true);
+	voiceStatusLabel_ = new QLabel(QStringLiteral("Microphone off"), page);
+	voiceRow->addWidget(voiceButton_);
+	voiceRow->addWidget(voiceStatusLabel_, 1);
+	sidePanel->addLayout(voiceRow);
 	body->addLayout(sidePanel);
 	layout->addLayout(body, 1);
 
@@ -563,6 +695,14 @@ QWidget* MainWindow::createGamePage()
 	connect(layerDownButton_, &QPushButton::clicked, this, [this] { canvas_->moveSelectedLayer(-1); });
 	connect(sendGuessButton_, &QPushButton::clicked, this, [this] { sendGuess(); });
 	connect(guessEdit_, &QLineEdit::returnPressed, this, [this] { sendGuess(); });
+	connect(sendChatButton_, &QPushButton::clicked, this, [this] { sendRoomChat(); });
+	connect(roomChatEdit_, &QLineEdit::returnPressed, this, [this] { sendRoomChat(); });
+	connect(voiceButton_, &QPushButton::toggled, this, [this](bool enabled) {
+		if (enabled)
+			startVoiceInput();
+		else
+			stopVoiceInput();
+	});
 	connect(promoteToPlayerButton_, &QPushButton::clicked, this, [this] {
 		if (!pendingRoleChangeRequestId_.isEmpty())
 			return;
@@ -837,6 +977,10 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		}
 		return;
 	}
+	if (type == QStringLiteral("VoiceFrame")) {
+		handleVoiceFrame(message);
+		return;
+	}
 	if (type == QStringLiteral("JoinResult")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_)
 			return;
@@ -845,6 +989,8 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 			gameSocket_.disconnectFromHost();
 			return;
 		}
+		stopVoiceInput();
+		clearVoiceOutputs();
 		inRoom_ = true;
 		leavingRoom_ = false;
 		activePingMs_ = -1;
@@ -1147,6 +1293,8 @@ void MainWindow::leaveRoom()
 		sendGameMessage(makeMessage(QStringLiteral("LeaveRoom")));
 		gameSocket_.disconnectFromHost();
 	}
+	stopVoiceInput();
+	clearVoiceOutputs();
 	inRoom_ = false;
 	activePingTimer_.stop();
 	pendingActivePingRequestId_.clear();
@@ -1171,6 +1319,201 @@ void MainWindow::sendGuess()
 		return;
 	sendGameMessage(makeMessage(QStringLiteral("Guess"), {{QStringLiteral("text"), guess}}));
 	guessEdit_->clear();
+}
+
+void MainWindow::sendRoomChat()
+{
+	const QString text = roomChatEdit_->text().trimmed();
+	if (!inRoom_ || text.isEmpty() || (roundActive_ && currentDrawer_ == username_))
+		return;
+	sendGameMessage(makeMessage(QStringLiteral("RoomChat"),
+		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("text"), text.left(300)}}));
+	roomChatEdit_->clear();
+}
+
+void MainWindow::startVoiceInput()
+{
+	if (!inRoom_ || gameSocket_.state() != QAbstractSocket::ConnectedState
+		|| (roundActive_ && currentDrawer_ == username_)) {
+		stopVoiceInput();
+		return;
+	}
+	const QAudioDevice input = QMediaDevices::defaultAudioInput();
+	if (input.isNull()) {
+		stopVoiceInput();
+		voiceStatusLabel_->setText(QStringLiteral("No microphone device"));
+		return;
+	}
+	const QAudioFormat format = input.preferredFormat();
+	if (!usableAudioFormat(format) || !input.isFormatSupported(format)) {
+		stopVoiceInput();
+		voiceStatusLabel_->setText(QStringLiteral("Unsupported microphone format"));
+		return;
+	}
+	voiceInputFormat_ = format;
+	voiceInputBuffer_.clear();
+	voiceCaptureBuffer_.clear();
+	voiceResampleInput_.clear();
+	voiceResamplePosition_ = 0.0;
+	voiceInput_ = new QAudioSource(input, format, this);
+	voiceInput_->setBufferSize(qMax(6400, format.sampleRate() * format.channelCount()
+		* audioBytesPerSample(format.sampleFormat()) / 5));
+	voiceInputDevice_ = voiceInput_->start();
+	if (!voiceInputDevice_ || voiceInput_->error() != QAudio::NoError) {
+		stopVoiceInput();
+		voiceStatusLabel_->setText(QStringLiteral("Could not start microphone"));
+		return;
+	}
+	connect(voiceInputDevice_, &QIODevice::readyRead, this, [this] {
+		if (!voiceInputDevice_ || !voiceInput_)
+			return;
+		voiceInputBuffer_.append(voiceInputDevice_->readAll());
+		const int bytesPerSample = audioBytesPerSample(voiceInputFormat_.sampleFormat());
+		const int bytesPerFrame = bytesPerSample * voiceInputFormat_.channelCount();
+		if (bytesPerFrame <= 0)
+			return;
+		const int completeBytes = voiceInputBuffer_.size() / bytesPerFrame * bytesPerFrame;
+		const int inputFrames = completeBytes / bytesPerFrame;
+		for (int frame = 0; frame < inputFrames; ++frame) {
+			const char* frameData = voiceInputBuffer_.constData() + frame * bytesPerFrame;
+			float monoSample = 0.0f;
+			for (int channel = 0; channel < voiceInputFormat_.channelCount(); ++channel)
+				monoSample += decodeAudioSample(frameData + channel * bytesPerSample, voiceInputFormat_);
+			voiceResampleInput_.append(monoSample / voiceInputFormat_.channelCount());
+		}
+		voiceInputBuffer_.remove(0, completeBytes);
+
+		const double inputSamplesPerOutputSample = voiceInputFormat_.sampleRate() / 16000.0;
+		while (voiceResamplePosition_ + 1.0 < voiceResampleInput_.size()) {
+			const int first = static_cast<int>(voiceResamplePosition_);
+			const float fraction = static_cast<float>(voiceResamplePosition_ - first);
+			const float firstSample = voiceResampleInput_.at(first);
+			const float secondSample = voiceResampleInput_.at(first + 1);
+			const float sample = firstSample + (secondSample - firstSample) * fraction;
+			const qint16 pcmSample = static_cast<qint16>(std::clamp(qRound(sample * 32767.0f), -32768, 32767));
+			char pcmBytes[2];
+			qToLittleEndian<qint16>(pcmSample, reinterpret_cast<uchar*>(pcmBytes));
+			voiceCaptureBuffer_.append(pcmBytes, sizeof(pcmBytes));
+			voiceResamplePosition_ += inputSamplesPerOutputSample;
+		}
+		const int consumedSamples = qMin(static_cast<int>(voiceResamplePosition_), voiceResampleInput_.size() - 1);
+		if (consumedSamples > 0) {
+			voiceResampleInput_.remove(0, consumedSamples);
+			voiceResamplePosition_ -= consumedSamples;
+		}
+
+		while (voiceCaptureBuffer_.size() >= 640) {
+			const QByteArray frame = voiceCaptureBuffer_.left(640);
+			voiceCaptureBuffer_.remove(0, 640);
+			sendGameMessage(makeMessage(QStringLiteral("VoiceFrame"),
+				{{QStringLiteral("sampleRate"), 16000},
+				 {QStringLiteral("audio"), QString::fromLatin1(frame.toBase64())}}));
+		}
+	});
+	connect(voiceInput_, &QAudioSource::stateChanged, this, [this](QAudio::State state) {
+		if (voiceInput_ && state == QAudio::StoppedState && voiceInput_->error() != QAudio::NoError) {
+			stopVoiceInput();
+			voiceStatusLabel_->setText(QStringLiteral("Microphone stopped unexpectedly"));
+		}
+	});
+	voiceButton_->setText(QStringLiteral("Disable microphone"));
+	voiceStatusLabel_->setText(QStringLiteral("Microphone on"));
+}
+
+void MainWindow::stopVoiceInput()
+{
+	if (voiceInput_) {
+		voiceInput_->stop();
+		voiceInput_->deleteLater();
+		voiceInput_ = nullptr;
+	}
+	if (voiceInputDevice_)
+		disconnect(voiceInputDevice_, nullptr, this, nullptr);
+	voiceInputDevice_ = nullptr;
+	voiceCaptureBuffer_.clear();
+	voiceInputBuffer_.clear();
+	voiceResampleInput_.clear();
+	voiceResamplePosition_ = 0.0;
+	voiceInputFormat_ = QAudioFormat();
+	if (voiceButton_) {
+		const QSignalBlocker blocker(voiceButton_);
+		voiceButton_->setChecked(false);
+		voiceButton_->setText(QStringLiteral("Enable microphone"));
+	}
+	if (voiceStatusLabel_)
+		voiceStatusLabel_->setText(inRoom_ ? QStringLiteral("Microphone off") : QString());
+}
+
+void MainWindow::clearVoiceOutputs()
+{
+	voiceOutputFlushTimer_.stop();
+	for (QAudioSink* sink : voiceOutputs_) {
+		sink->stop();
+		sink->deleteLater();
+	}
+	voiceOutputs_.clear();
+	voiceOutputDevices_.clear();
+	voiceOutputFormats_.clear();
+	voiceOutputPending_.clear();
+}
+
+void MainWindow::flushVoiceOutputs()
+{
+	for (auto it = voiceOutputPending_.begin(); it != voiceOutputPending_.end(); ++it) {
+		QIODevice* device = voiceOutputDevices_.value(it.key());
+		if (!device || it.value().isEmpty())
+			continue;
+		const qint64 written = device->write(it.value().constData(), it.value().size());
+		if (written > 0)
+			it.value().remove(0, written);
+	}
+}
+
+void MainWindow::handleVoiceFrame(const QJsonObject& message)
+{
+	const QString username = message.value(QStringLiteral("username")).toString();
+	const QByteArray encodedAudio = message.value(QStringLiteral("audio")).toString().toLatin1();
+	if (encodedAudio.size() != 856)
+		return;
+	const QByteArray audio = QByteArray::fromBase64(encodedAudio);
+	if (!inRoom_ || username.isEmpty() || username == username_
+		|| message.value(QStringLiteral("sampleRate")).toInt() != 16000
+		|| audio.size() != 640 || audio.toBase64() != encodedAudio)
+		return;
+	QIODevice* device = voiceOutputDevices_.value(username);
+	if (!device) {
+		const QAudioDevice output = QMediaDevices::defaultAudioOutput();
+		if (output.isNull()) {
+			voiceStatusLabel_->setText(QStringLiteral("No audio output device"));
+			return;
+		}
+		const QAudioFormat format = output.preferredFormat();
+		if (!usableAudioFormat(format) || !output.isFormatSupported(format)) {
+			voiceStatusLabel_->setText(QStringLiteral("Unsupported audio output format"));
+			return;
+		}
+		auto* sink = new QAudioSink(output, format, this);
+		const int outputBytesPerSecond = format.sampleRate() * format.channelCount()
+			* audioBytesPerSample(format.sampleFormat());
+		// A server frame is 20 ms, but its converted device-format size varies.
+		// Keep enough room for several complete frames (100 ms) rather than
+		// assuming the network frame's 640-byte PCM size matches the device buffer.
+		sink->setBufferSize(qMax(6400, outputBytesPerSecond / 10));
+		device = sink->start();
+		if (!device || sink->error() != QAudio::NoError) {
+			sink->stop();
+			sink->deleteLater();
+			voiceStatusLabel_->setText(QStringLiteral("Could not start audio playback"));
+			return;
+		}
+		voiceOutputs_.insert(username, sink);
+		voiceOutputDevices_.insert(username, device);
+		voiceOutputFormats_.insert(username, format);
+		voiceOutputPending_.insert(username, {});
+		voiceOutputFlushTimer_.start();
+	}
+	voiceOutputPending_[username].append(convertServerFrameForOutput(audio, voiceOutputFormats_.value(username)));
+	flushVoiceOutputs();
 }
 
 void MainWindow::appendGameMessage(const QString& message)
@@ -1209,6 +1552,19 @@ void MainWindow::updateRoundControls()
 	layerDownButton_->setEnabled(isDrawer);
 	guessEdit_->setEnabled(roundActive_ && !isDrawer && !isSpectator_);
 	sendGuessButton_->setEnabled(roundActive_ && !isDrawer && !isSpectator_);
+	if (isDrawer && voiceButton_->isChecked())
+		stopVoiceInput();
+	roomChatEdit_->setEnabled(inRoom_ && !isDrawer);
+	roomChatEdit_->setPlaceholderText(isDrawer
+		? QStringLiteral("Drawer can listen but not send") : QStringLiteral("Send a room message"));
+	sendChatButton_->setEnabled(inRoom_ && !isDrawer);
+	voiceButton_->setEnabled(inRoom_ && !isDrawer);
+	voiceButton_->setText(isDrawer ? QStringLiteral("Drawer: receive only")
+		: voiceButton_->isChecked() ? QStringLiteral("Disable microphone") : QStringLiteral("Enable microphone"));
+	if (isDrawer)
+		voiceStatusLabel_->setText(QStringLiteral("You can hear room voice chat"));
+	else if (!voiceButton_->isChecked())
+		voiceStatusLabel_->setText(inRoom_ ? QStringLiteral("Microphone off") : QString());
 	if (!roundActive_)
 		timerLabel_->setText(QStringLiteral("—:—"));
 }

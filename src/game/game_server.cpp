@@ -232,6 +232,38 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			return;
 		}
 		sendGuess(username, message.value(QStringLiteral("text")).toString());
+	} else if (type == QStringLiteral("RoomChat")) {
+		const auto player = players_.constFind(username);
+		if (roundActive_ && username == currentDrawer_) {
+			sendMessage(socket, reply(QStringLiteral("Error"), message,
+				{{QStringLiteral("message"), QStringLiteral("The drawer cannot send chat during the round")}}));
+			return;
+		}
+		const QString text = message.value(QStringLiteral("text")).toString().trimmed().left(300);
+		if (player == players_.cend() || text.isEmpty())
+			return;
+		broadcast(makeMessage(QStringLiteral("ChatMessage"),
+			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
+			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}}));
+	} else if (type == QStringLiteral("VoiceFrame")) {
+		const auto player = players_.constFind(username);
+		if (player == players_.cend() || (roundActive_ && username == currentDrawer_))
+			return;
+		const int sampleRate = message.value(QStringLiteral("sampleRate")).toInt();
+		const QByteArray encodedAudio = message.value(QStringLiteral("audio")).toString().toLatin1();
+		if (sampleRate != 16000 || encodedAudio.size() != 856)
+			return;
+		const QByteArray audio = QByteArray::fromBase64(encodedAudio);
+		if (audio.size() != 640 || audio.toBase64() != encodedAudio)
+			return;
+		const QJsonObject frame = makeMessage(QStringLiteral("VoiceFrame"),
+			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
+			 {QStringLiteral("sampleRate"), sampleRate},
+			 {QStringLiteral("audio"), QString::fromLatin1(encodedAudio)}});
+		for (const Player& recipient : players_) {
+			if (recipient.username != username)
+				sendMessage(recipient.socket, frame);
+		}
 	} else if (type == QStringLiteral("DrawStroke")) {
 		if (!roundActive_ || username != currentDrawer_) {
 			sendMessage(socket, reply(QStringLiteral("Error"), message,
