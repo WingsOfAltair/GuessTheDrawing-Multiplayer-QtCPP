@@ -2022,6 +2022,10 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 			QStringLiteral("You were kicked out because someone else logged in to this account."), languageCode_));
 		return;
 	}
+	if (type == QStringLiteral("ModerationNotice")) {
+		showModerationNotice(message);
+		return;
+	}
 	if (type == QStringLiteral("AuthResult")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingAuthRequestId_)
 			return;
@@ -2240,7 +2244,17 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_)
 			return;
 		if (!message.value(QStringLiteral("ok")).toBool()) {
-			connectionStatusLabel_->setText(message.value(QStringLiteral("error")).toString());
+			QString error = message.value(QStringLiteral("error")).toString();
+			const QJsonObject ban = message.value(QStringLiteral("ban")).toObject();
+			if (!ban.isEmpty()) {
+				const qint64 expiresAt = ban.value(QStringLiteral("expiresAt")).toVariant().toLongLong();
+				const QString expiry = expiresAt == 0
+					? localizedText(QStringLiteral("Permanent"), languageCode_)
+					: QLocale().toString(QDateTime::fromSecsSinceEpoch(expiresAt).toLocalTime(), QLocale::ShortFormat);
+				error = localizedText(QStringLiteral("Banned: %1 · Expires: %2"), languageCode_)
+					.arg(ban.value(QStringLiteral("reason")).toString(), expiry);
+			}
+			connectionStatusLabel_->setText(error);
 			gameSocket_.disconnectFromHost();
 			return;
 		}
@@ -2388,15 +2402,72 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		appendGameMessage(QStringLiteral("%1: %2")
 			.arg(message.value(QStringLiteral("displayName")).toString(),
 				 message.value(QStringLiteral("text")).toString()));
+	} else if (type == QStringLiteral("ModerationAnnouncement")) {
+		const QString action = message.value(QStringLiteral("action")).toString();
+		const QString verb = action == QStringLiteral("kick") ? QStringLiteral("kicked")
+			: action == QStringLiteral("ban") ? QStringLiteral("banned")
+			: action == QStringLiteral("unban") ? QStringLiteral("unbanned")
+			: action == QStringLiteral("unmute") ? QStringLiteral("unmuted") : QStringLiteral("muted");
+		QString channelDetails;
+		if (action == QStringLiteral("mute")) {
+			QStringList channels;
+			if (message.value(QStringLiteral("textChat")).toBool())
+				channels.append(localizedText(QStringLiteral("text chat"), languageCode_));
+			if (message.value(QStringLiteral("voiceChat")).toBool())
+				channels.append(localizedText(QStringLiteral("voice chat"), languageCode_));
+			if (!channels.isEmpty())
+				channelDetails = QStringLiteral(" (%1)").arg(channels.join(QStringLiteral(", ")));
+		}
+		appendGameMessage(QStringLiteral("%1 %2 %3%4: %5")
+			.arg(message.value(QStringLiteral("issuedBy")).toString(), verb,
+				message.value(QStringLiteral("targetUsername")).toString(), channelDetails,
+				message.value(QStringLiteral("reason")).toString()));
 	} else if (type == QStringLiteral("ModerationNotice")) {
-		appendGameMessage(localizedText(QStringLiteral("You were %1 by server staff: %2"), languageCode_)
-			.arg(message.value(QStringLiteral("action")).toString(), message.value(QStringLiteral("reason")).toString()));
+		showModerationNotice(message);
 	} else if (type == QStringLiteral("PlayerLeft")) {
 		appendGameMessage(localizedText(QStringLiteral("%1 left the room"), languageCode_)
 			.arg(message.value(QStringLiteral("username")).toString()));
 	} else if (type == QStringLiteral("Error")) {
 		appendGameMessage(message.value(QStringLiteral("message")).toString());
 	}
+}
+
+void MainWindow::showModerationNotice(const QJsonObject& message)
+{
+	const QString action = message.value(QStringLiteral("action")).toString();
+	if (action == QStringLiteral("unban") || action == QStringLiteral("unmute")) {
+		const QString verb = action == QStringLiteral("unban") ? QStringLiteral("unbanned")
+			: QStringLiteral("unmuted");
+		QMessageBox::information(this, localizedText(QStringLiteral("Moderation notice"), languageCode_),
+			localizedText(QStringLiteral("You were %1 by %2: %3"), languageCode_)
+				.arg(verb, message.value(QStringLiteral("issuedBy")).toString(),
+					message.value(QStringLiteral("reason")).toString()));
+		return;
+	}
+	const QString verb = action == QStringLiteral("kick") ? QStringLiteral("kicked")
+		: action == QStringLiteral("ban") ? QStringLiteral("banned") : QStringLiteral("muted");
+	QString actionDescription = verb;
+	if (action == QStringLiteral("mute")) {
+		QStringList channels;
+		if (message.value(QStringLiteral("textChat")).toBool())
+			channels.append(localizedText(QStringLiteral("text chat"), languageCode_));
+		if (message.value(QStringLiteral("voiceChat")).toBool())
+			channels.append(localizedText(QStringLiteral("voice chat"), languageCode_));
+		if (!channels.isEmpty())
+			actionDescription += QStringLiteral(" (%1)").arg(channels.join(QStringLiteral(", ")));
+	}
+	QString notice = localizedText(QStringLiteral("You were %1 by %2: %3"), languageCode_)
+		.arg(actionDescription, message.value(QStringLiteral("issuedBy")).toString(),
+			message.value(QStringLiteral("reason")).toString());
+	if (action == QStringLiteral("mute")) {
+		const qint64 expiresAt = message.value(QStringLiteral("expiresAt")).toVariant().toLongLong();
+		const QString expiry = expiresAt == 0
+			? localizedText(QStringLiteral("Permanent"), languageCode_)
+			: QLocale().toString(QDateTime::fromSecsSinceEpoch(expiresAt).toLocalTime(), QLocale::ShortFormat);
+		notice += QStringLiteral("\n") + localizedText(QStringLiteral("Mute expires: %1"), languageCode_)
+			.arg(expiry);
+	}
+	QMessageBox::information(this, localizedText(QStringLiteral("Moderation notice"), languageCode_), notice);
 }
 
 void MainWindow::requestRooms()

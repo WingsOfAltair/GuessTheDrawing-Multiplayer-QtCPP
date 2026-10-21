@@ -446,6 +446,7 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 				sendError(socket, message, error);
 				return;
 			}
+			updateFields.insert(QStringLiteral("reason"), sanction.reason.trimmed());
 			const auto records = accountStore_->activeServerSanctions(serverId, target, -1, &error);
 			for (const ServerSanction& record : records) {
 				if (record.id == sanctionId) {
@@ -466,12 +467,25 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 				return;
 			}
 			updateFields.insert(QStringLiteral("sanction"), found->toJson());
+			updateFields.insert(QStringLiteral("reason"), found->reason);
+			qInfo().noquote() << QStringLiteral("Moderation: %1 %2 %3: %4")
+				.arg(actor, action == QStringLiteral("unban") ? QStringLiteral("unbanned")
+					: QStringLiteral("unmuted"), target, found->reason);
 		} else {
 			sendError(socket, message, QStringLiteral("Unknown moderation action"));
 			return;
 		}
 		sendMessage(registrations_.value(serverId).socket,
 			makeMessage(QStringLiteral("ModerationApplied"), updateFields));
+		if (action == QStringLiteral("unban") || action == QStringLiteral("unmute")) {
+			const QJsonObject notice = makeMessage(QStringLiteral("ModerationNotice"),
+				{{QStringLiteral("action"), action}, {QStringLiteral("issuedBy"), actor},
+				 {QStringLiteral("reason"), updateFields.value(QStringLiteral("reason"))}});
+			for (auto client = authenticatedClients_.cbegin(); client != authenticatedClients_.cend(); ++client) {
+				if (client.value().compare(target, Qt::CaseInsensitive) == 0)
+					sendMessage(client.key(), notice);
+			}
+		}
 		sendMessage(socket, withRequestId(QStringLiteral("ModerationResult"), message,
 			{{QStringLiteral("ok"), true}, {QStringLiteral("action"), action},
 			 {QStringLiteral("targetUsername"), target}}));

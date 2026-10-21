@@ -54,6 +54,7 @@ private:
 	void submitAuthentication();
 	void handleMasterMessage(const QJsonObject& message);
 	void handleGameMessage(const QJsonObject& message);
+	void showModerationNotice(const QJsonObject& message);
 	void requestRooms();
 	void populateRooms(const QJsonArray& rooms);
 	void joinSelectedRoom();

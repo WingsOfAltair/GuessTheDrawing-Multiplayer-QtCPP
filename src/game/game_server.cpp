@@ -468,10 +468,12 @@ void GameServer::completeJoinRoom(const PendingJoinRequest& pending, const QJson
 	if (!socket || socket->state() != QAbstractSocket::ConnectedState || !playerBuffers_.contains(socket))
 		return;
 	if (!authorization.value(QStringLiteral("ok")).toBool()) {
-		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
-			{{QStringLiteral("ok"), false},
-			 {QStringLiteral("error"), authorization.value(QStringLiteral("error")).toString(
-				QStringLiteral("Join rejected by the master server"))}}));
+		QJsonObject fields{{QStringLiteral("ok"), false},
+			{QStringLiteral("error"), authorization.value(QStringLiteral("error")).toString(
+				QStringLiteral("Join rejected by the master server"))}};
+		if (authorization.value(QStringLiteral("ban")).isObject())
+			fields.insert(QStringLiteral("ban"), authorization.value(QStringLiteral("ban")).toObject());
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request, fields));
 		return;
 	}
 	const PlayerProfile profile = PlayerProfile::fromJson(authorization.value(QStringLiteral("profile")).toObject());
@@ -552,6 +554,16 @@ void GameServer::completeJoinRoom(const PendingJoinRequest& pending, const QJson
 				- roundDeadline_.toSecsSinceEpoch()) * -1)
 			: roundStarting_ ? qMax(0, static_cast<int>(intermissionDeadline_.toSecsSinceEpoch()
 				- QDateTime::currentSecsSinceEpoch())) : 0}}));
+	for (const QJsonValue& value : authorization.value(QStringLiteral("sanctions")).toArray()) {
+		const ServerSanction sanction = ServerSanction::fromJson(value.toObject());
+		if (sanction.kind != QStringLiteral("mute") || (!sanction.textChat && !sanction.voiceChat))
+			continue;
+		sendMessage(socket, makeMessage(QStringLiteral("ModerationNotice"),
+			{{QStringLiteral("action"), QStringLiteral("mute")},
+			 {QStringLiteral("issuedBy"), sanction.issuedBy}, {QStringLiteral("reason"), sanction.reason},
+			 {QStringLiteral("textChat"), sanction.textChat}, {QStringLiteral("voiceChat"), sanction.voiceChat},
+			 {QStringLiteral("expiresAt"), sanction.expiresAt}}));
+	}
 	broadcastRoster();
 	broadcastQueueStatus();
 	updateMasterRoom();
@@ -949,23 +961,69 @@ void GameServer::readMaster()
 			const QString target = message.value(QStringLiteral("targetUsername")).toString().toLower();
 			const QString action = message.value(QStringLiteral("action")).toString();
 			auto player = players_.find(target);
-			if (player == players_.end())
-				continue;
+			const QString issuedBy = message.value(QStringLiteral("issuedBy")).toString();
 			const QString reason = message.value(QStringLiteral("reason")).toString();
-			if (action == QStringLiteral("kick") || action == QStringLiteral("ban")) {
+			const auto announceToRoom = [this, &target](const QJsonObject& announcement) {
+				for (const Player& recipient : players_) {
+					if (recipient.username != target)
+						sendMessage(recipient.socket, announcement);
+				}
+			};
+			if (action == QStringLiteral("kick") || action == QStringLiteral("ban")
+				|| action == QStringLiteral("mute")) {
+				if (player == players_.end())
+					continue;
+				ServerSanction sanction;
+				if (action == QStringLiteral("mute")) {
+					sanction = ServerSanction::fromJson(message.value(QStringLiteral("sanction")).toObject());
+					player->serverTextMuted = sanction.textChat;
+					player->serverVoiceMuted = sanction.voiceChat;
+					player->serverMuteExpiresAt = sanction.expiresAt;
+				}
+				QString channelDetails;
+				if (action == QStringLiteral("mute")) {
+					QStringList channels;
+					if (sanction.textChat)
+						channels.append(QStringLiteral("text chat"));
+					if (sanction.voiceChat)
+						channels.append(QStringLiteral("voice chat"));
+					if (!channels.isEmpty())
+						channelDetails = QStringLiteral(" (%1)").arg(channels.join(QStringLiteral(", ")));
+				}
+				const QString verb = action == QStringLiteral("kick") ? QStringLiteral("kicked")
+					: action == QStringLiteral("ban") ? QStringLiteral("banned") : QStringLiteral("muted");
+				const QJsonObject announcement = makeMessage(QStringLiteral("ModerationAnnouncement"),
+					{{QStringLiteral("issuedBy"), issuedBy}, {QStringLiteral("action"), action},
+					 {QStringLiteral("targetUsername"), target}, {QStringLiteral("reason"), reason},
+					 {QStringLiteral("textChat"), sanction.textChat},
+					 {QStringLiteral("voiceChat"), sanction.voiceChat}});
+				announceToRoom(announcement);
+				logEvent(QStringLiteral("Moderation: %1 %2 %3%4: %5")
+					.arg(issuedBy, verb, target, channelDetails, reason));
 				sendMessage(player->socket, makeMessage(QStringLiteral("ModerationNotice"),
-					{{QStringLiteral("action"), action}, {QStringLiteral("reason"), reason}}));
-				player->socket->disconnectFromHost();
-			} else if (action == QStringLiteral("mute")) {
-				const ServerSanction sanction = ServerSanction::fromJson(message.value(QStringLiteral("sanction")).toObject());
-				player->serverTextMuted = sanction.textChat;
-				player->serverVoiceMuted = sanction.voiceChat;
-				player->serverMuteExpiresAt = sanction.expiresAt;
+					{{QStringLiteral("action"), action}, {QStringLiteral("issuedBy"), issuedBy},
+					 {QStringLiteral("reason"), reason}, {QStringLiteral("textChat"), sanction.textChat},
+						 {QStringLiteral("voiceChat"), sanction.voiceChat},
+						 {QStringLiteral("expiresAt"), sanction.expiresAt}}));
+				if (action == QStringLiteral("kick") || action == QStringLiteral("ban"))
+					player->socket->disconnectFromHost();
 			} else if (action == QStringLiteral("unmute")) {
-				player->serverTextMuted = false;
-				player->serverVoiceMuted = false;
-				player->serverMuteExpiresAt = 0;
+				if (player != players_.end()) {
+					player->serverTextMuted = false;
+					player->serverVoiceMuted = false;
+					player->serverMuteExpiresAt = 0;
+				}
+			} else if (action != QStringLiteral("unban")) {
+				continue;
 			}
+			const QString verb = action == QStringLiteral("unban") ? QStringLiteral("unbanned")
+				: QStringLiteral("unmuted");
+			const QJsonObject announcement = makeMessage(QStringLiteral("ModerationAnnouncement"),
+				{{QStringLiteral("issuedBy"), issuedBy}, {QStringLiteral("action"), action},
+				 {QStringLiteral("targetUsername"), target}, {QStringLiteral("reason"), reason}});
+			announceToRoom(announcement);
+			logEvent(QStringLiteral("Moderation: %1 %2 %3: %4")
+				.arg(issuedBy, verb, target, reason));
 		} else if (type == QStringLiteral("RoundResultStored")) {
 			const QString username = message.value(QStringLiteral("username")).toString();
 			auto player = players_.find(username);

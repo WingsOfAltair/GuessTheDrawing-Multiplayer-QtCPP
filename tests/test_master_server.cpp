@@ -227,6 +227,9 @@ private slots:
 			 {QStringLiteral("reason"), QStringLiteral("Repeated disruption")}}));
 		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("ban-1")).isEmpty());
 		QTRY_VERIFY(!findServer(QStringLiteral("ModerationApplied"), QString()).isEmpty());
+		const QJsonObject appliedBan = findServer(QStringLiteral("ModerationApplied"), QString());
+		QCOMPARE(appliedBan.value(QStringLiteral("issuedBy")).toString(), QStringLiteral("adminuser"));
+		QCOMPARE(appliedBan.value(QStringLiteral("reason")).toString(), QStringLiteral("Repeated disruption"));
 		const auto sanctions = accountStore.activeServerSanctions(QStringLiteral("moderation-room"),
 			QStringLiteral("victim"), -1, &error);
 		QCOMPARE(sanctions.size(), 1);
@@ -238,6 +241,74 @@ private slots:
 		QTRY_VERIFY(!findServer(QStringLiteral("ServerJoinCheckResult"), QStringLiteral("join-1")).isEmpty());
 		QVERIFY(!findServer(QStringLiteral("ServerJoinCheckResult"), QStringLiteral("join-1"))
 			.value(QStringLiteral("ok")).toBool());
+		QTcpSocket victimClient;
+		QByteArray victimBuffer;
+		QList<QJsonObject> victimResponses;
+		connect(&victimClient, &QTcpSocket::readyRead, this, [&] {
+			for (const QJsonObject& response : gtd::takeMessages(&victimBuffer, victimClient.readAll()))
+				victimResponses.append(response);
+		});
+		victimClient.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(victimClient.state(), QAbstractSocket::ConnectedState);
+		QVERIFY(gtd::sendMessage(&victimClient, gtd::makeMessage(QStringLiteral("Login"),
+			{{QStringLiteral("requestId"), QStringLiteral("victim-login")},
+			 {QStringLiteral("username"), QStringLiteral("victim")},
+			 {QStringLiteral("password"), QStringLiteral("password123")}})));
+		QTRY_VERIFY(std::any_of(victimResponses.cbegin(), victimResponses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("AuthResult")
+				&& response.value(QStringLiteral("requestId")).toString() == QStringLiteral("victim-login");
+		}));
+
+		serverResponses.clear();
+		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("ModerationRequest"),
+			QStringLiteral("unban-1"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("victim")},
+			 {QStringLiteral("action"), QStringLiteral("unban")},
+			 {QStringLiteral("sanctionId"), appliedBan.value(QStringLiteral("sanction")).toObject()
+				.value(QStringLiteral("id"))}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("unban-1")).isEmpty());
+		QVERIFY(!findServer(QStringLiteral("ModerationApplied"), QString()).isEmpty());
+		QCOMPARE(findServer(QStringLiteral("ModerationApplied"), QString()).value(QStringLiteral("action")).toString(),
+			QStringLiteral("unban"));
+		QCOMPARE(findServer(QStringLiteral("ModerationApplied"), QString()).value(QStringLiteral("reason")).toString(),
+			QStringLiteral("Repeated disruption"));
+		QTRY_VERIFY(std::any_of(victimResponses.cbegin(), victimResponses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("ModerationNotice")
+				&& response.value(QStringLiteral("action")).toString() == QStringLiteral("unban");
+		}));
+		const auto findVictimNotice = [&victimResponses](const QString& action) {
+			for (const QJsonObject& response : victimResponses) {
+				if (response.value(QStringLiteral("type")).toString() == QStringLiteral("ModerationNotice")
+					&& response.value(QStringLiteral("action")).toString() == action)
+					return response;
+			}
+			return QJsonObject{};
+		};
+		QCOMPARE(findVictimNotice(QStringLiteral("unban")).value(QStringLiteral("reason")).toString(),
+			QStringLiteral("Repeated disruption"));
+		QVERIFY(accountStore.activeServerSanctions(QStringLiteral("moderation-room"),
+			QStringLiteral("victim"), -1, &error).isEmpty());
+
+		serverResponses.clear();
+		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("ModerationRequest"),
+			QStringLiteral("mute-1"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("victim")},
+			 {QStringLiteral("action"), QStringLiteral("mute")}, {QStringLiteral("textChat"), true},
+			 {QStringLiteral("voiceChat"), false}, {QStringLiteral("reason"), QStringLiteral("Testing mute")},
+				 {QStringLiteral("expiresAt"), QDateTime::currentSecsSinceEpoch() + 300}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("mute-1")).isEmpty());
+		QTRY_VERIFY(!findServer(QStringLiteral("ModerationApplied"), QString()).isEmpty());
+		const QJsonObject appliedMute = findServer(QStringLiteral("ModerationApplied"), QString());
+		serverResponses.clear();
+		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("ModerationRequest"),
+			QStringLiteral("unmute-1"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("victim")},
+			 {QStringLiteral("action"), QStringLiteral("unmute")},
+			 {QStringLiteral("sanctionId"), appliedMute.value(QStringLiteral("sanction")).toObject()
+				.value(QStringLiteral("id"))}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("unmute-1")).isEmpty());
+		QTRY_VERIFY(findVictimNotice(QStringLiteral("unmute")).value(QStringLiteral("reason")).toString()
+			== QStringLiteral("Testing mute"));
 
 		QVERIFY(sendClient(QStringLiteral("superuser"), QStringLiteral("ModerationRequest"),
 			QStringLiteral("ban-2"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},

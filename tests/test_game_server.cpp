@@ -568,6 +568,19 @@ private slots:
 					QString displayName;
 					gtd::verifySessionToken(message.value(QStringLiteral("authToken")).toString(),
 						QStringLiteral("session-secret"), &username, -1, &displayName);
+					if (username == QStringLiteral("ban-target")) {
+						gtd::ServerSanction ban;
+						ban.serverId = room.serverId;
+						ban.targetUsername = username;
+						ban.kind = QStringLiteral("ban");
+						ban.reason = QStringLiteral("testing ban");
+						ban.expiresAt = QDateTime::currentSecsSinceEpoch() + 300;
+						gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerJoinCheckResult"),
+							{{QStringLiteral("requestId"), message.value(QStringLiteral("requestId"))},
+							 {QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Banned: testing ban")},
+							 {QStringLiteral("ban"), ban.toJson()}}));
+						continue;
+					}
 					gtd::PlayerProfile profile;
 					profile.username = username;
 					profile.displayName = displayName;
@@ -631,7 +644,28 @@ private slots:
 		QTcpSocket target;
 		QTcpSocket viewer;
 		QTcpSocket other;
+		QTcpSocket banned;
+		monitor(&banned);
+		banned.connectToHost(QHostAddress::LocalHost, server.port());
+		QTRY_COMPARE(banned.state(), QAbstractSocket::ConnectedState);
+		const QString banToken = gtd::createSessionToken(QStringLiteral("ban-target"), QStringLiteral("ban-target"),
+			QStringLiteral("session-secret"), QDateTime::currentSecsSinceEpoch() + 300);
+		QVERIFY(gtd::sendMessage(&banned, gtd::makeMessage(QStringLiteral("JoinRoom"),
+			{{QStringLiteral("requestId"), QStringLiteral("join-banned")}, {QStringLiteral("roomId"), room.roomId},
+			 {QStringLiteral("authToken"), banToken}})));
+		QTRY_VERIFY(!findMessage(&banned, QStringLiteral("JoinResult"), QStringLiteral("join-banned")).isEmpty());
+		const QJsonObject bannedJoin = findMessage(&banned, QStringLiteral("JoinResult"), QStringLiteral("join-banned"));
+		QVERIFY(!bannedJoin.value(QStringLiteral("ok")).toBool());
+		QCOMPARE(bannedJoin.value(QStringLiteral("ban")).toObject().value(QStringLiteral("reason")).toString(),
+			QStringLiteral("testing ban"));
+		QVERIFY(bannedJoin.value(QStringLiteral("ban")).toObject()
+			.value(QStringLiteral("expiresAt")).toVariant().toLongLong() > 0);
+		banned.disconnectFromHost();
+
 		join(&target, QStringLiteral("mute-target"));
+		const QJsonObject activeMuteNotice = findMessage(&target, QStringLiteral("ModerationNotice"));
+		QCOMPARE(activeMuteNotice.value(QStringLiteral("reason")).toString(), QStringLiteral("testing"));
+		QVERIFY(activeMuteNotice.value(QStringLiteral("expiresAt")).toVariant().toLongLong() > 0);
 		join(&viewer, QStringLiteral("mute-viewer"));
 		join(&other, QStringLiteral("mute-other"));
 		QTRY_VERIFY(!findMessage(&target, QStringLiteral("RoundStarted")).isEmpty());
@@ -663,6 +697,81 @@ private slots:
 		QVERIFY(receivedText(&target, QStringLiteral("filtered text")));
 		QVERIFY(!findMessage(&viewer, QStringLiteral("VoiceFrame")).isEmpty());
 		QVERIFY(!findMessage(&target, QStringLiteral("VoiceFrame")).isEmpty());
+
+		const auto sendModerationApplied = [&](const QString& action, const QString& targetUsername,
+			const QString& reason, bool textChat = false, bool voiceChat = false, qint64 expiresAt = -1) {
+			QJsonObject fields{{QStringLiteral("serverId"), room.serverId},
+				{QStringLiteral("targetUsername"), targetUsername}, {QStringLiteral("issuedBy"), QStringLiteral("room-admin")},
+				{QStringLiteral("action"), action}, {QStringLiteral("reason"), reason}};
+			if (action == QStringLiteral("mute")) {
+				gtd::ServerSanction sanction;
+				sanction.serverId = room.serverId;
+				sanction.targetUsername = targetUsername;
+				sanction.kind = action;
+				sanction.textChat = textChat;
+				sanction.voiceChat = voiceChat;
+				sanction.reason = reason;
+				sanction.expiresAt = expiresAt < 0 ? QDateTime::currentSecsSinceEpoch() + 600 : expiresAt;
+				fields.insert(QStringLiteral("sanction"), sanction.toJson());
+			}
+			return gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ModerationApplied"), fields));
+		};
+		QVERIFY(sendModerationApplied(QStringLiteral("mute"), QStringLiteral("mute-target"),
+			QStringLiteral("Repeated disruption"), true, false));
+		QTRY_VERIFY(!findMessage(&target, QStringLiteral("ModerationNotice")).isEmpty());
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationNotice"))
+			.value(QStringLiteral("textChat")).toBool());
+		QVERIFY(!findMessage(&target, QStringLiteral("ModerationNotice"))
+			.value(QStringLiteral("voiceChat")).toBool());
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationNotice"))
+			.value(QStringLiteral("expiresAt")).toVariant().toLongLong() > 0);
+		QCOMPARE(findMessage(&target, QStringLiteral("ModerationNotice"))
+			.value(QStringLiteral("reason")).toString(), QStringLiteral("Repeated disruption"));
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QVERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QCOMPARE(target.state(), QAbstractSocket::ConnectedState);
+		received[&target].clear();
+		QVERIFY(sendModerationApplied(QStringLiteral("mute"), QStringLiteral("mute-target"),
+			QStringLiteral("Permanent mute"), true, false, 0));
+		QTRY_VERIFY(!findMessage(&target, QStringLiteral("ModerationNotice")).isEmpty());
+		QCOMPARE(findMessage(&target, QStringLiteral("ModerationNotice"))
+			.value(QStringLiteral("expiresAt")).toVariant().toLongLong(), qint64(0));
+		received[&target].clear();
+		received[&viewer].clear();
+		QVERIFY(sendModerationApplied(QStringLiteral("unmute"), QStringLiteral("mute-target"),
+			QStringLiteral("Mute lifted")));
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationNotice")).isEmpty());
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QTRY_VERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QCOMPARE(findMessage(&viewer, QStringLiteral("ModerationAnnouncement"))
+			.value(QStringLiteral("action")).toString(), QStringLiteral("unmute"));
+
+		received[&target].clear();
+		received[&viewer].clear();
+		QVERIFY(sendModerationApplied(QStringLiteral("kick"), QStringLiteral("mute-target"),
+			QStringLiteral("Repeated disruption")));
+		QTRY_COMPARE(target.state(), QAbstractSocket::UnconnectedState);
+		const QJsonObject kickNotice = findMessage(&target, QStringLiteral("ModerationNotice"));
+		QCOMPARE(kickNotice.value(QStringLiteral("issuedBy")).toString(), QStringLiteral("room-admin"));
+		QCOMPARE(kickNotice.value(QStringLiteral("reason")).toString(), QStringLiteral("Repeated disruption"));
+		QVERIFY(findMessage(&target, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QVERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+
+		received[&other].clear();
+		received[&viewer].clear();
+		QVERIFY(sendModerationApplied(QStringLiteral("ban"), QStringLiteral("mute-other"),
+			QStringLiteral("Repeated disruption")));
+		QTRY_COMPARE(other.state(), QAbstractSocket::UnconnectedState);
+		QVERIFY(!findMessage(&other, QStringLiteral("ModerationNotice")).isEmpty());
+		QVERIFY(findMessage(&other, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		QVERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		received[&viewer].clear();
+		QVERIFY(sendModerationApplied(QStringLiteral("unban"), QStringLiteral("mute-other"),
+			QStringLiteral("Ban lifted")));
+		QTRY_VERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		const QJsonObject unbanAnnouncement = findMessage(&viewer, QStringLiteral("ModerationAnnouncement"));
+		QCOMPARE(unbanAnnouncement.value(QStringLiteral("action")).toString(), QStringLiteral("unban"));
+		QCOMPARE(unbanAnnouncement.value(QStringLiteral("targetUsername")).toString(), QStringLiteral("mute-other"));
 	}
 
 	void profileLeaderboardRanksReachRoster()
