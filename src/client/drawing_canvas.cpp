@@ -364,6 +364,8 @@ void DrawingCanvas::eraseObjectsAt(const QPointF& position)
 
 void DrawingCanvas::setDrawingAllowed(bool allowed)
 {
+	if (!allowed)
+		finishCurve();
 	drawingAllowed_ = allowed;
 	setCursor(allowed ? (tool_ == Tool::Select ? Qt::ArrowCursor : Qt::CrossCursor) : Qt::ForbiddenCursor);
 	if (!allowed) {
@@ -379,6 +381,8 @@ void DrawingCanvas::setDrawingAllowed(bool allowed)
 
 void DrawingCanvas::setTool(Tool tool)
 {
+	if (tool_ != tool)
+		finishCurve();
 	if (tool_ != tool && polygonInProgress_) {
 		cancelHistoryTransaction();
 		polygonInProgress_ = false;
@@ -757,6 +761,8 @@ void DrawingCanvas::setScene(const QJsonArray& layers, const QJsonArray& objects
 	clearHistory();
 	previewObject_ = CanvasObject{};
 	polygonInProgress_ = false;
+	curveInProgress_ = false;
+	curveAdjustPointIndex_ = -1;
 	dragMode_ = DragMode::None;
 	const QString oldSelection = activeLayerId_;
 	layers_.clear();
@@ -803,6 +809,8 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 		dragMode_ = DragMode::None;
 		previewObject_ = CanvasObject{};
 		polygonInProgress_ = false;
+		curveInProgress_ = false;
+		curveAdjustPointIndex_ = -1;
 	} else if (action == QStringLiteral("clear_layer")) {
 		const QString layerId = operation.value(QStringLiteral("layerId")).toString();
 		objects_.erase(std::remove_if(objects_.begin(), objects_.end(), [&layerId](const CanvasObject& item) {
@@ -812,6 +820,8 @@ void DrawingCanvas::applyOperation(const QJsonObject& operation)
 		if (!selected || selected->layerId == layerId) {
 			selectedObjectId_.clear();
 			polygonInProgress_ = false;
+			curveInProgress_ = false;
+			curveAdjustPointIndex_ = -1;
 			dragMode_ = DragMode::None;
 			previewObject_ = CanvasObject{};
 		}
@@ -925,14 +935,17 @@ void DrawingCanvas::clearSelectedLayer()
 	const CanvasLayer* layer = findLayer(activeLayerId_);
 	if (!drawingAllowed_ || !layer || layer->locked)
 		return;
+	finishCurve();
 	emitOperation({{QStringLiteral("action"), QStringLiteral("clear_layer")},
 				   {QStringLiteral("layerId"), activeLayerId_}});
 }
 
 void DrawingCanvas::clearCanvas()
 {
-	if (drawingAllowed_)
+	if (drawingAllowed_) {
+		finishCurve();
 		emitOperation({{QStringLiteral("action"), QStringLiteral("clear")}});
+	}
 }
 
 void DrawingCanvas::addLayer(const QString& name)
@@ -1029,6 +1042,7 @@ void DrawingCanvas::setSelectedLayer(const QString& layerId)
 {
 	if (!findLayer(layerId) || activeLayerId_ == layerId)
 		return;
+	finishCurve();
 	if (polygonInProgress_)
 		cancelHistoryTransaction();
 	else
@@ -1197,6 +1211,75 @@ CanvasObject* DrawingCanvas::findObject(const QString& objectId)
 		return item.id == objectId;
 	});
 	return iterator == objects_.end() ? nullptr : &*iterator;
+}
+
+int DrawingCanvas::curveSegmentAt(const QPointF& position, QPointF* projectedPoint) const
+{
+	if (previewObject_.type != QStringLiteral("curve") || previewObject_.points.size() < 2)
+		return -1;
+	const QPointF target(position.x() * width(), position.y() * height());
+	const qreal threshold = qMax<qreal>(12.0,
+		strokeWidth_ * qMin(width(), height()) / 600.0 + 8.0);
+	qreal closestDistance = threshold;
+	int closestSegment = -1;
+	for (qsizetype index = 0; index + 1 < previewObject_.points.size(); ++index) {
+		const QPointF start = pointFromJson(previewObject_.points.at(index));
+		const QPointF end = pointFromJson(previewObject_.points.at(index + 1));
+		QPointF previous = start;
+		const QPointF previousControl = pointFromJson(
+			previewObject_.points.at(qMax<qsizetype>(0, index - 1)));
+		const QPointF nextControl = pointFromJson(previewObject_.points.at(
+			qMin<qsizetype>(previewObject_.points.size() - 1, index + 2)));
+		const QPointF control1 = start + (end - previousControl) / 6.0;
+		const QPointF control2 = end - (nextControl - start) / 6.0;
+		for (int sample = 1; sample <= 32; ++sample) {
+			const qreal t = sample / 32.0;
+			const qreal inverse = 1.0 - t;
+			const QPointF current = previewObject_.points.size() == 2
+				? start + (end - start) * t
+				: start * (inverse * inverse * inverse)
+					+ control1 * (3.0 * inverse * inverse * t)
+					+ control2 * (3.0 * inverse * t * t)
+					+ end * (t * t * t);
+			const QPointF previousPixels(previous.x() * width(), previous.y() * height());
+			const QPointF direction((current.x() - previous.x()) * width(),
+				(current.y() - previous.y()) * height());
+			const qreal lengthSquared = QPointF::dotProduct(direction, direction);
+			const qreal fraction = lengthSquared > 0.0
+				? qBound<qreal>(0.0, QPointF::dotProduct(target - previousPixels, direction) / lengthSquared, 1.0)
+				: 0.0;
+			const QPointF candidatePixels = previousPixels + direction * fraction;
+			const qreal distance = QLineF(target, candidatePixels).length();
+			if (distance <= closestDistance) {
+				closestDistance = distance;
+				closestSegment = static_cast<int>(index);
+				if (projectedPoint)
+					*projectedPoint = previous + (current - previous) * fraction;
+			}
+			previous = current;
+		}
+	}
+	return closestSegment;
+}
+
+void DrawingCanvas::finishCurve()
+{
+	if (previewObject_.id.isEmpty() || previewObject_.type != QStringLiteral("curve"))
+		return;
+	if (previewObject_.points.size() >= 2
+		&& QLineF(pointFromJson(previewObject_.points.first()),
+			pointFromJson(previewObject_.points.last())).length() > 0.001) {
+		updateBoundsFromPoints(&previewObject_);
+		emitObjectUpsert(previewObject_);
+		endHistoryTransaction();
+	} else {
+		cancelHistoryTransaction();
+	}
+	previewObject_ = CanvasObject{};
+	curveInProgress_ = false;
+	curveAdjustPointIndex_ = -1;
+	dragMode_ = DragMode::None;
+	update();
 }
 
 void DrawingCanvas::updateBoundsFromPoints(CanvasObject* object) const
@@ -1474,6 +1557,11 @@ void DrawingCanvas::paintScene(QPainter& painter) const
 void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 {
 	setFocus(Qt::MouseFocusReason);
+	if (tool_ == Tool::Curve && curveInProgress_ && event->button() == Qt::RightButton) {
+		finishCurve();
+		event->accept();
+		return;
+	}
 	if (!drawingAllowed_ || event->button() != Qt::LeftButton) {
 		QWidget::mousePressEvent(event);
 		return;
@@ -1481,6 +1569,22 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 	const QPointF point = normalizedPoint(event->position());
 	const CanvasLayer* layer = findLayer(activeLayerId_);
 	if (!layer || layer->locked || !layer->visible) {
+		event->accept();
+		return;
+	}
+	if (tool_ == Tool::Curve && curveInProgress_) {
+		QPointF projectedPoint;
+		const int segment = curveSegmentAt(point, &projectedPoint);
+		if (segment < 0 || previewObject_.points.size() >= 4) {
+			finishCurve();
+			event->accept();
+			return;
+		}
+		curveAdjustPointIndex_ = segment + 1;
+		previewObject_.points.insert(curveAdjustPointIndex_, pointJson(projectedPoint));
+		updateBoundsFromPoints(&previewObject_);
+		dragMode_ = DragMode::Draw;
+		update();
 		event->accept();
 		return;
 	}
@@ -1578,7 +1682,7 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 		: tool_ == Tool::RoundedRectangle ? QStringLiteral("rounded_rectangle")
 		: tool_ == Tool::Ellipse ? QStringLiteral("ellipse") : QStringLiteral("line");
 	beginHistoryTransaction();
-	if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush || tool_ == Tool::Curve) {
+	if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush) {
 		previewObject_.points.append(pointJson(point));
 		updateBoundsFromPoints(&previewObject_);
 		selectedObjectId_ = previewObject_.id;
@@ -1587,6 +1691,11 @@ void DrawingCanvas::mousePressEvent(QMouseEvent* event)
 	} else if (tool_ == Tool::Line) {
 		previewObject_.points.append(pointJson(point));
 		previewObject_.points.append(pointJson(point));
+	} else if (tool_ == Tool::Curve) {
+		selectedObjectId_.clear();
+		previewObject_.points.append(pointJson(point));
+		previewObject_.points.append(pointJson(point));
+		updateBoundsFromPoints(&previewObject_);
 	}
 	dragStart_ = point;
 	dragMode_ = DragMode::Draw;
@@ -1614,7 +1723,14 @@ void DrawingCanvas::mouseMoveEvent(QMouseEvent* event)
 		dragStart_ = point;
 	} else if (dragMode_ == DragMode::Draw && (event->buttons() & Qt::LeftButton)) {
 		const QPointF point = normalizedPoint(event->position());
-		if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush || tool_ == Tool::Curve) {
+		if (tool_ == Tool::Curve) {
+			if (curveAdjustPointIndex_ >= 0 && curveAdjustPointIndex_ < previewObject_.points.size())
+				previewObject_.points[curveAdjustPointIndex_] = pointJson(point);
+			else if (previewObject_.points.size() >= 2)
+				previewObject_.points[1] = pointJson(point);
+			updateBoundsFromPoints(&previewObject_);
+			update();
+		} else if (tool_ == Tool::Pen || tool_ == Tool::Brush || tool_ == Tool::Airbrush) {
 			CanvasObject* item = findObject(selectedObjectId_);
 			if (item && item->points.size() < MaximumObjectPoints) {
 				CanvasObject updated = *item;
@@ -1649,8 +1765,29 @@ void DrawingCanvas::mouseMoveEvent(QMouseEvent* event)
 void DrawingCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
 	if (event->button() == Qt::LeftButton) {
+		if (tool_ == Tool::Curve && dragMode_ == DragMode::Draw) {
+			if (curveAdjustPointIndex_ >= 0) {
+				curveAdjustPointIndex_ = -1;
+				if (previewObject_.points.size() >= 4)
+					finishCurve();
+				else {
+					dragMode_ = DragMode::None;
+					update();
+				}
+			} else if (previewObject_.points.size() >= 2
+				&& QLineF(pointFromJson(previewObject_.points.first()),
+					pointFromJson(previewObject_.points.last())).length() > 0.001) {
+				curveInProgress_ = true;
+				dragMode_ = DragMode::None;
+				update();
+			} else {
+				finishCurve();
+			}
+			QWidget::mouseReleaseEvent(event);
+			return;
+		}
 		const bool pathTool = tool_ == Tool::Pen || tool_ == Tool::Brush
-			|| tool_ == Tool::Airbrush || tool_ == Tool::Curve;
+			|| tool_ == Tool::Airbrush;
 		if (dragMode_ == DragMode::Draw && !pathTool) {
 			if (tool_ == Tool::Line)
 				updateBoundsFromPoints(&previewObject_);

@@ -119,11 +119,10 @@ private slots:
 		QCOMPARE(image.pixelColor(0, 0), QColor(Qt::white));
 	}
 
-	void brushAirbrushAndCurveUseSelectedColorAndWidth()
+	void brushAndAirbrushUseSelectedColorAndWidth()
 	{
 		for (const auto& item : {qMakePair(gtd::DrawingCanvas::Tool::Brush, QStringLiteral("brush")),
-								 qMakePair(gtd::DrawingCanvas::Tool::Airbrush, QStringLiteral("airbrush")),
-								 qMakePair(gtd::DrawingCanvas::Tool::Curve, QStringLiteral("curve"))}) {
+								 qMakePair(gtd::DrawingCanvas::Tool::Airbrush, QStringLiteral("airbrush"))}) {
 			gtd::DrawingCanvas canvas;
 			canvas.setMinimumSize(0, 0);
 			canvas.resize(100, 100);
@@ -151,6 +150,83 @@ private slots:
 			QCOMPARE(object.strokeWidth, 11);
 			QVERIFY(object.points.size() >= 3);
 		}
+	}
+
+	void curveToolDrawsBaselineThenAllowsTwoBends()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(400, 400);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Curve);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(40, 200));
+		QMouseEvent baselineMove(QEvent::MouseMove, QPointF(360, 200), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &baselineMove);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(360, 200));
+		QCOMPARE(operations.size(), 0);
+
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+		QMouseEvent firstBendMove(QEvent::MouseMove, QPointF(200, 40), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &firstBendMove);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(200, 40));
+		QCOMPARE(operations.size(), 0);
+
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(290, 110));
+		QMouseEvent secondBendMove(QEvent::MouseMove, QPointF(280, 300), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &secondBendMove);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(280, 300));
+
+		QCOMPARE(operations.size(), 1);
+		const gtd::CanvasObject curve = gtd::CanvasObject::fromJson(
+			operations.first().first().toJsonObject().value(QStringLiteral("object")).toObject());
+		QCOMPARE(curve.type, QStringLiteral("curve"));
+		QCOMPARE(curve.points.size(), 4);
+		QVERIFY(qAbs(curve.points.at(0).toObject().value(QStringLiteral("x")).toDouble() - 40.0 / 399.0) < 0.01);
+		QVERIFY(qAbs(curve.points.at(3).toObject().value(QStringLiteral("x")).toDouble() - 360.0 / 399.0) < 0.01);
+		QVERIFY(qAbs(curve.points.at(1).toObject().value(QStringLiteral("y")).toDouble() - 40.0 / 399.0) < 0.01);
+		QVERIFY(qAbs(curve.points.at(2).toObject().value(QStringLiteral("y")).toDouble() - 300.0 / 399.0) < 0.01);
+
+		canvas.undo();
+		QCOMPARE(operations.size(), 2);
+		QCOMPARE(operations.last().first().toJsonObject().value(QStringLiteral("action")).toString(),
+			QStringLiteral("object_delete"));
+	}
+
+	void curveToolCanFinishAfterOneBend()
+	{
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setDrawingAllowed(true);
+		canvas.setTool(gtd::DrawingCanvas::Tool::Curve);
+		QSignalSpy operations(&canvas, &gtd::DrawingCanvas::operationGenerated);
+		canvas.show();
+		QCoreApplication::processEvents();
+
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(10, 50));
+		QMouseEvent baselineMove(QEvent::MouseMove, QPointF(90, 50), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &baselineMove);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(90, 50));
+		QTest::mousePress(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 50));
+		QMouseEvent bendMove(QEvent::MouseMove, QPointF(50, 25), Qt::NoButton,
+			Qt::LeftButton, Qt::NoModifier);
+		QCoreApplication::sendEvent(&canvas, &bendMove);
+		QTest::mouseRelease(&canvas, Qt::LeftButton, Qt::NoModifier, QPoint(50, 25));
+
+		QTest::mouseClick(&canvas, Qt::RightButton, Qt::NoModifier, QPoint(50, 25));
+
+		QCOMPARE(operations.size(), 1);
+		const gtd::CanvasObject curve = gtd::CanvasObject::fromJson(
+			operations.first().first().toJsonObject().value(QStringLiteral("object")).toObject());
+		QCOMPARE(curve.points.size(), 3);
 	}
 
 	void curvePassesThroughItsSampledPointsSmoothly()

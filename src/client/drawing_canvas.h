@@ -100,6 +100,8 @@ private:
 	const CanvasLayer* findLayer(const QString& layerId) const;
 	CanvasObject* findObject(const QString& objectId);
 	void updateDrag(const QPointF& position);
+	int curveSegmentAt(const QPointF& position, QPointF* projectedPoint) const;
+	void finishCurve();
 	void updateBoundsFromPoints(CanvasObject* object) const;
 	void fillAt(const QPointF& position);
 	void pickColorAt(const QPointF& position);
@@ -143,6 +145,7 @@ private:
 	QPointF dragStart_;
 	QPointF polygonCursor_;
 	int resizeHandle_ = -1;
+	int curveAdjustPointIndex_ = -1;
 	DragMode dragMode_ = DragMode::None;
 	Tool tool_ = Tool::Pen;
 	QString currentColor_ = QStringLiteral("#202124");
@@ -151,6 +154,7 @@ private:
 	bool filled_ = false;
 	bool drawingAllowed_ = false;
 	bool polygonInProgress_ = false;
+	bool curveInProgress_ = false;
 	bool historyTransactionActive_ = false;
 	bool historyReplay_ = false;
 };
