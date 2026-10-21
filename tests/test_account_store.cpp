@@ -1,6 +1,11 @@
 #include "storage/account_store.h"
 
+#include <QDateTime>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <QtTest>
 
 class AccountStoreTests final : public QObject {
@@ -198,6 +203,104 @@ private slots:
 		QVERIFY(!store.updateProfile(QStringLiteral("safeplayer"), QStringLiteral("First\nSecond"),
 			QString(), QString(), QString(), &error));
 		QVERIFY(!store.authenticate(QStringLiteral("safeplayer"), QString(129, QLatin1Char('x')), &error));
+	}
+
+	void persistsServerRolesAndSuperAdmins()
+	{
+		QTemporaryDir directory;
+		const QString path = directory.filePath(QStringLiteral("moderation.sqlite"));
+		QString error;
+		gtd::AccountStore store(path);
+		QVERIFY2(store.initialize(&error), qPrintable(error));
+		for (const QString& user : {QStringLiteral("owner"), QStringLiteral("helper"), QStringLiteral("player")})
+			QVERIFY2(store.createAccount(user, QStringLiteral("password123"), user, &error), qPrintable(error));
+
+		QSqlDatabase seed = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("superadmin-seed"));
+		seed.setDatabaseName(path);
+		QVERIFY2(seed.open(), qPrintable(seed.lastError().text()));
+		QSqlQuery seedQuery(seed);
+		seedQuery.prepare(QStringLiteral("INSERT INTO master_super_admins(username) VALUES(:username)"));
+		seedQuery.bindValue(QStringLiteral(":username"), QStringLiteral("owner"));
+		QVERIFY2(seedQuery.exec(), qPrintable(seedQuery.lastError().text()));
+		seed.close();
+		seed = QSqlDatabase();
+		QSqlDatabase::removeDatabase(QStringLiteral("superadmin-seed"));
+
+		QVERIFY(store.isMasterSuperAdmin(QStringLiteral("OWNER"), &error));
+		QVERIFY(!store.isMasterSuperAdmin(QStringLiteral("helper"), &error));		
+		QVERIFY2(store.setServerRole(QStringLiteral("room-server-a"), QStringLiteral("helper"),
+			QStringLiteral("moderator"), QStringLiteral("owner"), &error), qPrintable(error));
+		QVERIFY2(store.setServerRole(QStringLiteral("room-server-a"), QStringLiteral("player"),
+			QStringLiteral("admin"), QStringLiteral("owner"), &error), qPrintable(error));
+		QCOMPARE(store.serverRole(QStringLiteral("room-server-a"), QStringLiteral("PLAYER"), &error),
+			QStringLiteral("admin"));
+		QCOMPARE(store.serverRole(QStringLiteral("room-server-b"), QStringLiteral("player"), &error),
+			QStringLiteral("player"));
+		QCOMPARE(store.serverStaff(QStringLiteral("room-server-a"), &error).size(), 2);
+		QVERIFY2(store.setServerRole(QStringLiteral("room-server-a"), QStringLiteral("helper"),
+			QStringLiteral("player"), QStringLiteral("owner"), &error), qPrintable(error));
+		QCOMPARE(store.serverRole(QStringLiteral("room-server-a"), QStringLiteral("helper"), &error),
+			QStringLiteral("player"));
+	}
+
+	void persistsScopedSanctionsAndViewerMutes()
+	{
+		QTemporaryDir directory;
+		const QString path = directory.filePath(QStringLiteral("sanctions.sqlite"));
+		QString error;
+		{
+			gtd::AccountStore store(path);
+			QVERIFY2(store.initialize(&error), qPrintable(error));
+			for (const QString& user : {QStringLiteral("moderator"), QStringLiteral("target"), QStringLiteral("viewer")})
+				QVERIFY2(store.createAccount(user, QStringLiteral("password123"), user, &error), qPrintable(error));
+
+			gtd::ServerSanction ban;
+			ban.serverId = QStringLiteral("room-server-a");
+			ban.targetUsername = QStringLiteral("target");
+			ban.kind = QStringLiteral("ban");
+			ban.reason = QStringLiteral("Repeated disruption");
+			ban.issuedBy = QStringLiteral("moderator");
+			qint64 banId = 0;
+			QVERIFY2(store.addServerSanction(ban, &banId, &error), qPrintable(error));
+			QVERIFY(banId > 0);
+
+			gtd::ServerSanction mute = ban;
+			mute.kind = QStringLiteral("mute");
+			mute.textChat = true;
+			mute.voiceChat = false;
+			mute.reason = QStringLiteral("Text flood");
+			mute.expiresAt = QDateTime::currentSecsSinceEpoch() + 60;
+			QVERIFY2(store.addServerSanction(mute, nullptr, &error), qPrintable(error));
+			QCOMPARE(store.activeServerSanctions(QStringLiteral("room-server-a"),
+				QStringLiteral("target"), QDateTime::currentSecsSinceEpoch(), &error).size(), 2);
+			QCOMPARE(store.activeServerSanctions(QStringLiteral("room-server-b"), {}, -1, &error).size(), 0);
+			QCOMPARE(store.activeServerSanctions(QStringLiteral("room-server-a"),
+				QStringLiteral("target"), mute.expiresAt, &error).size(), 1);
+			QVERIFY2(store.revokeServerSanction(QStringLiteral("room-server-a"), banId,
+				QStringLiteral("moderator"), &error), qPrintable(error));
+			QCOMPARE(store.activeServerSanctions(QStringLiteral("room-server-a"),
+				QStringLiteral("target"), QDateTime::currentSecsSinceEpoch(), &error).size(), 1);
+
+			QVERIFY2(store.setPlayerMute(QStringLiteral("room-server-a"), QStringLiteral("viewer"),
+				QStringLiteral("target"), false, true, &error), qPrintable(error));
+			const auto preferences = store.playerMutePreferences(QStringLiteral("room-server-a"),
+				QStringLiteral("viewer"), &error);
+			QCOMPARE(preferences.size(), 1);
+			QVERIFY(!preferences.first().textChat);
+			QVERIFY(preferences.first().voiceChat);
+			QCOMPARE(store.playerMutePreferences(QStringLiteral("room-server-b"),
+				QStringLiteral("viewer"), &error).size(), 0);
+		}
+
+		gtd::AccountStore reopened(path);
+		QVERIFY2(reopened.initialize(&error), qPrintable(error));
+		const auto preferences = reopened.playerMutePreferences(QStringLiteral("room-server-a"),
+			QStringLiteral("viewer"), &error);
+		QCOMPARE(preferences.size(), 1);
+		QVERIFY2(reopened.setPlayerMute(QStringLiteral("room-server-a"), QStringLiteral("viewer"),
+			QStringLiteral("target"), false, false, &error), qPrintable(error));
+		QCOMPARE(reopened.playerMutePreferences(QStringLiteral("room-server-a"),
+			QStringLiteral("viewer"), &error).size(), 0);
 	}
 };
 

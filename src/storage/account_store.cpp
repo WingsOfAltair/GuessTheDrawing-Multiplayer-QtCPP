@@ -1,6 +1,7 @@
 #include "storage/account_store.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QPasswordDigestor>
@@ -21,6 +22,18 @@ constexpr qsizetype PasswordHashBytes = 32;
 QString normalizedUsername(const QString& username)
 {
 	return username.trimmed().toLower();
+}
+
+bool validModerationIdentity(const QString& value)
+{
+	static const QRegularExpression pattern(QStringLiteral("^[a-zA-Z0-9_]{3,24}$"));
+	return pattern.match(value.trimmed()).hasMatch();
+}
+
+bool validServerId(const QString& value)
+{
+	static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
+	return pattern.match(value).hasMatch();
 }
 
 void setError(QString* error, const QString& message)
@@ -64,6 +77,7 @@ PlayerProfile profileFromQuery(const QSqlQuery& query)
 	profile.roundsWon = query.value(6).toInt();
 	profile.roundsLost = query.value(7).toInt();
 	profile.roundsAbandoned = query.value(8).toInt();
+	profile.masterSuperAdmin = query.value(9).toBool();
 	return profile;
 }
 
@@ -175,6 +189,38 @@ bool AccountStore::initialize(QString* error)
 			"UPDATE accounts SET drawing_order = rowid WHERE drawing_order = 0 AND drawing_score > 0"))) {
 		setError(error, query.lastError().text());
 		return false;
+	}
+	const QStringList moderationTables{
+		QStringLiteral("CREATE TABLE IF NOT EXISTS master_super_admins ("
+			"username TEXT PRIMARY KEY NOT NULL REFERENCES accounts(username) ON DELETE CASCADE)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS server_staff ("
+			"server_id TEXT NOT NULL, username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"role TEXT NOT NULL CHECK(role IN ('admin', 'moderator')), "
+			"assigned_by TEXT NOT NULL REFERENCES accounts(username), assigned_at INTEGER NOT NULL, "
+			"PRIMARY KEY(server_id, username))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS server_sanctions ("
+			"id INTEGER PRIMARY KEY AUTOINCREMENT, server_id TEXT NOT NULL, "
+			"target_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"kind TEXT NOT NULL CHECK(kind IN ('ban', 'mute')), "
+			"text_chat INTEGER NOT NULL DEFAULT 0 CHECK(text_chat IN (0, 1)), "
+			"voice_chat INTEGER NOT NULL DEFAULT 0 CHECK(voice_chat IN (0, 1)), "
+			"reason TEXT NOT NULL, issued_by TEXT NOT NULL REFERENCES accounts(username), "
+			"created_at INTEGER NOT NULL, expires_at INTEGER, revoked_by TEXT REFERENCES accounts(username), "
+			"revoked_at INTEGER)"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS server_sanctions_active "
+			"ON server_sanctions(server_id, target_username, kind, revoked_at, expires_at)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS player_mutes ("
+			"server_id TEXT NOT NULL, muter_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"target_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"text_chat INTEGER NOT NULL CHECK(text_chat IN (0, 1)), "
+			"voice_chat INTEGER NOT NULL CHECK(voice_chat IN (0, 1)), updated_at INTEGER NOT NULL, "
+			"CHECK(text_chat = 1 OR voice_chat = 1), "
+			"CHECK(muter_username <> target_username), PRIMARY KEY(server_id, muter_username, target_username))")};
+	for (const QString& statement : moderationTables) {
+		if (!query.exec(statement)) {
+			setError(error, query.lastError().text());
+			return false;
+		}
 	}
 	return true;
 }
@@ -379,7 +425,8 @@ QList<PlayerProfile> AccountStore::topPlayers(bool drawingPoints, int limit, QSt
 	const QString scoreColumn = drawingPoints ? QStringLiteral("drawing_score") : QStringLiteral("guessing_score");
 	QSqlQuery query(database_);
 	query.prepare(QStringLiteral(
-		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned "
+		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned, "
+		"EXISTS(SELECT 1 FROM master_super_admins WHERE username = accounts.username) "
 		"FROM accounts WHERE %1 > 0 ORDER BY %1 DESC, %2 ASC, username ASC LIMIT :limit")
 		.arg(scoreColumn, drawingPoints ? QStringLiteral("drawing_order") : QStringLiteral("guessing_order")));
 	query.bindValue(QStringLiteral(":limit"), boundedLimit);
@@ -403,7 +450,8 @@ std::optional<PlayerProfile> AccountStore::loadProfile(const QString& normalized
 {
 	QSqlQuery query(database_);
 	query.prepare(QStringLiteral(
-		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned "
+		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned, "
+		"EXISTS(SELECT 1 FROM master_super_admins WHERE username = accounts.username) "
 		"FROM accounts WHERE username = :username"));
 	query.bindValue(QStringLiteral(":username"), normalizedUsername);
 	if (!query.exec()) {
@@ -536,6 +584,332 @@ bool AccountStore::recordRoundAbandonment(const QString& username, QString* erro
 	if (!query.exec() || query.numRowsAffected() != 1) {
 		setError(error, query.lastError().text().isEmpty()
 			? QStringLiteral("Profile not found") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::isMasterSuperAdmin(const QString& username, QString* error)
+{
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("SELECT 1 FROM master_super_admins WHERE username = :username"));
+	query.bindValue(QStringLiteral(":username"), normalizedUsername(username));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return query.next();
+}
+
+QList<QString> AccountStore::masterSuperAdmins(QString* error)
+{
+	QSqlQuery query(database_);
+	if (!query.exec(QStringLiteral("SELECT username FROM master_super_admins ORDER BY username"))) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<QString> result;
+	while (query.next())
+		result.append(query.value(0).toString());
+	return result;
+}
+
+qint64 AccountStore::masterSuperAdminDataVersion(QString* error)
+{
+	QSqlQuery query(database_);
+	if (!query.exec(QStringLiteral("PRAGMA data_version")) || !query.next()) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Could not read SQLite data version") : query.lastError().text());
+		return -1;
+	}
+	return query.value(0).toLongLong();
+}
+
+QString AccountStore::serverRole(const QString& serverId, const QString& username, QString* error)
+{
+	if (!validServerId(serverId)) {
+		setError(error, QStringLiteral("Invalid server ID"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("SELECT role FROM server_staff WHERE server_id = :server AND username = :username"));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	query.bindValue(QStringLiteral(":username"), normalizedUsername(username));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	return query.next() ? query.value(0).toString() : QStringLiteral("player");
+}
+
+QList<ServerRoleAssignment> AccountStore::serverStaff(const QString& serverId, QString* error)
+{
+	if (!validServerId(serverId)) {
+		setError(error, QStringLiteral("Invalid server ID"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT server_id, username, role, assigned_by FROM server_staff "
+		"WHERE server_id = :server ORDER BY role, username"));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<ServerRoleAssignment> result;
+	while (query.next()) {
+		ServerRoleAssignment assignment;
+		assignment.serverId = query.value(0).toString();
+		assignment.username = query.value(1).toString();
+		assignment.role = query.value(2).toString();
+		assignment.assignedBy = query.value(3).toString();
+		result.append(assignment);
+	}
+	return result;
+}
+
+bool AccountStore::setServerRole(const QString& serverId, const QString& username, const QString& role,
+	const QString& assignedBy, QString* error)
+{
+	const QString target = normalizedUsername(username);
+	const QString actor = normalizedUsername(assignedBy);
+	if (!validServerId(serverId) || !validModerationIdentity(target) || !validModerationIdentity(actor)
+		|| (role != QStringLiteral("admin") && role != QStringLiteral("moderator")
+			&& role != QStringLiteral("player"))) {
+		setError(error, QStringLiteral("Invalid server role assignment"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	if (role == QStringLiteral("player")) {
+		query.prepare(QStringLiteral("DELETE FROM server_staff WHERE server_id = :server AND username = :username"));
+		query.bindValue(QStringLiteral(":server"), serverId);
+		query.bindValue(QStringLiteral(":username"), target);
+		if (!query.exec()) {
+			setError(error, query.lastError().text());
+			return false;
+		}
+		return true;
+	}
+	query.prepare(QStringLiteral(
+		"INSERT INTO server_staff(server_id, username, role, assigned_by, assigned_at) "
+		"VALUES(:server, :username, :role, :actor, :now) "
+		"ON CONFLICT(server_id, username) DO UPDATE SET role = excluded.role, "
+		"assigned_by = excluded.assigned_by, assigned_at = excluded.assigned_at"));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	query.bindValue(QStringLiteral(":username"), target);
+	query.bindValue(QStringLiteral(":role"), role);
+	query.bindValue(QStringLiteral(":actor"), actor);
+	query.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::addServerSanction(const ServerSanction& sanction, qint64* sanctionId, QString* error)
+{
+	const QString target = normalizedUsername(sanction.targetUsername);
+	const QString actor = normalizedUsername(sanction.issuedBy);
+	const qint64 now = QDateTime::currentSecsSinceEpoch();
+	if (!validServerId(sanction.serverId) || !validModerationIdentity(target)
+		|| !validModerationIdentity(actor)
+		|| (sanction.kind != QStringLiteral("ban") && sanction.kind != QStringLiteral("mute"))
+		|| (sanction.kind == QStringLiteral("mute") && !sanction.textChat && !sanction.voiceChat)
+		|| !isValidSingleLineText(sanction.reason.trimmed(), 500)
+		|| (sanction.expiresAt != 0 && sanction.expiresAt <= now)) {
+		setError(error, QStringLiteral("Invalid moderation action"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	QSqlQuery revoke(database_);
+	revoke.prepare(QStringLiteral(
+		"UPDATE server_sanctions SET revoked_by = :actor, revoked_at = :now "
+		"WHERE server_id = :server AND target_username = :target AND kind = :kind AND revoked_at IS NULL "
+		"AND (expires_at IS NULL OR expires_at > :now)"));
+	revoke.bindValue(QStringLiteral(":actor"), actor);
+	revoke.bindValue(QStringLiteral(":now"), now);
+	revoke.bindValue(QStringLiteral(":server"), sanction.serverId);
+	revoke.bindValue(QStringLiteral(":target"), target);
+	revoke.bindValue(QStringLiteral(":kind"), sanction.kind);
+	QSqlQuery insert(database_);
+	insert.prepare(QStringLiteral(
+		"INSERT INTO server_sanctions(server_id, target_username, kind, text_chat, voice_chat, reason, "
+		"issued_by, created_at, expires_at) VALUES(:server, :target, :kind, :text, :voice, :reason, :actor, :now, :expires)"));
+	insert.bindValue(QStringLiteral(":server"), sanction.serverId);
+	insert.bindValue(QStringLiteral(":target"), target);
+	insert.bindValue(QStringLiteral(":kind"), sanction.kind);
+	insert.bindValue(QStringLiteral(":text"), sanction.kind == QStringLiteral("mute") && sanction.textChat);
+	insert.bindValue(QStringLiteral(":voice"), sanction.kind == QStringLiteral("mute") && sanction.voiceChat);
+	insert.bindValue(QStringLiteral(":reason"), sanction.reason.trimmed());
+	insert.bindValue(QStringLiteral(":actor"), actor);
+	insert.bindValue(QStringLiteral(":now"), now);
+	if (sanction.expiresAt == 0)
+		insert.bindValue(QStringLiteral(":expires"), QVariant());
+	else
+		insert.bindValue(QStringLiteral(":expires"), sanction.expiresAt);
+	if (!revoke.exec() || !insert.exec() || !database_.commit()) {
+		const QString message = !revoke.lastError().text().isEmpty() ? revoke.lastError().text()
+			: (!insert.lastError().text().isEmpty() ? insert.lastError().text() : database_.lastError().text());
+		database_.rollback();
+		setError(error, message);
+		return false;
+	}
+	if (sanctionId)
+		*sanctionId = insert.lastInsertId().toLongLong();
+	return true;
+}
+
+QList<ServerSanction> AccountStore::activeServerSanctions(const QString& serverId,
+	const QString& targetUsername, qint64 now, QString* error)
+{
+	if (!validServerId(serverId)) {
+		setError(error, QStringLiteral("Invalid server ID"));
+		return {};
+	}
+	if (now < 0)
+		now = QDateTime::currentSecsSinceEpoch();
+	const bool filterTarget = !targetUsername.isEmpty();
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT id, server_id, target_username, kind, text_chat, voice_chat, reason, issued_by, created_at, "
+		"COALESCE(expires_at, 0) FROM server_sanctions WHERE server_id = :server AND revoked_at IS NULL "
+		"AND (expires_at IS NULL OR expires_at > :now) %1 ORDER BY created_at DESC")
+		.arg(filterTarget ? QStringLiteral("AND target_username = :target") : QString()));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	query.bindValue(QStringLiteral(":now"), now);
+	if (filterTarget)
+		query.bindValue(QStringLiteral(":target"), normalizedUsername(targetUsername));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<ServerSanction> result;
+	while (query.next()) {
+		ServerSanction sanction;
+		sanction.id = query.value(0).toLongLong();
+		sanction.serverId = query.value(1).toString();
+		sanction.targetUsername = query.value(2).toString();
+		sanction.kind = query.value(3).toString();
+		sanction.textChat = query.value(4).toBool();
+		sanction.voiceChat = query.value(5).toBool();
+		sanction.reason = query.value(6).toString();
+		sanction.issuedBy = query.value(7).toString();
+		sanction.createdAt = query.value(8).toLongLong();
+		sanction.expiresAt = query.value(9).toLongLong();
+		result.append(sanction);
+	}
+	return result;
+}
+
+bool AccountStore::revokeServerSanction(const QString& serverId, qint64 sanctionId,
+	const QString& revokedBy, QString* error)
+{
+	if (!validServerId(serverId) || sanctionId <= 0 || !validModerationIdentity(revokedBy)) {
+		setError(error, QStringLiteral("Invalid sanction revocation"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"UPDATE server_sanctions SET revoked_by = :actor, revoked_at = :now "
+		"WHERE id = :id AND server_id = :server AND revoked_at IS NULL"));
+	query.bindValue(QStringLiteral(":actor"), normalizedUsername(revokedBy));
+	query.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	query.bindValue(QStringLiteral(":id"), sanctionId);
+	query.bindValue(QStringLiteral(":server"), serverId);
+	if (!query.exec() || query.numRowsAffected() != 1) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Active sanction not found") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::setPlayerMute(const QString& serverId, const QString& muterUsername,
+	const QString& targetUsername, bool textChat, bool voiceChat, QString* error)
+{
+	const QString muter = normalizedUsername(muterUsername);
+	const QString target = normalizedUsername(targetUsername);
+	if (!validServerId(serverId) || !validModerationIdentity(muter) || !validModerationIdentity(target)
+		|| muter == target) {
+		setError(error, QStringLiteral("Invalid player mute preference"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	if (!textChat && !voiceChat) {
+		query.prepare(QStringLiteral(
+			"DELETE FROM player_mutes WHERE server_id = :server AND muter_username = :muter "
+			"AND target_username = :target"));
+		query.bindValue(QStringLiteral(":server"), serverId);
+		query.bindValue(QStringLiteral(":muter"), muter);
+		query.bindValue(QStringLiteral(":target"), target);
+	} else {
+		query.prepare(QStringLiteral(
+			"INSERT INTO player_mutes(server_id, muter_username, target_username, text_chat, voice_chat, updated_at) "
+			"VALUES(:server, :muter, :target, :text, :voice, :now) "
+			"ON CONFLICT(server_id, muter_username, target_username) DO UPDATE SET "
+			"text_chat = excluded.text_chat, voice_chat = excluded.voice_chat, updated_at = excluded.updated_at"));
+		query.bindValue(QStringLiteral(":server"), serverId);
+		query.bindValue(QStringLiteral(":muter"), muter);
+		query.bindValue(QStringLiteral(":target"), target);
+		query.bindValue(QStringLiteral(":text"), textChat);
+		query.bindValue(QStringLiteral(":voice"), voiceChat);
+		query.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	}
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+QList<PlayerMutePreference> AccountStore::playerMutePreferences(const QString& serverId,
+	const QString& muterUsername, QString* error)
+{
+	if (!validServerId(serverId) || !validModerationIdentity(muterUsername)) {
+		setError(error, QStringLiteral("Invalid player mute query"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT server_id, muter_username, target_username, text_chat, voice_chat FROM player_mutes "
+		"WHERE server_id = :server AND muter_username = :muter ORDER BY target_username"));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	query.bindValue(QStringLiteral(":muter"), normalizedUsername(muterUsername));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<PlayerMutePreference> result;
+	while (query.next()) {
+		PlayerMutePreference preference;
+		preference.serverId = query.value(0).toString();
+		preference.muterUsername = query.value(1).toString();
+		preference.targetUsername = query.value(2).toString();
+		preference.textChat = query.value(3).toBool();
+		preference.voiceChat = query.value(4).toBool();
+		result.append(preference);
+	}
+	return result;
+}
+
+bool AccountStore::clearPlayerMutePreferencesForTarget(const QString& serverId,
+	const QString& targetUsername, QString* error)
+{
+	if (!validServerId(serverId) || !validModerationIdentity(targetUsername)) {
+		setError(error, QStringLiteral("Invalid player mute target"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("DELETE FROM player_mutes WHERE server_id = :server AND target_username = :target"));
+	query.bindValue(QStringLiteral(":server"), serverId);
+	query.bindValue(QStringLiteral(":target"), normalizedUsername(targetUsername));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
 		return false;
 	}
 	return true;

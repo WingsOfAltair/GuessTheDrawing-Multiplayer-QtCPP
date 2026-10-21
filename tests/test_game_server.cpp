@@ -14,6 +14,39 @@
 
 #include <algorithm>
 
+namespace {
+
+void respondToJoinCheck(QTcpSocket* socket, const QJsonObject& request)
+{
+	QString username;
+	QString displayName;
+	const bool valid = gtd::verifySessionToken(request.value(QStringLiteral("authToken")).toString(),
+		QStringLiteral("session-secret"), &username, -1, &displayName);
+	gtd::PlayerProfile profile;
+	profile.username = username;
+	profile.displayName = displayName;
+	gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("ServerJoinCheckResult"),
+		{{QStringLiteral("requestId"), request.value(QStringLiteral("requestId"))},
+		 {QStringLiteral("ok"), valid}, {QStringLiteral("username"), username},
+		 {QStringLiteral("profile"), profile.toJson()}, {QStringLiteral("sanctions"), QJsonArray{}},
+		 {QStringLiteral("playerMutes"), QJsonArray{}}}));
+}
+
+void sendRoomChat(QTcpSocket* socket, const QString& requestId, const QString& text)
+{
+	gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("RoomChat"),
+		{{QStringLiteral("requestId"), requestId}, {QStringLiteral("text"), text}}));
+}
+
+void sendVoiceFrame(QTcpSocket* socket)
+{
+	const QByteArray audio(640, '\x2a');
+	gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("VoiceFrame"),
+		{{QStringLiteral("sampleRate"), 16000}, {QStringLiteral("audio"), QString::fromLatin1(audio.toBase64())}}));
+}
+
+}
+
 class GameServerTests final : public QObject {
 	Q_OBJECT
 
@@ -84,6 +117,8 @@ private slots:
 					registered = true;
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
 						{{QStringLiteral("ok"), true}}));
+				} else if (message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerJoinCheck")) {
+					respondToJoinCheck(masterSocket, message);
 				}
 			}
 		};
@@ -211,6 +246,8 @@ private slots:
 					registered = true;
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
 						{{QStringLiteral("ok"), true}}));
+				} else if (message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerJoinCheck")) {
+					respondToJoinCheck(masterSocket, message);
 				}
 			}
 		};
@@ -346,6 +383,20 @@ private slots:
 		QTRY_VERIFY(master.hasPendingConnections());
 		QTcpSocket* masterSocket = master.nextPendingConnection();
 		QVERIFY(masterSocket);
+		QByteArray masterBuffer;
+		auto processMasterData = [&] {
+			for (const QJsonObject& message : gtd::takeMessages(&masterBuffer, masterSocket->readAll())) {
+				const QString type = message.value(QStringLiteral("type")).toString();
+				if (type == QStringLiteral("ServerRegister"))
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+				else if (type == QStringLiteral("ServerJoinCheck"))
+					respondToJoinCheck(masterSocket, message);
+			}
+		};
+		connect(masterSocket, &QTcpSocket::readyRead, this, processMasterData);
+		if (masterSocket->bytesAvailable() > 0)
+			processMasterData();
 
 		QHash<QTcpSocket*, QByteArray> buffers;
 		QHash<QTcpSocket*, QList<QJsonObject>> received;
@@ -480,6 +531,140 @@ private slots:
 		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
 	}
 
+	void filtersServerMutesAndViewerMutesByChannel()
+	{
+		QTemporaryDir dictionaryDirectory;
+		QVERIFY(dictionaryDirectory.isValid());
+		const QString dictionaryPath = dictionaryDirectory.filePath(QStringLiteral("words.txt"));
+		QFile dictionary(dictionaryPath);
+		QVERIFY(dictionary.open(QIODevice::WriteOnly | QIODevice::Text));
+		QCOMPARE(dictionary.write("filterword\n"), qint64(11));
+		dictionary.close();
+
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("room-mute-filter");
+		room.roomName = QStringLiteral("Mute filter room");
+		room.maxPlayers = 2;
+		gtd::GameServer server(room, QStringLiteral("server-mute-filter"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"), dictionaryPath, 0);
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+		QByteArray masterBuffer;
+		bool muteSent = false;
+		auto processMasterData = [&] {
+			for (const QJsonObject& message : gtd::takeMessages(&masterBuffer, masterSocket->readAll())) {
+				const QString type = message.value(QStringLiteral("type")).toString();
+				if (type == QStringLiteral("ServerRegister")) {
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+				} else if (type == QStringLiteral("ServerJoinCheck")) {
+					QString username;
+					QString displayName;
+					gtd::verifySessionToken(message.value(QStringLiteral("authToken")).toString(),
+						QStringLiteral("session-secret"), &username, -1, &displayName);
+					gtd::PlayerProfile profile;
+					profile.username = username;
+					profile.displayName = displayName;
+					QJsonArray preferences;
+					if (username == QStringLiteral("mute-viewer")) {
+						preferences.append(gtd::PlayerMutePreference{room.serverId, username,
+							QStringLiteral("mute-other"), true, false}.toJson());
+					}
+					QJsonArray sanctions;
+					if (username == QStringLiteral("mute-target") && !muteSent) {
+						gtd::ServerSanction sanction;
+						sanction.serverId = room.serverId;
+						sanction.targetUsername = username;
+						sanction.kind = QStringLiteral("mute");
+						sanction.textChat = true;
+						sanction.voiceChat = true;
+						sanction.reason = QStringLiteral("testing");
+						sanction.expiresAt = QDateTime::currentSecsSinceEpoch() + 300;
+						sanctions.append(sanction.toJson());
+						muteSent = true;
+					}
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerJoinCheckResult"),
+						{{QStringLiteral("requestId"), message.value(QStringLiteral("requestId"))},
+						 {QStringLiteral("ok"), true}, {QStringLiteral("username"), username},
+						 {QStringLiteral("profile"), profile.toJson()}, {QStringLiteral("sanctions"), sanctions},
+						 {QStringLiteral("playerMutes"), preferences}}));
+				}
+			}
+		};
+		connect(masterSocket, &QTcpSocket::readyRead, this, processMasterData);
+		if (masterSocket->bytesAvailable() > 0)
+			processMasterData();
+
+		QHash<QTcpSocket*, QByteArray> buffers;
+		QHash<QTcpSocket*, QList<QJsonObject>> received;
+		auto monitor = [this, &buffers, &received](QTcpSocket* socket) {
+			connect(socket, &QTcpSocket::readyRead, this, [socket, &buffers, &received] {
+				for (const QJsonObject& message : gtd::takeMessages(&buffers[socket], socket->readAll()))
+					received[socket].append(message);
+			});
+		};
+		auto findMessage = [&received](QTcpSocket* socket, const QString& type, const QString& requestId = QString()) {
+			for (const QJsonObject& message : received.value(socket)) {
+				if (message.value(QStringLiteral("type")).toString() == type
+					&& (requestId.isEmpty() || message.value(QStringLiteral("requestId")).toString() == requestId))
+					return message;
+			}
+			return QJsonObject{};
+		};
+		auto join = [&](QTcpSocket* socket, const QString& username) {
+			monitor(socket);
+			socket->connectToHost(QHostAddress::LocalHost, server.port());
+			QTRY_COMPARE(socket->state(), QAbstractSocket::ConnectedState);
+			const QString token = gtd::createSessionToken(username, username, QStringLiteral("session-secret"),
+				QDateTime::currentSecsSinceEpoch() + 300);
+			QVERIFY(gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("JoinRoom"),
+				{{QStringLiteral("requestId"), QStringLiteral("join-%1").arg(username)},
+				 {QStringLiteral("roomId"), room.roomId}, {QStringLiteral("authToken"), token}})));
+			QTRY_VERIFY(!findMessage(socket, QStringLiteral("JoinResult")).isEmpty());
+		};
+		QTcpSocket target;
+		QTcpSocket viewer;
+		QTcpSocket other;
+		join(&target, QStringLiteral("mute-target"));
+		join(&viewer, QStringLiteral("mute-viewer"));
+		join(&other, QStringLiteral("mute-other"));
+		QTRY_VERIFY(!findMessage(&target, QStringLiteral("RoundStarted")).isEmpty());
+		QVERIFY(findMessage(&other, QStringLiteral("JoinResult")).value(QStringLiteral("spectator")).toBool());
+		const QString drawer = findMessage(&target, QStringLiteral("RoundStarted"))
+			.value(QStringLiteral("drawerUsername")).toString();
+		QTcpSocket* roundGuesser = drawer == QStringLiteral("mute-target") ? &viewer : &target;
+		QVERIFY(gtd::sendMessage(roundGuesser, gtd::makeMessage(QStringLiteral("Guess"),
+			{{QStringLiteral("text"), QStringLiteral("filterword")}})));
+		QTRY_VERIFY(!findMessage(&target, QStringLiteral("RoundEnded")).isEmpty());
+		received[&target].clear();
+		received[&viewer].clear();
+		received[&other].clear();
+		sendRoomChat(&target, QStringLiteral("muted-chat"), QStringLiteral("blocked chat"));
+		sendVoiceFrame(&target);
+		sendRoomChat(&other, QStringLiteral("spectator-chat"), QStringLiteral("filtered text"));
+		sendVoiceFrame(&other);
+		QTest::qWait(100);
+		QVERIFY(findMessage(&target, QStringLiteral("Error"), QStringLiteral("muted-chat"))
+			.value(QStringLiteral("message")).toString().contains(QStringLiteral("muted by server staff")));
+		auto receivedText = [&received](QTcpSocket* socket, const QString& text) {
+			return std::any_of(received.value(socket).cbegin(), received.value(socket).cend(),
+				[&text](const QJsonObject& message) {
+					return message.value(QStringLiteral("type")).toString() == QStringLiteral("ChatMessage")
+						&& message.value(QStringLiteral("text")).toString() == text;
+				});
+		};
+		QVERIFY(!receivedText(&viewer, QStringLiteral("filtered text")));
+		QVERIFY(receivedText(&target, QStringLiteral("filtered text")));
+		QVERIFY(!findMessage(&viewer, QStringLiteral("VoiceFrame")).isEmpty());
+		QVERIFY(!findMessage(&target, QStringLiteral("VoiceFrame")).isEmpty());
+	}
+
 	void profileLeaderboardRanksReachRoster()
 	{
 		QTcpServer master;
@@ -506,6 +691,8 @@ private slots:
 				if (type == QStringLiteral("ServerRegister")) {
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
 						{{QStringLiteral("ok"), true}}));
+				} else if (type == QStringLiteral("ServerJoinCheck")) {
+					respondToJoinCheck(masterSocket, message);
 				} else if (type == QStringLiteral("ProfileRequest")) {
 					profileRequestReceived = true;
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ProfileResult"),
@@ -629,6 +816,8 @@ private slots:
 				if (type == QStringLiteral("ServerRegister")) {
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
 						{{QStringLiteral("ok"), true}}));
+				} else if (type == QStringLiteral("ServerJoinCheck")) {
+					respondToJoinCheck(masterSocket, message);
 				} else if (type == QStringLiteral("ServerHeartbeat")) {
 					const QJsonArray rooms = message.value(QStringLiteral("rooms")).toArray();
 					if (!rooms.isEmpty())
@@ -703,6 +892,8 @@ private slots:
 				if (type == QStringLiteral("ServerRegister")) {
 					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
 						{{QStringLiteral("ok"), true}}));
+				} else if (type == QStringLiteral("ServerJoinCheck")) {
+					respondToJoinCheck(masterSocket, message);
 				} else if (type == QStringLiteral("ServerHeartbeat")) {
 					const QJsonArray rooms = message.value(QStringLiteral("rooms")).toArray();
 					if (!rooms.isEmpty()) {

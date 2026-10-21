@@ -9,8 +9,12 @@
 #include <QAudioSource>
 #include <QApplication>
 #include <QCheckBox>
+#include <QDateTimeEdit>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -21,8 +25,10 @@
 #include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
+#include <QMenu>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QMediaDevices>
 #include <QMessageBox>
 #include <QPaintEvent>
@@ -32,6 +38,7 @@
 #include <QPalette>
 #include <QSpinBox>
 #include <QSignalBlocker>
+#include <QStandardItemModel>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTableWidget>
@@ -1532,6 +1539,9 @@ QWidget* MainWindow::createGamePage()
 	timerLabel_->setFont(timerFont);
 	auto* leaveButton = new QPushButton(QStringLiteral("Leave room"), page);
 	setLocalizedText(leaveButton, QStringLiteral("Leave room"), languageCode_);
+	moderationButton_ = new QPushButton(QStringLiteral("Moderation"), page);
+	setLocalizedText(moderationButton_, QStringLiteral("Moderation"), languageCode_);
+	moderationButton_->hide();
 	promoteToPlayerButton_ = new QPushButton(QStringLiteral("Join as Player"), page);
 	setLocalizedText(promoteToPlayerButton_, QStringLiteral("Join as Player"), languageCode_);
 	promoteToPlayerButton_->hide();
@@ -1541,7 +1551,8 @@ QWidget* MainWindow::createGamePage()
 	header->addWidget(timerLabel_, 0, 3);
 	header->addWidget(activePingWidget, 0, 4);
 	header->addWidget(promoteToPlayerButton_, 0, 5);
-	header->addWidget(leaveButton, 0, 6);
+	header->addWidget(moderationButton_, 0, 6);
+	header->addWidget(leaveButton, 0, 7);
 	layout->addLayout(header);
 	layout->addWidget(queueStatusLabel_);
 	layout->addWidget(queueProgressBar_);
@@ -1656,6 +1667,7 @@ QWidget* MainWindow::createGamePage()
 	sidePanel->addWidget(rosterLabel);
 	rosterList_ = new QListWidget(page);
 	rosterList_->setIconSize(QSize(24, 16));
+	rosterList_->setContextMenuPolicy(Qt::CustomContextMenu);
 	rosterList_->setMinimumHeight(90);
 	rosterList_->setMaximumHeight(140);
 	sidePanel->addWidget(rosterList_);
@@ -1710,6 +1722,9 @@ QWidget* MainWindow::createGamePage()
 		sendGameMessage(makeMessage(QStringLiteral("CanvasOperation"),
 			{{QStringLiteral("operation"), operation}}));
 	});
+	connect(moderationButton_, &QPushButton::clicked, this, [this] { showModerationScreen(); });
+	connect(rosterList_, &QListWidget::customContextMenuRequested, this,
+		[this](const QPoint& position) { showRosterContextMenu(position); });
 	connect(canvas_, &DrawingCanvas::currentColorChanged, this, [this](const QString& color) {
 		updateColorButton(color);
 	});
@@ -1994,6 +2009,8 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 	const QString type = message.value(QStringLiteral("type")).toString();
 	if (type == QStringLiteral("SessionReplaced")) {
 		authToken_.clear();
+		masterSuperAdmin_ = false;
+		currentServerRole_ = QStringLiteral("player");
 		inRoom_ = false;
 		leavingRoom_ = false;
 		roomRefreshTimer_.stop();
@@ -2013,6 +2030,7 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		authToken_ = message.value(QStringLiteral("authToken")).toString();
 		const PlayerProfile profile = PlayerProfile::fromJson(message.value(QStringLiteral("profile")).toObject());
 		username_ = profile.username;
+		masterSuperAdmin_ = profile.masterSuperAdmin;
 		if (nicknameEdit_)
 			nicknameEdit_->setText(profile.displayName);
 		if (auto* account = lobbyPage_->findChild<QLabel*>(QStringLiteral("accountLabel")))
@@ -2054,8 +2072,87 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 				{profile.displayName, QString::number(profile.totalScore),
 				 QString::number(profile.roundsAbandoned)}, languageCode_);
 		requestLeaderboards();
+	} else if (type == QStringLiteral("PlayerMuteList")) {
+		mutedTextUsers_.clear();
+		mutedVoiceUsers_.clear();
+		for (const QJsonValue& value : message.value(QStringLiteral("preferences")).toArray()) {
+			const PlayerMutePreference preference = PlayerMutePreference::fromJson(value.toObject());
+			if (preference.textChat)
+				mutedTextUsers_.insert(preference.targetUsername);
+			if (preference.voiceChat)
+				mutedVoiceUsers_.insert(preference.targetUsername);
+		}
+	} else if (type == QStringLiteral("PlayerMuteResult")) {
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().toLower();
+		if (message.value(QStringLiteral("textChat")).toBool())
+			mutedTextUsers_.insert(target);
+		else
+			mutedTextUsers_.remove(target);
+		if (message.value(QStringLiteral("voiceChat")).toBool())
+			mutedVoiceUsers_.insert(target);
+		else
+			mutedVoiceUsers_.remove(target);
+		if (moderationStatusLabel_)
+			moderationStatusLabel_->setText(localizedText(QStringLiteral("Player mute preference saved."), languageCode_));
+	} else if (type == QStringLiteral("ServerAdminData")) {
+		if (!moderationDialog_)
+			return;
+		bannedPlayersList_->clear();
+		for (const QJsonValue& value : message.value(QStringLiteral("bans")).toArray()) {
+			const ServerSanction sanction = ServerSanction::fromJson(value.toObject());
+			const QString expiry = sanction.expiresAt == 0
+				? localizedText(QStringLiteral("Permanent"), languageCode_)
+				: QLocale().toString(QDateTime::fromSecsSinceEpoch(sanction.expiresAt).toLocalTime(), QLocale::ShortFormat);
+			auto* item = new QListWidgetItem(QStringLiteral("%1 · %2 · %3")
+				.arg(sanction.targetUsername, sanction.reason, expiry), bannedPlayersList_);
+			item->setData(Qt::UserRole, sanction.id);
+			item->setData(Qt::UserRole + 1, sanction.targetUsername);
+		}
+		serverMutesList_->clear();
+		for (const QJsonValue& value : message.value(QStringLiteral("mutes")).toArray()) {
+			const ServerSanction sanction = ServerSanction::fromJson(value.toObject());
+			QString channels;
+			if (sanction.textChat)
+				channels = localizedText(QStringLiteral("Text"), languageCode_);
+			if (sanction.voiceChat)
+				channels += channels.isEmpty() ? localizedText(QStringLiteral("Voice"), languageCode_)
+					: QStringLiteral(" + ") + localizedText(QStringLiteral("Voice"), languageCode_);
+			const QString expiry = sanction.expiresAt == 0
+				? localizedText(QStringLiteral("Permanent"), languageCode_)
+				: QLocale().toString(QDateTime::fromSecsSinceEpoch(sanction.expiresAt).toLocalTime(), QLocale::ShortFormat);
+			auto* item = new QListWidgetItem(QStringLiteral("%1 · %2 · %3 · %4")
+				.arg(sanction.targetUsername, channels, sanction.reason, expiry), serverMutesList_);
+			item->setData(Qt::UserRole, sanction.id);
+			item->setData(Qt::UserRole + 1, sanction.targetUsername);
+		}
+		serverStaffList_->clear();
+		for (const QJsonValue& value : message.value(QStringLiteral("staff")).toArray()) {
+			const ServerRoleAssignment assignment = ServerRoleAssignment::fromJson(value.toObject());
+			auto* item = new QListWidgetItem(QStringLiteral("%1 · %2")
+				.arg(assignment.username, assignment.role), serverStaffList_);
+			item->setData(Qt::UserRole, assignment.username);
+			item->setData(Qt::UserRole + 1, assignment.role);
+		}
+		if (moderationStatusLabel_)
+			moderationStatusLabel_->clear();
+	} else if (type == QStringLiteral("PlayerProfileResult")) {
+		const PlayerProfile profile = PlayerProfile::fromJson(message.value(QStringLiteral("profile")).toObject());
+		const QString role = profile.masterSuperAdmin ? localizedText(QStringLiteral("Master super-admin"), languageCode_)
+			: profile.serverRole == QStringLiteral("admin") ? localizedText(QStringLiteral("Server admin"), languageCode_)
+			: profile.serverRole == QStringLiteral("moderator") ? localizedText(QStringLiteral("Server moderator"), languageCode_)
+			: localizedText(QStringLiteral("Player"), languageCode_);
+		QMessageBox::information(this, localizedText(QStringLiteral("Player profile"), languageCode_),
+			QStringLiteral("%1 (@%2)\n%3\n%4 points · %5 wins · %6 losses · %7 abandoned")
+				.arg(profile.displayName, profile.username, role).arg(profile.totalScore)
+				.arg(profile.roundsWon).arg(profile.roundsLost).arg(profile.roundsAbandoned));
+	} else if (type == QStringLiteral("StaffRoleResult") || type == QStringLiteral("ModerationResult")) {
+		if (moderationStatusLabel_)
+			moderationStatusLabel_->setText(localizedText(QStringLiteral("Moderation change saved."), languageCode_));
+		requestServerAdminData();
 	} else if (type == QStringLiteral("Error")) {
 		const QString text = message.value(QStringLiteral("message")).toString();
+		if (moderationStatusLabel_)
+			moderationStatusLabel_->setText(text);
 		if (pages_->currentWidget() == loginPage_)
 			loginStatusLabel_->setText(text);
 		else
@@ -2160,6 +2257,12 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 			message.value(QStringLiteral("objects")).toArray());
 		pages_->setCurrentWidget(gamePage_);
 		updateRoster(message.value(QStringLiteral("players")).toArray(), room);
+		mutedTextUsers_.clear();
+		mutedVoiceUsers_.clear();
+		if (masterSocket_.state() == QAbstractSocket::ConnectedState)
+			sendMessage(&masterSocket_, makeMessage(QStringLiteral("PlayerMuteListRequest"),
+				{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+				 {QStringLiteral("serverId"), joiningRoom_.serverId}}));
 		updateQueueStatus(message.value(QStringLiteral("queue")).toObject());
 		setLocalizedText(roundStatusLabel_, QStringLiteral("Waiting for players"), languageCode_);
 		appendGameMessage(localizedText(QStringLiteral("Joined %1 as %2"), languageCode_)
@@ -2276,6 +2379,9 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		appendGameMessage(QStringLiteral("%1: %2")
 			.arg(message.value(QStringLiteral("displayName")).toString(),
 				 message.value(QStringLiteral("text")).toString()));
+	} else if (type == QStringLiteral("ModerationNotice")) {
+		appendGameMessage(localizedText(QStringLiteral("You were %1 by server staff: %2"), languageCode_)
+			.arg(message.value(QStringLiteral("action")).toString(), message.value(QStringLiteral("reason")).toString()));
 	} else if (type == QStringLiteral("PlayerLeft")) {
 		appendGameMessage(localizedText(QStringLiteral("%1 left the room"), languageCode_)
 			.arg(message.value(QStringLiteral("username")).toString()));
@@ -2469,6 +2575,10 @@ void MainWindow::joinSelectedRoom()
 	activePingMs_ = -1;
 	activeLatencyIndicator_->setPing(-1);
 	isSpectator_ = false;
+	currentServerRole_ = QStringLiteral("player");
+	masterSuperAdmin_ = false;
+	mutedTextUsers_.clear();
+	mutedVoiceUsers_.clear();
 	roundActive_ = false;
 	roundStarting_ = false;
 	leavingRoom_ = false;
@@ -2495,6 +2605,13 @@ void MainWindow::leaveRoom()
 	activePingMs_ = -1;
 	activeLatencyIndicator_->setPing(-1);
 	isSpectator_ = false;
+	currentServerRole_ = QStringLiteral("player");
+	masterSuperAdmin_ = false;
+	mutedTextUsers_.clear();
+	mutedVoiceUsers_.clear();
+	refreshModerationPermissions();
+	if (moderationDialog_)
+		moderationDialog_->hide();
 	pendingRoleChangeRequestId_.clear();
 	roundActive_ = false;
 	roundStarting_ = false;
@@ -2799,18 +2916,30 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 	for (const QJsonValue& value : players) {
 		const QJsonObject entry = value.toObject();
 		const PlayerProfile profile = PlayerProfile::fromJson(entry.value(QStringLiteral("profile")).toObject());
+		if (profile.username == username_) {
+			currentServerRole_ = profile.serverRole;
+			masterSuperAdmin_ = profile.masterSuperAdmin;
+		}
+		QString staffRole;
+		if (profile.serverRole == QStringLiteral("admin"))
+			staffRole = localizedText(QStringLiteral(" · Server admin"), languageCode_);
+		else if (profile.serverRole == QStringLiteral("moderator"))
+			staffRole = localizedText(QStringLiteral(" · Server moderator"), languageCode_);
+		if (profile.masterSuperAdmin)
+			staffRole += localizedText(QStringLiteral(" · Master super-admin"), languageCode_);
 		const QString role = entry.value(QStringLiteral("spectator")).toBool()
 			? localizedText(QStringLiteral(" · Spectator"), languageCode_) : QString();
 		const QString drawing = roundActive_ && profile.username == currentDrawer_
 			? localizedText(QStringLiteral(" · Drawing"), languageCode_) : QString();
-		QString rosterText = localizedText(QStringLiteral("%1%2%3 (@%4)\nRoom: %5 · Total: %6"), languageCode_);
-		rosterText = rosterText.arg(profile.displayName, role, drawing, profile.username)
+		QString rosterText = localizedText(QStringLiteral("%1%2%3%4 (@%5)\nRoom: %6 · Total: %7"), languageCode_);
+		rosterText = rosterText.arg(profile.displayName, role, drawing, staffRole, profile.username)
 			.arg(entry.value(QStringLiteral("roomScore")).toInt()).arg(profile.totalScore);
 		const QString countryText = profile.countryCode.isEmpty()
 			? localizedText(QStringLiteral("Country not set"), languageCode_) : profile.countryCode;
 		rosterText.insert(rosterText.indexOf(QLatin1Char('\n')), QStringLiteral(" · %1").arg(countryText));
 		auto* rosterItem = new QListWidgetItem(rosterText, rosterList_);
 		rosterItem->setIcon(countryFlagIcon(profile.countryCode));
+		rosterItem->setData(Qt::UserRole, profile.username);
 		const QString globalRank = profile.leaderboardRank > 0
 			? QStringLiteral("#%1").arg(profile.leaderboardRank)
 			: localizedText(QStringLiteral("Unranked"), languageCode_);
@@ -2832,6 +2961,8 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 			.arg(profile.drawingScore).arg(drawingRank, drawingLeaderboardRank)
 			.arg(profile.totalScore).arg(globalRank).arg(profile.roundsWon).arg(profile.roundsLost)
 			.arg(ratio).arg(profile.roundsAbandoned);
+		if (!staffRole.isEmpty())
+			rosterToolTip += QStringLiteral("\nRole: %1").arg(staffRole.trimmed());
 		rosterToolTip = rosterToolTip.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"));
 		if (profile.countryCode.isEmpty()) {
 			rosterToolTip += QStringLiteral("<br>%1")
@@ -2843,7 +2974,273 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		}
 		rosterItem->setToolTip(rosterToolTip);
 	}
+	refreshModerationPermissions();
 	updateRoundControls();
+}
+
+void MainWindow::refreshModerationPermissions()
+{
+	const bool canManage = inRoom_ && (masterSuperAdmin_ || currentServerRole_ == QStringLiteral("admin")
+		|| currentServerRole_ == QStringLiteral("moderator"));
+	if (moderationButton_)
+		moderationButton_->setVisible(canManage);
+}
+
+void MainWindow::requestServerAdminData()
+{
+	if (!inRoom_ || authToken_.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("ServerAdminDataRequest"),
+		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+		 {QStringLiteral("serverId"), joiningRoom_.serverId}}));
+}
+
+void MainWindow::showModerationScreen()
+{
+	if (!inRoom_ || (!masterSuperAdmin_ && currentServerRole_ == QStringLiteral("player")))
+		return;
+	if (!moderationDialog_) {
+		moderationDialog_ = new QDialog(this);
+		moderationDialog_->setWindowTitle(localizedText(QStringLiteral("Server moderation"), languageCode_));
+		moderationDialog_->resize(640, 420);
+		auto* layout = new QVBoxLayout(moderationDialog_);
+		auto* tabs = new QTabWidget(moderationDialog_);
+		const auto addSanctionTab = [this, tabs](const QString& title, QListWidget** list,
+													 const QString& revokeAction) {
+			auto* page = new QWidget(tabs);
+			auto* pageLayout = new QVBoxLayout(page);
+			*list = new QListWidget(page);
+			pageLayout->addWidget(*list);
+			auto* buttons = new QHBoxLayout;
+			auto* profile = new QPushButton(localizedText(QStringLiteral("View profile"), languageCode_), page);
+			auto* revoke = new QPushButton(localizedText(revokeAction == QStringLiteral("unban")
+				? QStringLiteral("Unban") : QStringLiteral("Unmute"), languageCode_), page);
+			buttons->addWidget(profile);
+			buttons->addWidget(revoke);
+			buttons->addStretch();
+			pageLayout->addLayout(buttons);
+			connect(profile, &QPushButton::clicked, this, [this, list] {
+				if (const auto* item = (*list)->currentItem())
+					showPlayerProfile(item->data(Qt::UserRole + 1).toString());
+			});
+			connect(revoke, &QPushButton::clicked, this, [this, list, revokeAction] {
+				if (const auto* item = (*list)->currentItem())
+					sendModerationAction(item->data(Qt::UserRole + 1).toString(), revokeAction,
+						item->data(Qt::UserRole).toLongLong());
+			});
+			connect(*list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+				showPlayerProfile(item->data(Qt::UserRole + 1).toString());
+			});
+			tabs->addTab(page, localizedText(title, languageCode_));
+		};
+		addSanctionTab(QStringLiteral("Bans"), &bannedPlayersList_, QStringLiteral("unban"));
+		addSanctionTab(QStringLiteral("Mutes"), &serverMutesList_, QStringLiteral("unmute"));
+		auto* staffPage = new QWidget(tabs);
+		auto* staffLayout = new QVBoxLayout(staffPage);
+		serverStaffList_ = new QListWidget(staffPage);
+		staffLayout->addWidget(serverStaffList_);
+		auto* staffForm = new QHBoxLayout;
+		moderationStaffUsernameEdit_ = new QLineEdit(staffPage);
+		moderationStaffUsernameEdit_->setPlaceholderText(localizedText(QStringLiteral("Account username"), languageCode_));
+		moderationStaffRoleCombo_ = new QComboBox(staffPage);
+		moderationStaffRoleCombo_->addItem(localizedText(QStringLiteral("Player"), languageCode_), QStringLiteral("player"));
+		moderationStaffRoleCombo_->addItem(localizedText(QStringLiteral("Moderator"), languageCode_), QStringLiteral("moderator"));
+		moderationStaffRoleCombo_->addItem(localizedText(QStringLiteral("Admin"), languageCode_), QStringLiteral("admin"));
+		auto* assign = new QPushButton(localizedText(QStringLiteral("Set role"), languageCode_), staffPage);
+		staffForm->addWidget(moderationStaffUsernameEdit_, 1);
+		staffForm->addWidget(moderationStaffRoleCombo_);
+		staffForm->addWidget(assign);
+		staffLayout->addLayout(staffForm);
+		connect(assign, &QPushButton::clicked, this, [this] {
+			sendStaffRole(moderationStaffUsernameEdit_->text().trimmed(),
+				moderationStaffRoleCombo_->currentData().toString());
+		});
+		connect(serverStaffList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+			moderationStaffUsernameEdit_->setText(item->data(Qt::UserRole).toString());
+			showPlayerProfile(item->data(Qt::UserRole).toString());
+		});
+		tabs->addTab(staffPage, localizedText(QStringLiteral("Staff"), languageCode_));
+		layout->addWidget(tabs);
+		moderationStatusLabel_ = new QLabel(moderationDialog_);
+		layout->addWidget(moderationStatusLabel_);
+		auto* close = new QDialogButtonBox(QDialogButtonBox::Close, moderationDialog_);
+		connect(close, &QDialogButtonBox::rejected, moderationDialog_, &QDialog::reject);
+		layout->addWidget(close);
+	}
+	const bool isSuperAdmin = masterSuperAdmin_;
+	const bool canManageStaff = isSuperAdmin || currentServerRole_ == QStringLiteral("admin");
+	moderationStaffUsernameEdit_->setEnabled(canManageStaff);
+	moderationStaffRoleCombo_->setEnabled(canManageStaff);
+	if (auto* model = qobject_cast<QStandardItemModel*>(moderationStaffRoleCombo_->model())) {
+		if (auto* adminItem = model->item(2))
+			adminItem->setEnabled(isSuperAdmin);
+	}
+	moderationDialog_->show();
+	moderationDialog_->raise();
+	requestServerAdminData();
+}
+
+void MainWindow::showPlayerProfile(const QString& username)
+{
+	if (username.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("PlayerProfileRequest"),
+		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+		 {QStringLiteral("serverId"), joiningRoom_.serverId}, {QStringLiteral("username"), username}}));
+}
+
+void MainWindow::sendPlayerMute(const QString& targetUsername, bool textChat, bool voiceChat)
+{
+	if (targetUsername.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("PlayerMuteRequest"),
+		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+		 {QStringLiteral("serverId"), joiningRoom_.serverId}, {QStringLiteral("targetUsername"), targetUsername},
+		 {QStringLiteral("textChat"), textChat}, {QStringLiteral("voiceChat"), voiceChat}}));
+}
+
+void MainWindow::sendStaffRole(const QString& targetUsername, const QString& role)
+{
+	if (targetUsername.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("StaffRoleRequest"),
+		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+		 {QStringLiteral("serverId"), joiningRoom_.serverId}, {QStringLiteral("targetUsername"), targetUsername},
+		 {QStringLiteral("role"), role}}));
+}
+
+void MainWindow::sendModerationAction(const QString& targetUsername, const QString& action, qint64 sanctionId)
+{
+	if (targetUsername.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	QJsonObject fields{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+		{QStringLiteral("serverId"), joiningRoom_.serverId}, {QStringLiteral("targetUsername"), targetUsername},
+		{QStringLiteral("action"), action}};
+	if (action == QStringLiteral("unban") || action == QStringLiteral("unmute")) {
+		fields.insert(QStringLiteral("sanctionId"), static_cast<double>(sanctionId));
+	} else {
+		QDialog dialog(this);
+		dialog.setWindowTitle(localizedText(action == QStringLiteral("kick") ? QStringLiteral("Kick player")
+			: action == QStringLiteral("ban") ? QStringLiteral("Ban player") : QStringLiteral("Mute player"), languageCode_));
+		auto* layout = new QFormLayout(&dialog);
+		auto* reason = new QLineEdit(&dialog);
+		reason->setMaxLength(500);
+		layout->addRow(localizedText(QStringLiteral("Reason"), languageCode_), reason);
+		auto* text = new QCheckBox(localizedText(QStringLiteral("Text chat"), languageCode_), &dialog);
+		auto* voice = new QCheckBox(localizedText(QStringLiteral("Voice chat"), languageCode_), &dialog);
+		text->setChecked(true);
+		voice->setChecked(true);
+		if (action == QStringLiteral("mute")) {
+			layout->addRow(text);
+			layout->addRow(voice);
+		}
+		auto* durationMode = new QComboBox(&dialog);
+		durationMode->addItem(localizedText(QStringLiteral("Permanent"), languageCode_), QStringLiteral("permanent"));
+		durationMode->addItem(localizedText(QStringLiteral("For a duration"), languageCode_), QStringLiteral("duration"));
+		durationMode->addItem(localizedText(QStringLiteral("Until date and time"), languageCode_), QStringLiteral("datetime"));
+		auto* amount = new QSpinBox(&dialog);
+		amount->setRange(1, 100000);
+		auto* unit = new QComboBox(&dialog);
+		unit->addItem(localizedText(QStringLiteral("Minutes"), languageCode_), 60);
+		unit->addItem(localizedText(QStringLiteral("Hours"), languageCode_), 3600);
+		unit->addItem(localizedText(QStringLiteral("Days"), languageCode_), 86400);
+		auto* until = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &dialog);
+		until->setCalendarPopup(true);
+		until->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
+		auto* durationRow = new QWidget(&dialog);
+		auto* durationLayout = new QHBoxLayout(durationRow);
+		durationLayout->setContentsMargins(0, 0, 0, 0);
+		durationLayout->addWidget(amount);
+		durationLayout->addWidget(unit);
+		layout->addRow(localizedText(QStringLiteral("Duration"), languageCode_), durationMode);
+		layout->addRow(durationRow);
+		layout->addRow(localizedText(QStringLiteral("Expires"), languageCode_), until);
+		durationRow->setVisible(false);
+		until->setVisible(false);
+		connect(durationMode, &QComboBox::currentIndexChanged, &dialog, [=](int index) {
+			durationRow->setVisible(index == 1);
+			until->setVisible(index == 2);
+		});
+		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+		layout->addRow(buttons);
+		connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+		connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+		if (dialog.exec() != QDialog::Accepted)
+			return;
+		if (reason->text().trimmed().isEmpty()) {
+			QMessageBox::warning(this, dialog.windowTitle(), localizedText(QStringLiteral("Enter a reason."), languageCode_));
+			return;
+		}
+		fields.insert(QStringLiteral("reason"), reason->text().trimmed());
+		if (action == QStringLiteral("mute")) {
+			if (!text->isChecked() && !voice->isChecked()) {
+				QMessageBox::warning(this, dialog.windowTitle(), localizedText(QStringLiteral("Select at least one chat type."), languageCode_));
+				return;
+			}
+			fields.insert(QStringLiteral("textChat"), text->isChecked());
+			fields.insert(QStringLiteral("voiceChat"), voice->isChecked());
+		}
+		if (action != QStringLiteral("kick")) {
+			const QString mode = durationMode->currentData().toString();
+			if (mode == QStringLiteral("duration"))
+				fields.insert(QStringLiteral("expiresAt"), QDateTime::currentSecsSinceEpoch()
+					+ static_cast<qint64>(amount->value()) * unit->currentData().toInt());
+			else if (mode == QStringLiteral("datetime"))
+				fields.insert(QStringLiteral("expiresAt"), until->dateTime().toUTC().toSecsSinceEpoch());
+		}
+	}
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("ModerationRequest"), fields));
+}
+
+void MainWindow::showRosterContextMenu(const QPoint& position)
+{
+	QListWidgetItem* item = rosterList_->itemAt(position);
+	if (!item)
+		return;
+	const QString target = item->data(Qt::UserRole).toString();
+	const auto entry = std::find_if(roomRoster_.cbegin(), roomRoster_.cend(), [&target](const QJsonValue& value) {
+		return PlayerProfile::fromJson(value.toObject().value(QStringLiteral("profile")).toObject()).username == target;
+	});
+	if (entry == roomRoster_.cend())
+		return;
+	const PlayerProfile profile = PlayerProfile::fromJson(entry->toObject().value(QStringLiteral("profile")).toObject());
+	QMenu menu(this);
+	QAction* viewProfile = menu.addAction(localizedText(QStringLiteral("View profile"), languageCode_));
+	QAction* muteText = nullptr;
+	QAction* muteVoice = nullptr;
+	QAction* kick = nullptr;
+	QAction* ban = nullptr;
+	QAction* mute = nullptr;
+	const bool protectedStaff = profile.masterSuperAdmin || profile.serverRole != QStringLiteral("player");
+	if (target != username_ && !protectedStaff) {
+		muteText = menu.addAction(mutedTextUsers_.contains(target)
+			? localizedText(QStringLiteral("Unmute text"), languageCode_) : localizedText(QStringLiteral("Mute text"), languageCode_));
+		muteVoice = menu.addAction(mutedVoiceUsers_.contains(target)
+			? localizedText(QStringLiteral("Unmute voice"), languageCode_) : localizedText(QStringLiteral("Mute voice"), languageCode_));
+	}
+	const int myLevel = masterSuperAdmin_ ? 3 : currentServerRole_ == QStringLiteral("admin") ? 2
+		: currentServerRole_ == QStringLiteral("moderator") ? 1 : 0;
+	const int targetLevel = profile.masterSuperAdmin ? 3 : profile.serverRole == QStringLiteral("admin") ? 2
+		: profile.serverRole == QStringLiteral("moderator") ? 1 : 0;
+	if (target != username_ && myLevel > targetLevel) {
+		menu.addSeparator();
+		kick = menu.addAction(localizedText(QStringLiteral("Kick…"), languageCode_));
+		ban = menu.addAction(localizedText(QStringLiteral("Ban…"), languageCode_));
+		mute = menu.addAction(localizedText(QStringLiteral("Server mute…"), languageCode_));
+	}
+	QAction* selected = menu.exec(rosterList_->mapToGlobal(position));
+	if (selected == viewProfile)
+		showPlayerProfile(target);
+	else if (selected == muteText || selected == muteVoice) {
+		const bool text = selected == muteText ? !mutedTextUsers_.contains(target) : mutedTextUsers_.contains(target);
+		const bool voice = selected == muteVoice ? !mutedVoiceUsers_.contains(target) : mutedVoiceUsers_.contains(target);
+		sendPlayerMute(target, text, voice);
+	} else if (selected == kick)
+		sendModerationAction(target, QStringLiteral("kick"));
+	else if (selected == ban)
+		sendModerationAction(target, QStringLiteral("ban"));
+	else if (selected == mute)
+		sendModerationAction(target, QStringLiteral("mute"));
 }
 
 void MainWindow::updateQueueStatus(const QJsonObject& queue)

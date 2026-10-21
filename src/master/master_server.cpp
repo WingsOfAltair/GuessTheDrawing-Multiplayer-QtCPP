@@ -13,6 +13,7 @@
 #include <QTcpSocket>
 #include <QHostAddress>
 
+#include <algorithm>
 #include <cstdio>
 
 #if defined(Q_OS_WIN)
@@ -31,6 +32,44 @@ namespace {
 constexpr qint64 ServerTimeoutSeconds = 15;
 constexpr qint64 SessionLifetimeSeconds = 24 * 60 * 60;
 constexpr qsizetype MaximumRoomsPerServer = 128;
+
+bool validServerId(const QString& serverId)
+{
+	static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
+	return pattern.match(serverId).hasMatch();
+}
+
+int roleLevel(const QString& role, bool superAdmin)
+{
+	if (superAdmin)
+		return 3;
+	if (role == QStringLiteral("admin"))
+		return 2;
+	if (role == QStringLiteral("moderator"))
+		return 1;
+	return 0;
+}
+
+QString effectiveRole(AccountStore* store, const QString& serverId, const QString& username,
+	bool* superAdmin, QString* error)
+{
+	const bool isSuperAdmin = store->isMasterSuperAdmin(username, error);
+	if (error && !error->isEmpty())
+		return {};
+	if (superAdmin)
+		*superAdmin = isSuperAdmin;
+	return store->serverRole(serverId, username, error);
+}
+
+QJsonArray sanctionArray(const QList<ServerSanction>& sanctions, const QString& kind = {})
+{
+	QJsonArray result;
+	for (const ServerSanction& sanction : sanctions) {
+		if (kind.isEmpty() || sanction.kind == kind)
+			result.append(sanction.toJson());
+	}
+	return result;
+}
 
 bool constantTimeEqual(const QByteArray& left, const QByteArray& right)
 {
@@ -81,7 +120,7 @@ void writePopulationStatus(const QString& status)
 }
 
 MasterServer::MasterServer(AccountStore* accountStore, QString serverSecret, QString sessionSecret,
-						   QObject* parent)
+						   int superAdminRefreshSeconds, QObject* parent)
 	: QObject(parent),
 	  accountStore_(accountStore),
 	  serverSecret_(std::move(serverSecret)),
@@ -91,6 +130,8 @@ MasterServer::MasterServer(AccountStore* accountStore, QString serverSecret, QSt
 	expiryTimer_.setInterval(5000);
 	connect(&expiryTimer_, &QTimer::timeout, this, [this] { expireServers(); });
 	expiryTimer_.start();
+	superAdminRefreshTimer_.setInterval(qBound(1, superAdminRefreshSeconds, 3600) * 1000);
+	connect(&superAdminRefreshTimer_, &QTimer::timeout, this, [this] { refreshMasterSuperAdmins(); });
 }
 
 MasterServer::~MasterServer()
@@ -105,10 +146,54 @@ MasterServer::~MasterServer()
 
 bool MasterServer::start(const QHostAddress& address, quint16 port)
 {
+	refreshMasterSuperAdmins();
 	if (!listener_.listen(address, port))
 		return false;
+	superAdminRefreshTimer_.start();
 	QTimer::singleShot(0, this, [this] { logPopulationStats(); });
 	return true;
+}
+
+void MasterServer::refreshMasterSuperAdmins()
+{
+	QString error;
+	const qint64 dataVersion = accountStore_->masterSuperAdminDataVersion(&error);
+	if (dataVersion < 0) {
+		qWarning() << "Could not check master super-admin database version:" << error;
+		return;
+	}
+	if (masterSuperAdminDataVersion_ >= 0 && dataVersion == masterSuperAdminDataVersion_)
+		return;
+	const QList<QString> names = accountStore_->masterSuperAdmins(&error);
+	if (!error.isEmpty()) {
+		qWarning() << "Could not refresh master super-admin accounts:" << error;
+		return;
+	}
+	QSet<QString> updated;
+	for (const QString& username : names)
+		updated.insert(username.toLower());
+	if (masterSuperAdminDataVersion_ >= 0 && updated != masterSuperAdmins_) {
+		QSet<QString> changed = updated;
+		changed.unite(masterSuperAdmins_);
+		for (const QString& username : std::as_const(changed)) {
+			if (updated.contains(username) == masterSuperAdmins_.contains(username))
+				continue;
+			for (auto registration = registrations_.begin(); registration != registrations_.end(); ++registration) {
+				const QString serverRole = accountStore_->serverRole(registration.key(), username, &error);
+				if (!error.isEmpty()) {
+					qWarning() << "Could not refresh server role for" << username << error;
+					return;
+				}
+				sendMessage(registration->socket, makeMessage(QStringLiteral("StaffRoleChanged"),
+					{{QStringLiteral("serverId"), registration.key()}, {QStringLiteral("username"), username},
+					 {QStringLiteral("role"), serverRole},
+					 {QStringLiteral("masterSuperAdmin"), updated.contains(username)}}));
+			}
+		}
+		qInfo() << "Applied master super-admin database changes without restart";
+	}
+	masterSuperAdmins_ = std::move(updated);
+	masterSuperAdminDataVersion_ = dataVersion;
 }
 
 QHostAddress MasterServer::serverAddress() const
@@ -170,6 +255,226 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	if (type == QStringLiteral("Logout")) {
 		if (authenticatedClients_.remove(socket) > 0)
 			logPopulationStats();
+		return;
+	}
+	if (type == QStringLiteral("ServerAdminDataRequest")
+		|| type == QStringLiteral("StaffRoleRequest")
+		|| type == QStringLiteral("ModerationRequest")
+		|| type == QStringLiteral("PlayerMuteRequest")
+		|| type == QStringLiteral("PlayerMuteListRequest")
+		|| type == QStringLiteral("PlayerProfileRequest")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString serverId = message.value(QStringLiteral("serverId")).toString();
+		if (!validServerId(serverId)) {
+			sendError(socket, message, QStringLiteral("Invalid server ID"));
+			return;
+		}
+		if (!registrations_.contains(serverId)) {
+			sendError(socket, message, QStringLiteral("Server is unavailable"));
+			return;
+		}
+		bool isSuperAdmin = false;
+		const QString actorRole = effectiveRole(accountStore_, serverId, actor, &isSuperAdmin, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		const int actorLevel = roleLevel(actorRole, isSuperAdmin);
+		if (type == QStringLiteral("ServerAdminDataRequest")) {
+			if (actorLevel < 1 || !registrations_.contains(serverId)) {
+				sendError(socket, message, QStringLiteral("You cannot manage this server"));
+				return;
+			}
+			const QList<ServerRoleAssignment> staff = accountStore_->serverStaff(serverId, &error);
+			const QList<ServerSanction> sanctions = accountStore_->activeServerSanctions(serverId, {}, -1, &error);
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			QJsonArray staffJson;
+			for (const ServerRoleAssignment& assignment : staff)
+				staffJson.append(assignment.toJson());
+			sendMessage(socket, withRequestId(QStringLiteral("ServerAdminData"), message,
+				{{QStringLiteral("serverId"), serverId}, {QStringLiteral("staff"), staffJson},
+				 {QStringLiteral("bans"), sanctionArray(sanctions, QStringLiteral("ban"))},
+				 {QStringLiteral("mutes"), sanctionArray(sanctions, QStringLiteral("mute"))}}));
+			return;
+		}
+		if (type == QStringLiteral("PlayerProfileRequest")) {
+			const QString target = message.value(QStringLiteral("username")).toString().trimmed().toLower();
+			auto profile = accountStore_->profile(target, &error);
+			if (!profile) {
+				sendError(socket, message, error);
+				return;
+			}
+			profile->serverRole = accountStore_->serverRole(serverId, target, &error);
+			profile->masterSuperAdmin = accountStore_->isMasterSuperAdmin(target, &error);
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			sendMessage(socket, withRequestId(QStringLiteral("PlayerProfileResult"), message,
+				{{QStringLiteral("profile"), profile->toJson()}}));
+			return;
+		}
+		if (type == QStringLiteral("PlayerMuteListRequest")) {
+			const QList<PlayerMutePreference> preferences = accountStore_->playerMutePreferences(serverId, actor, &error);
+			QJsonArray preferenceArray;
+			for (const PlayerMutePreference& preference : preferences) {
+				const QString role = accountStore_->serverRole(serverId, preference.targetUsername, &error);
+				const bool targetIsSuperAdmin = accountStore_->isMasterSuperAdmin(preference.targetUsername, &error);
+				if (!error.isEmpty())
+					break;
+				if (role == QStringLiteral("player") && !targetIsSuperAdmin)
+					preferenceArray.append(preference.toJson());
+			}
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			sendMessage(socket, withRequestId(QStringLiteral("PlayerMuteList"), message,
+				{{QStringLiteral("preferences"), preferenceArray}}));
+			return;
+		}
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		if (target.isEmpty() || !accountStore_->profile(target, &error)) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("Player not found") : error);
+			return;
+		}
+		const QString targetRole = effectiveRole(accountStore_, serverId, target, nullptr, &error);
+		const bool targetSuperAdmin = accountStore_->isMasterSuperAdmin(target, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		const int targetLevel = roleLevel(targetRole, targetSuperAdmin);
+		if (type == QStringLiteral("StaffRoleRequest")) {
+			const QString newRole = message.value(QStringLiteral("role")).toString();
+			const bool validRole = newRole == QStringLiteral("admin")
+				|| newRole == QStringLiteral("moderator") || newRole == QStringLiteral("player");
+			const bool allowed = isSuperAdmin
+				? validRole
+				: actorRole == QStringLiteral("admin") && newRole != QStringLiteral("admin")
+					&& !targetSuperAdmin && targetRole != QStringLiteral("admin");
+			if (!validRole || !allowed || !registrations_.contains(serverId)) {
+				sendError(socket, message, QStringLiteral("You cannot assign that server role"));
+				return;
+			}
+			if (!accountStore_->setServerRole(serverId, target, newRole, actor, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			if ((newRole != QStringLiteral("player") || targetSuperAdmin)
+				&& !accountStore_->clearPlayerMutePreferencesForTarget(serverId, target, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			const QJsonObject update = makeMessage(QStringLiteral("StaffRoleChanged"),
+				{{QStringLiteral("serverId"), serverId}, {QStringLiteral("username"), target},
+				 {QStringLiteral("role"), newRole}, {QStringLiteral("masterSuperAdmin"), targetSuperAdmin}});
+			sendMessage(registrations_.value(serverId).socket, update);
+			sendMessage(socket, withRequestId(QStringLiteral("StaffRoleResult"), message,
+				{{QStringLiteral("ok"), true}, {QStringLiteral("username"), target},
+				 {QStringLiteral("role"), newRole}}));
+			return;
+		}
+		if (type == QStringLiteral("PlayerMuteRequest")) {
+			if (targetLevel > 0) {
+				sendError(socket, message, QStringLiteral("Staff members cannot be muted by players"));
+				return;
+			}
+			const bool textChat = message.value(QStringLiteral("textChat")).toBool();
+			const bool voiceChat = message.value(QStringLiteral("voiceChat")).toBool();
+			if (!accountStore_->setPlayerMute(serverId, actor, target, textChat, voiceChat, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			const QJsonObject update = makeMessage(QStringLiteral("PlayerMuteChanged"),
+				{{QStringLiteral("serverId"), serverId}, {QStringLiteral("muterUsername"), actor},
+				 {QStringLiteral("targetUsername"), target}, {QStringLiteral("textChat"), textChat},
+				 {QStringLiteral("voiceChat"), voiceChat}});
+			sendMessage(registrations_.value(serverId).socket, update);
+			sendMessage(socket, withRequestId(QStringLiteral("PlayerMuteResult"), message,
+				{{QStringLiteral("ok"), true}, {QStringLiteral("targetUsername"), target},
+				 {QStringLiteral("textChat"), textChat}, {QStringLiteral("voiceChat"), voiceChat}}));
+			return;
+		}
+		const QString action = message.value(QStringLiteral("action")).toString();
+		if (!registrations_.contains(serverId) || action.isEmpty()) {
+			sendError(socket, message, QStringLiteral("Server is unavailable or action is invalid"));
+			return;
+		}
+		if (!isSuperAdmin && actorLevel <= targetLevel) {
+			sendError(socket, message, QStringLiteral("You cannot moderate this player"));
+			return;
+		}
+		QJsonObject updateFields{{QStringLiteral("serverId"), serverId},
+			{QStringLiteral("targetUsername"), target}, {QStringLiteral("issuedBy"), actor},
+			{QStringLiteral("action"), action}};
+		if (action == QStringLiteral("kick")) {
+			const QString reason = message.value(QStringLiteral("reason")).toString().trimmed();
+			if (!isValidSingleLineText(reason, 500)) {
+				sendError(socket, message, QStringLiteral("A reason of up to 500 characters is required"));
+				return;
+			}
+			updateFields.insert(QStringLiteral("reason"), reason);
+		} else if (action == QStringLiteral("ban") || action == QStringLiteral("mute")) {
+			ServerSanction sanction;
+			sanction.serverId = serverId;
+			sanction.targetUsername = target;
+			sanction.kind = action;
+			sanction.textChat = message.value(QStringLiteral("textChat")).toBool();
+			sanction.voiceChat = message.value(QStringLiteral("voiceChat")).toBool();
+			sanction.reason = message.value(QStringLiteral("reason")).toString();
+			sanction.issuedBy = actor;
+			const QJsonValue expiresAt = message.value(QStringLiteral("expiresAt"));
+			if (!expiresAt.isUndefined() && !expiresAt.isNull()) {
+				if (!expiresAt.isDouble()) {
+					sendError(socket, message, QStringLiteral("Expiration must be a UTC Unix timestamp or null"));
+					return;
+				}
+				sanction.expiresAt = static_cast<qint64>(expiresAt.toDouble());
+			}
+			if (action == QStringLiteral("ban"))
+				sanction.textChat = sanction.voiceChat = false;
+			qint64 sanctionId = 0;
+			if (!accountStore_->addServerSanction(sanction, &sanctionId, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			const auto records = accountStore_->activeServerSanctions(serverId, target, -1, &error);
+			for (const ServerSanction& record : records) {
+				if (record.id == sanctionId) {
+					updateFields.insert(QStringLiteral("sanction"), record.toJson());
+					break;
+				}
+			}
+		} else if (action == QStringLiteral("unban") || action == QStringLiteral("unmute")) {
+			const qint64 sanctionId = static_cast<qint64>(message.value(QStringLiteral("sanctionId")).toDouble());
+			const auto records = accountStore_->activeServerSanctions(serverId, target, -1, &error);
+			const auto found = std::find_if(records.cbegin(), records.cend(),
+				[sanctionId, &action](const ServerSanction& item) {
+					return item.id == sanctionId && item.kind == (action == QStringLiteral("unban")
+						? QStringLiteral("ban") : QStringLiteral("mute"));
+				});
+			if (found == records.cend() || !accountStore_->revokeServerSanction(serverId, sanctionId, actor, &error)) {
+				sendError(socket, message, error.isEmpty() ? QStringLiteral("Active sanction not found") : error);
+				return;
+			}
+			updateFields.insert(QStringLiteral("sanction"), found->toJson());
+		} else {
+			sendError(socket, message, QStringLiteral("Unknown moderation action"));
+			return;
+		}
+		sendMessage(registrations_.value(serverId).socket,
+			makeMessage(QStringLiteral("ModerationApplied"), updateFields));
+		sendMessage(socket, withRequestId(QStringLiteral("ModerationResult"), message,
+			{{QStringLiteral("ok"), true}, {QStringLiteral("action"), action},
+			 {QStringLiteral("targetUsername"), target}}));
 		return;
 	}
 	if (type == QStringLiteral("CreateAccount")) {
@@ -292,6 +597,16 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	sendError(socket, message, QStringLiteral("Unknown master request"));
 }
 
+bool MasterServer::verifyClientSession(const QJsonObject& request, QString* username, QString* error) const
+{
+	if (!verifySessionToken(request.value(QStringLiteral("authToken")).toString(), sessionSecret_, username)) {
+		if (error)
+			*error = QStringLiteral("Session expired or invalid");
+		return false;
+	}
+	return true;
+}
+
 void MasterServer::sendAuthResult(QTcpSocket* socket, const QJsonObject& request,
 								  const std::optional<PlayerProfile>& profile, const QString& error,
 								  bool replaceExistingSession)
@@ -381,7 +696,59 @@ void MasterServer::handleServerRegistration(QTcpSocket* socket, const QJsonObjec
 void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
-	if (type == QStringLiteral("ServerHeartbeat")) {
+	if (type == QStringLiteral("ServerJoinCheck")) {
+		const QString serverId = serverIdsBySocket_.value(socket);
+		QString username;
+		QString error;
+		if (!verifySessionToken(message.value(QStringLiteral("authToken")).toString(), sessionSecret_, &username)) {
+			sendMessage(socket, withRequestId(QStringLiteral("ServerJoinCheckResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Session expired or invalid")}}));
+			return;
+		}
+		auto profile = accountStore_->profile(username, &error);
+		const QList<ServerSanction> sanctions = accountStore_->activeServerSanctions(serverId, username, -1, &error);
+		const QList<PlayerMutePreference> preferences = accountStore_->playerMutePreferences(serverId, username, &error);
+		if (!profile || !error.isEmpty()) {
+			sendMessage(socket, withRequestId(QStringLiteral("ServerJoinCheckResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), error.isEmpty()
+					? QStringLiteral("Account profile not found") : error}}));
+			return;
+		}
+		profile->serverRole = accountStore_->serverRole(serverId, username, &error);
+		profile->masterSuperAdmin = accountStore_->isMasterSuperAdmin(username, &error);
+		if (!error.isEmpty()) {
+			sendMessage(socket, withRequestId(QStringLiteral("ServerJoinCheckResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), error}}));
+			return;
+		}
+		const auto ban = std::find_if(sanctions.cbegin(), sanctions.cend(), [](const ServerSanction& sanction) {
+			return sanction.kind == QStringLiteral("ban");
+		});
+		QJsonArray preferenceArray;
+		for (const PlayerMutePreference& preference : preferences) {
+			const QString mutedRole = accountStore_->serverRole(serverId, preference.targetUsername, &error);
+			const bool mutedSuperAdmin = accountStore_->isMasterSuperAdmin(preference.targetUsername, &error);
+			if (!error.isEmpty())
+				break;
+			if (mutedRole == QStringLiteral("player") && !mutedSuperAdmin)
+				preferenceArray.append(preference.toJson());
+		}
+		if (!error.isEmpty()) {
+			sendMessage(socket, withRequestId(QStringLiteral("ServerJoinCheckResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), error}}));
+			return;
+		}
+		const bool allowed = ban == sanctions.cend();
+		QJsonObject fields{{QStringLiteral("ok"), allowed}, {QStringLiteral("username"), username},
+			{QStringLiteral("profile"), profile->toJson()},
+			{QStringLiteral("sanctions"), sanctionArray(sanctions, QStringLiteral("mute"))},
+			{QStringLiteral("playerMutes"), preferenceArray}};
+		if (!allowed) {
+			fields.insert(QStringLiteral("error"), QStringLiteral("Banned: %1").arg(ban->reason));
+			fields.insert(QStringLiteral("ban"), ban->toJson());
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("ServerJoinCheckResult"), message, fields));
+	} else if (type == QStringLiteral("ServerHeartbeat")) {
 		updateRegistration(socket, message, false);
 		sendMessage(socket, withRequestId(QStringLiteral("ServerHeartbeatAck"), message,
 										  {{QStringLiteral("ok"), true}}));
@@ -467,8 +834,14 @@ void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& me
 			sendError(socket, message, QStringLiteral("Session expired or invalid"));
 			return;
 		}
-		const auto profile = accountStore_->profile(username, &error);
+		auto profile = accountStore_->profile(username, &error);
 		if (!profile) {
+			sendError(socket, message, error);
+			return;
+		}
+		profile->serverRole = accountStore_->serverRole(serverIdsBySocket_.value(socket), username, &error);
+		profile->masterSuperAdmin = accountStore_->isMasterSuperAdmin(username, &error);
+		if (!error.isEmpty()) {
 			sendError(socket, message, error);
 			return;
 		}

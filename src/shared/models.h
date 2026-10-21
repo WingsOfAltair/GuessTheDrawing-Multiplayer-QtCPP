@@ -37,9 +37,48 @@ struct PlayerProfile {
 	int drawingLeaderboardRank = 0;
 	QString guessingRank;
 	QString drawingRank;
+	QString serverRole = QStringLiteral("player");
+	bool masterSuperAdmin = false;
 
 	QJsonObject toJson() const;
 	static PlayerProfile fromJson(const QJsonObject& object);
+};
+
+struct ServerRoleAssignment {
+	QString serverId;
+	QString username;
+	QString role;
+	QString assignedBy;
+
+	QJsonObject toJson() const;
+	static ServerRoleAssignment fromJson(const QJsonObject& object);
+};
+
+struct ServerSanction {
+	qint64 id = 0;
+	QString serverId;
+	QString targetUsername;
+	QString kind;
+	bool textChat = false;
+	bool voiceChat = false;
+	QString reason;
+	QString issuedBy;
+	qint64 createdAt = 0;
+	qint64 expiresAt = 0;
+
+	QJsonObject toJson() const;
+	static ServerSanction fromJson(const QJsonObject& object);
+};
+
+struct PlayerMutePreference {
+	QString serverId;
+	QString muterUsername;
+	QString targetUsername;
+	bool textChat = false;
+	bool voiceChat = false;
+
+	QJsonObject toJson() const;
+	static PlayerMutePreference fromJson(const QJsonObject& object);
 };
 
 struct DrawingStroke {

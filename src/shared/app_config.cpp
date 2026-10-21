@@ -69,7 +69,8 @@ QJsonObject AppConfig::defaults()
 		{QStringLiteral("master"), QJsonObject{
 			{QStringLiteral("address"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("port"), 45450},
-			{QStringLiteral("database"), QStringLiteral("gtd.sqlite")}}},
+			{QStringLiteral("database"), QStringLiteral("gtd.sqlite")},
+			{QStringLiteral("superAdminRefreshSeconds"), 1}}},
 		{QStringLiteral("gameServer"), QJsonObject{
 			{QStringLiteral("serverId"), QStringLiteral("local-room-1")},
 			{QStringLiteral("roomId"), QStringLiteral("room-1")},
@@ -192,9 +193,14 @@ bool AppConfig::validate(QString* error) const
 	const int roundSeconds = game.value(QStringLiteral("roundSeconds")).toInt(-1);
 	const int intermissionSeconds = game.value(QStringLiteral("intermissionSeconds")).toInt(-1);
 	const int maxPlayers = game.value(QStringLiteral("maxPlayers")).toInt(-1);
+	const int superAdminRefreshSeconds = master.value(QStringLiteral("superAdminRefreshSeconds")).toInt(-1);
 	if (roundSeconds < 10 || roundSeconds > 600 || intermissionSeconds < 0
 		|| intermissionSeconds > 120 || maxPlayers < 2 || maxPlayers > 32) {
 		setError(error, QStringLiteral("Game roundSeconds must be 10-600, intermissionSeconds 0-120, and maxPlayers 2-32"));
+		return false;
+	}
+	if (superAdminRefreshSeconds < 1 || superAdminRefreshSeconds > 3600) {
+		setError(error, QStringLiteral("Master superAdminRefreshSeconds must be 1-3600"));
 		return false;
 	}
 	return true;

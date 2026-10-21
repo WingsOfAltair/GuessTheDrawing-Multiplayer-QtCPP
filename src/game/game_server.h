@@ -30,6 +30,7 @@ private:
 		QString displayName;
 		QString avatarUrl;
 		QString countryCode;
+		QString serverRole = QStringLiteral("player");
 		QString authToken;
 		int roomScore = 0;
 		int guessingScore = 0;
@@ -45,6 +46,18 @@ private:
 		bool guessed = false;
 		bool spectator = false;
 		bool queuedForPlayer = false;
+		bool masterSuperAdmin = false;
+		bool serverTextMuted = false;
+		bool serverVoiceMuted = false;
+		qint64 serverMuteExpiresAt = 0;
+		QSet<QString> mutedTextUsers;
+		QSet<QString> mutedVoiceUsers;
+	};
+	struct PendingJoinRequest {
+		QTcpSocket* socket = nullptr;
+		QJsonObject request;
+		QString username;
+		QString displayName;
 	};
 	struct ActionWindow {
 		qint64 startedAtMs = -1;
@@ -61,6 +74,7 @@ private:
 	bool allowAction(QTcpSocket* socket, const QString& type);
 	void handlePlayerMessage(QTcpSocket* socket, const QJsonObject& message);
 	void joinRoom(QTcpSocket* socket, const QJsonObject& message);
+	void completeJoinRoom(const PendingJoinRequest& pending, const QJsonObject& authorization);
 	void promoteToPlayer(QTcpSocket* socket, const QJsonObject& request);
 	void changePlayerRole(QTcpSocket* socket, const QJsonObject& request);
 	void enqueueForPlayer(const QString& username);
@@ -125,6 +139,8 @@ private:
 	QHash<QTcpSocket*, SocketRateLimit> socketRateLimits_;
 	QHash<QTcpSocket*, QString> playersBySocket_;
 	QHash<QString, Player> players_;
+	QHash<QString, PendingJoinRequest> pendingJoinRequests_;
+	QHash<QTcpSocket*, QString> pendingJoinBySocket_;
 	QHash<QString, QString> pendingProfiles_;
 	QStringList playerOrder_;
 	QStringList playerQueue_;

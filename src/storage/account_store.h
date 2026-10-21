@@ -3,6 +3,7 @@
 #include "shared/models.h"
 
 #include <QSqlDatabase>
+#include <QList>
 #include <QString>
 #include <optional>
 
@@ -29,6 +30,25 @@ public:
 	bool addScore(const QString& username, int points, bool drawingPoints, QString* error = nullptr);
 	bool recordRoundResult(const QString& username, bool roundWon, QString* error = nullptr);
 	bool recordRoundAbandonment(const QString& username, QString* error = nullptr);
+	bool isMasterSuperAdmin(const QString& username, QString* error = nullptr);
+	QList<QString> masterSuperAdmins(QString* error = nullptr);
+	qint64 masterSuperAdminDataVersion(QString* error = nullptr);
+	QString serverRole(const QString& serverId, const QString& username, QString* error = nullptr);
+	QList<ServerRoleAssignment> serverStaff(const QString& serverId, QString* error = nullptr);
+	bool setServerRole(const QString& serverId, const QString& username, const QString& role,
+		const QString& assignedBy, QString* error = nullptr);
+	bool addServerSanction(const ServerSanction& sanction, qint64* sanctionId = nullptr,
+		QString* error = nullptr);
+	QList<ServerSanction> activeServerSanctions(const QString& serverId,
+		const QString& targetUsername = {}, qint64 now = -1, QString* error = nullptr);
+	bool revokeServerSanction(const QString& serverId, qint64 sanctionId,
+		const QString& revokedBy, QString* error = nullptr);
+	bool setPlayerMute(const QString& serverId, const QString& muterUsername,
+		const QString& targetUsername, bool textChat, bool voiceChat, QString* error = nullptr);
+	QList<PlayerMutePreference> playerMutePreferences(const QString& serverId,
+		const QString& muterUsername, QString* error = nullptr);
+	bool clearPlayerMutePreferencesForTarget(const QString& serverId,
+		const QString& targetUsername, QString* error = nullptr);
 
 private:
 	std::optional<PlayerProfile> loadProfile(const QString& normalizedUsername, QString* error);

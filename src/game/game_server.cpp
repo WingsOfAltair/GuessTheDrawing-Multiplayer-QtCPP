@@ -109,6 +109,14 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 		if (masterRegistered_)
 			qWarning().noquote() << QStringLiteral("Connection to master lost; retrying in 3 seconds");
 		masterRegistered_ = false;
+		for (const PendingJoinRequest& pending : std::as_const(pendingJoinRequests_)) {
+			if (pending.socket && pending.socket->state() == QAbstractSocket::ConnectedState)
+				sendMessage(pending.socket, reply(QStringLiteral("JoinResult"), pending.request,
+					{{QStringLiteral("ok"), false},
+					 {QStringLiteral("error"), QStringLiteral("Unable to verify access with the master server")}}));
+		}
+		pendingJoinRequests_.clear();
+		pendingJoinBySocket_.clear();
 		reconnectTimer_.start();
 	});
 	connect(&masterSocket_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
@@ -326,6 +334,12 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 		sendGuess(username, message.value(QStringLiteral("text")).toString());
 	} else if (type == QStringLiteral("RoomChat")) {
 		const auto player = players_.constFind(username);
+		if (player != players_.cend() && player->serverTextMuted
+			&& (player->serverMuteExpiresAt == 0 || player->serverMuteExpiresAt > QDateTime::currentSecsSinceEpoch())) {
+			sendMessage(socket, reply(QStringLiteral("Error"), message,
+				{{QStringLiteral("message"), QStringLiteral("Your text chat is muted by server staff")}}));
+			return;
+		}
 		if (roundActive_ && username == currentDrawer_) {
 			sendMessage(socket, reply(QStringLiteral("Error"), message,
 				{{QStringLiteral("message"), QStringLiteral("The drawer cannot send chat during the round")}}));
@@ -334,12 +348,19 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 		const QString text = message.value(QStringLiteral("text")).toString().trimmed();
 		if (player == players_.cend() || !isValidSingleLineText(text, 300))
 			return;
-		broadcast(makeMessage(QStringLiteral("ChatMessage"),
+		const QJsonObject chatMessage = makeMessage(QStringLiteral("ChatMessage"),
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
-			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}}));
+			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}});
+		for (const Player& recipient : players_) {
+			if (!recipient.mutedTextUsers.contains(username))
+				sendMessage(recipient.socket, chatMessage);
+		}
 	} else if (type == QStringLiteral("VoiceFrame")) {
 		const auto player = players_.constFind(username);
-		if (player == players_.cend() || (roundActive_ && username == currentDrawer_))
+		if (player == players_.cend() || (player->serverVoiceMuted
+			&& (player->serverMuteExpiresAt == 0
+				|| player->serverMuteExpiresAt > QDateTime::currentSecsSinceEpoch()))
+			|| (roundActive_ && username == currentDrawer_))
 			return;
 		const int sampleRate = message.value(QStringLiteral("sampleRate")).toInt();
 		const QByteArray encodedAudio = message.value(QStringLiteral("audio")).toString().toLatin1();
@@ -353,7 +374,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			 {QStringLiteral("sampleRate"), sampleRate},
 			 {QStringLiteral("audio"), QString::fromLatin1(encodedAudio)}});
 		for (const Player& recipient : players_) {
-			if (recipient.username != username)
+			if (recipient.username != username && !recipient.mutedVoiceUsers.contains(username))
 				sendMessage(recipient.socket, frame);
 		}
 	} else if (type == QStringLiteral("DrawStroke")) {
@@ -405,13 +426,63 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 								   {QStringLiteral("error"), QStringLiteral("Session expired or invalid")}}));
 		return;
 	}
+	username = username.toLower();
 	if (players_.contains(username)) {
 		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
 								  {{QStringLiteral("ok"), false},
 								   {QStringLiteral("error"), QStringLiteral("That account is already in this room")}}));
 		return;
 	}
-	const bool requestedSpectator = message.value(QStringLiteral("spectator")).toBool(false);
+	if (pendingJoinBySocket_.contains(socket)) {
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Join request is already pending")}}));
+		return;
+	}
+	if (!masterRegistered_ || masterSocket_.state() != QAbstractSocket::ConnectedState) {
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Master server is unavailable")}}));
+		return;
+	}
+	const QString requestId = QString::number(nextMasterRequestId_++);
+	PendingJoinRequest pending;
+	pending.socket = socket;
+	pending.request = message;
+	pending.username = username;
+	pending.displayName = displayName;
+	pendingJoinRequests_.insert(requestId, pending);
+	pendingJoinBySocket_.insert(socket, requestId);
+	if (!sendMessage(&masterSocket_, makeMessage(QStringLiteral("ServerJoinCheck"),
+		{{QStringLiteral("requestId"), requestId},
+		 {QStringLiteral("authToken"), message.value(QStringLiteral("authToken")).toString()}}))) {
+		pendingJoinRequests_.remove(requestId);
+		pendingJoinBySocket_.remove(socket);
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Unable to verify access with the master server")}}));
+	}
+}
+
+void GameServer::completeJoinRoom(const PendingJoinRequest& pending, const QJsonObject& authorization)
+{
+	QTcpSocket* socket = pending.socket;
+	const QJsonObject& request = pending.request;
+	if (!socket || socket->state() != QAbstractSocket::ConnectedState || !playerBuffers_.contains(socket))
+		return;
+	if (!authorization.value(QStringLiteral("ok")).toBool()) {
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
+			{{QStringLiteral("ok"), false},
+			 {QStringLiteral("error"), authorization.value(QStringLiteral("error")).toString(
+				QStringLiteral("Join rejected by the master server"))}}));
+		return;
+	}
+	const PlayerProfile profile = PlayerProfile::fromJson(authorization.value(QStringLiteral("profile")).toObject());
+	if (profile.username != pending.username || players_.contains(pending.username)) {
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
+			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Master authorization did not match this account")}}));
+		return;
+	}
+	const QString username = pending.username;
+	const QString displayName = pending.displayName;
+	const bool requestedSpectator = request.value(QStringLiteral("spectator")).toBool(false);
 	const bool queuedForPlayer = !requestedSpectator
 		&& (activePlayerCount() >= room_.maxPlayers || !playerQueue_.isEmpty());
 	const bool spectator = requestedSpectator || queuedForPlayer;
@@ -419,10 +490,42 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 	Player player;
 	player.socket = socket;
 	player.username = username;
-	player.displayName = displayName.isEmpty() ? username : displayName;
-	player.authToken = message.value(QStringLiteral("authToken")).toString();
+	player.displayName = profile.displayName.isEmpty()
+		? (displayName.isEmpty() ? username : displayName) : profile.displayName;
+	player.avatarUrl = profile.avatarUrl;
+	player.countryCode = profile.countryCode;
+	player.guessingScore = profile.guessingScore;
+	player.drawingScore = profile.drawingScore;
+	player.roundsWon = profile.roundsWon;
+	player.roundsLost = profile.roundsLost;
+	player.roundsAbandoned = profile.roundsAbandoned;
+	player.leaderboardRank = profile.leaderboardRank;
+	player.guessingLeaderboardRank = profile.guessingLeaderboardRank;
+	player.drawingLeaderboardRank = profile.drawingLeaderboardRank;
+	player.guessingRank = profile.guessingRank;
+	player.drawingRank = profile.drawingRank;
+	player.serverRole = profile.serverRole;
+	player.masterSuperAdmin = profile.masterSuperAdmin;
+	player.authToken = request.value(QStringLiteral("authToken")).toString();
 	player.spectator = spectator;
 	player.queuedForPlayer = queuedForPlayer;
+	for (const QJsonValue& value : authorization.value(QStringLiteral("sanctions")).toArray()) {
+		const ServerSanction sanction = ServerSanction::fromJson(value.toObject());
+		if (sanction.kind == QStringLiteral("mute")) {
+			player.serverTextMuted = player.serverTextMuted || sanction.textChat;
+			player.serverVoiceMuted = player.serverVoiceMuted || sanction.voiceChat;
+			if (sanction.textChat || sanction.voiceChat)
+				player.serverMuteExpiresAt = player.serverMuteExpiresAt == 0 || sanction.expiresAt == 0
+					? 0 : qMax(player.serverMuteExpiresAt, sanction.expiresAt);
+		}
+	}
+	for (const QJsonValue& value : authorization.value(QStringLiteral("playerMutes")).toArray()) {
+		const PlayerMutePreference preference = PlayerMutePreference::fromJson(value.toObject());
+		if (preference.textChat)
+			player.mutedTextUsers.insert(preference.targetUsername);
+		if (preference.voiceChat)
+			player.mutedVoiceUsers.insert(preference.targetUsername);
+	}
 	players_.insert(username, player);
 	playerOrder_.append(username);
 	playersBySocket_.insert(socket, username);
@@ -434,7 +537,7 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 			spectator ? QStringLiteral("spectator") : QStringLiteral("player"),
 			queuedForPlayer ? QStringLiteral(" (queued for a player slot)") : QString()));
 
-	sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+	sendMessage(socket, reply(QStringLiteral("JoinResult"), request,
 		{{QStringLiteral("ok"), true}, {QStringLiteral("room"), currentRoomInfo().toJson()},
 		 {QStringLiteral("players"), roster()}, {QStringLiteral("roundActive"), roundActive_},
 			 {QStringLiteral("spectator"), spectator},
@@ -528,6 +631,9 @@ void GameServer::removePlayer(QTcpSocket* socket)
 {
 	playerBuffers_.remove(socket);
 	socketRateLimits_.remove(socket);
+	const QString pendingRequestId = pendingJoinBySocket_.take(socket);
+	if (!pendingRequestId.isEmpty())
+		pendingJoinRequests_.remove(pendingRequestId);
 	const QString username = playersBySocket_.take(socket);
 	if (username.isEmpty())
 		return;
@@ -702,6 +808,8 @@ QJsonArray GameServer::roster() const
 		profile.roundsWon = player.roundsWon;
 		profile.roundsLost = player.roundsLost;
 		profile.roundsAbandoned = player.roundsAbandoned;
+		profile.serverRole = player.serverRole;
+		profile.masterSuperAdmin = player.masterSuperAdmin;
 		profile.leaderboardRank = player.leaderboardRank;
 		profile.guessingLeaderboardRank = player.guessingLeaderboardRank;
 		profile.drawingLeaderboardRank = player.drawingLeaderboardRank;
@@ -788,7 +896,75 @@ void GameServer::readMaster()
 				player->drawingLeaderboardRank = profile.drawingLeaderboardRank;
 				player->guessingRank = profile.guessingRank;
 				player->drawingRank = profile.drawingRank;
+				player->serverRole = profile.serverRole;
+				player->masterSuperAdmin = profile.masterSuperAdmin;
 				broadcastRoster();
+			}
+		} else if (type == QStringLiteral("ServerJoinCheckResult")) {
+			const QString requestId = message.value(QStringLiteral("requestId")).toString();
+			const auto pending = pendingJoinRequests_.find(requestId);
+			if (pending == pendingJoinRequests_.end())
+				continue;
+			const PendingJoinRequest joinRequest = pending.value();
+			pendingJoinRequests_.erase(pending);
+			pendingJoinBySocket_.remove(joinRequest.socket);
+			if (message.value(QStringLiteral("username")).toString().toLower() != joinRequest.username
+				&& message.value(QStringLiteral("ok")).toBool()) {
+				if (joinRequest.socket && joinRequest.socket->state() == QAbstractSocket::ConnectedState)
+					sendMessage(joinRequest.socket, reply(QStringLiteral("JoinResult"), joinRequest.request,
+						{{QStringLiteral("ok"), false},
+						 {QStringLiteral("error"), QStringLiteral("Master authorization did not match this account")}}));
+				continue;
+			}
+			completeJoinRoom(joinRequest, message);
+		} else if (type == QStringLiteral("StaffRoleChanged")) {
+			const QString username = message.value(QStringLiteral("username")).toString().toLower();
+			auto player = players_.find(username);
+			if (player != players_.end()) {
+				player->serverRole = message.value(QStringLiteral("role")).toString(QStringLiteral("player"));
+				player->masterSuperAdmin = message.value(QStringLiteral("masterSuperAdmin")).toBool();
+				if (player->serverRole != QStringLiteral("player") || player->masterSuperAdmin) {
+					for (Player& recipient : players_) {
+						recipient.mutedTextUsers.remove(username);
+						recipient.mutedVoiceUsers.remove(username);
+					}
+				}
+				broadcastRoster();
+			}
+		} else if (type == QStringLiteral("PlayerMuteChanged")) {
+			const QString muter = message.value(QStringLiteral("muterUsername")).toString().toLower();
+			const QString target = message.value(QStringLiteral("targetUsername")).toString().toLower();
+			auto player = players_.find(muter);
+			if (player != players_.end()) {
+				if (message.value(QStringLiteral("textChat")).toBool())
+					player->mutedTextUsers.insert(target);
+				else
+					player->mutedTextUsers.remove(target);
+				if (message.value(QStringLiteral("voiceChat")).toBool())
+					player->mutedVoiceUsers.insert(target);
+				else
+					player->mutedVoiceUsers.remove(target);
+			}
+		} else if (type == QStringLiteral("ModerationApplied")) {
+			const QString target = message.value(QStringLiteral("targetUsername")).toString().toLower();
+			const QString action = message.value(QStringLiteral("action")).toString();
+			auto player = players_.find(target);
+			if (player == players_.end())
+				continue;
+			const QString reason = message.value(QStringLiteral("reason")).toString();
+			if (action == QStringLiteral("kick") || action == QStringLiteral("ban")) {
+				sendMessage(player->socket, makeMessage(QStringLiteral("ModerationNotice"),
+					{{QStringLiteral("action"), action}, {QStringLiteral("reason"), reason}}));
+				player->socket->disconnectFromHost();
+			} else if (action == QStringLiteral("mute")) {
+				const ServerSanction sanction = ServerSanction::fromJson(message.value(QStringLiteral("sanction")).toObject());
+				player->serverTextMuted = sanction.textChat;
+				player->serverVoiceMuted = sanction.voiceChat;
+				player->serverMuteExpiresAt = sanction.expiresAt;
+			} else if (action == QStringLiteral("unmute")) {
+				player->serverTextMuted = false;
+				player->serverVoiceMuted = false;
+				player->serverMuteExpiresAt = 0;
 			}
 		} else if (type == QStringLiteral("RoundResultStored")) {
 			const QString username = message.value(QStringLiteral("username")).toString();

@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <initializer_list>
+
 class AppConfigTests : public QObject {
 	Q_OBJECT
 
@@ -13,6 +15,7 @@ private slots:
 	void createsAndPersistsConfiguration();
 	void mergesMissingValues();
 	void rejectsMalformedFileWithoutChangingIt();
+	void rejectsInvalidSuperAdminRefreshIntervals();
 };
 
 void AppConfigTests::createsAndPersistsConfiguration()
@@ -36,6 +39,7 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
 		gtd::AppConfig::defaultDictionaryPath());
 	QCOMPARE(first.intValue(QStringLiteral("gameServer"), QStringLiteral("intermissionSeconds")), 15);
+	QCOMPARE(first.intValue(QStringLiteral("master"), QStringLiteral("superAdminRefreshSeconds")), 1);
 
 	gtd::AppConfig second;
 	QVERIFY2(second.loadOrCreate(path, &error), qPrintable(error));
@@ -59,6 +63,19 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(third.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")), dictionaryPath);
 	QCOMPARE(second.resolvedPath(QStringLiteral("master"), QStringLiteral("database")),
 			 directory.filePath(QStringLiteral("gtd.sqlite")));
+	QFile configuredFile(path);
+	QVERIFY(configuredFile.open(QIODevice::ReadOnly));
+	QJsonObject configuredRoot = QJsonDocument::fromJson(configuredFile.readAll()).object();
+	configuredFile.close();
+	QJsonObject master = configuredRoot.value(QStringLiteral("master")).toObject();
+	master.insert(QStringLiteral("superAdminRefreshSeconds"), 7);
+	configuredRoot.insert(QStringLiteral("master"), master);
+	QVERIFY(configuredFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	QCOMPARE(configuredFile.write(QJsonDocument(configuredRoot).toJson()), qint64(QJsonDocument(configuredRoot).toJson().size()));
+	configuredFile.close();
+	gtd::AppConfig configured;
+	QVERIFY2(configured.loadOrCreate(path, &error), qPrintable(error));
+	QCOMPARE(configured.intValue(QStringLiteral("master"), QStringLiteral("superAdminRefreshSeconds")), 7);
 }
 
 void AppConfigTests::mergesMissingValues()
@@ -86,6 +103,26 @@ void AppConfigTests::mergesMissingValues()
 	const QJsonObject root = QJsonDocument::fromJson(saved.readAll()).object();
 	QVERIFY(root.contains(QStringLiteral("client")));
 	QVERIFY(root.value(QStringLiteral("gameServer")).toObject().contains(QStringLiteral("roomId")));
+}
+
+void AppConfigTests::rejectsInvalidSuperAdminRefreshIntervals()
+{
+	for (const int interval : {0, 3601}) {
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		const QString path = directory.filePath(QStringLiteral("invalid-interval.json"));
+		QFile file(path);
+		QVERIFY(file.open(QIODevice::WriteOnly));
+		file.write(QJsonDocument(QJsonObject{
+			{QStringLiteral("version"), 1},
+			{QStringLiteral("master"), QJsonObject{{QStringLiteral("superAdminRefreshSeconds"), interval}}}
+		}).toJson());
+		file.close();
+		gtd::AppConfig config;
+		QString error;
+		QVERIFY(!config.loadOrCreate(path, &error));
+		QVERIFY(error.contains(QStringLiteral("superAdminRefreshSeconds")));
+	}
 }
 
 void AppConfigTests::rejectsMalformedFileWithoutChangingIt()

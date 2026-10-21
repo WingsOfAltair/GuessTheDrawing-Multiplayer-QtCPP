@@ -5,9 +5,15 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTcpSocket>
+#include <QUuid>
 #include <QtTest>
+
+#include <algorithm>
 
 class MasterServerTests final : public QObject {
 	Q_OBJECT
@@ -115,6 +121,233 @@ private slots:
 		profile = accountStore.profile(QStringLiteral("scoreuser"), &error);
 		QVERIFY2(profile.has_value(), qPrintable(error));
 		QCOMPARE(profile->roundsAbandoned, 1);
+	}
+
+	void enforcesServerStaffAndModerationAuthorization()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		const QString databasePath = directory.filePath(QStringLiteral("moderation.sqlite"));
+		gtd::AccountStore accountStore(databasePath);
+		QString error;
+		QVERIFY2(accountStore.initialize(&error), qPrintable(error));
+		for (const QString& user : {QStringLiteral("adminuser"), QStringLiteral("moduser"),
+			QStringLiteral("regularuser"), QStringLiteral("newmod"), QStringLiteral("victim"),
+			QStringLiteral("superuser")})
+			QVERIFY2(accountStore.createAccount(user, QStringLiteral("password123"), user, &error), qPrintable(error));
+		QVERIFY2(accountStore.setServerRole(QStringLiteral("moderation-room"), QStringLiteral("adminuser"),
+			QStringLiteral("admin"), QStringLiteral("adminuser"), &error), qPrintable(error));
+		QVERIFY2(accountStore.setServerRole(QStringLiteral("moderation-room"), QStringLiteral("moduser"),
+			QStringLiteral("moderator"), QStringLiteral("adminuser"), &error), qPrintable(error));
+		const QString seedConnectionName = QUuid::createUuid().toString(QUuid::WithoutBraces);
+		{
+			QSqlDatabase seed = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), seedConnectionName);
+			seed.setDatabaseName(databasePath);
+			QVERIFY2(seed.open(), qPrintable(seed.lastError().text()));
+			QSqlQuery query(seed);
+			query.prepare(QStringLiteral("INSERT INTO master_super_admins(username) VALUES(:username)"));
+			query.bindValue(QStringLiteral(":username"), QStringLiteral("superuser"));
+			QVERIFY2(query.exec(), qPrintable(query.lastError().text()));
+		}
+		QSqlDatabase::removeDatabase(seedConnectionName);
+
+		const QString serverSecret = QStringLiteral("moderation-test-server-secret-long-enough");
+		const QString sessionSecret = QStringLiteral("moderation-test-session-secret-long-enough");
+		gtd::MasterServer master(&accountStore, serverSecret, sessionSecret);
+		QVERIFY2(master.start(QHostAddress::LocalHost, 0), qPrintable(QStringLiteral("Could not start master")));
+
+		QTcpSocket gameServer;
+		QByteArray serverBuffer;
+		QList<QJsonObject> serverResponses;
+		connect(&gameServer, &QTcpSocket::readyRead, this, [&] {
+			for (const QJsonObject& response : gtd::takeMessages(&serverBuffer, gameServer.readAll()))
+				serverResponses.append(response);
+		});
+		gameServer.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(gameServer.state(), QAbstractSocket::ConnectedState);
+		QVERIFY(gtd::sendMessage(&gameServer, gtd::makeMessage(QStringLiteral("ServerRegister"),
+			{{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("secret"), serverSecret}, {QStringLiteral("rooms"), QJsonArray{}}})));
+		auto findServer = [&serverResponses](const QString& type, const QString& requestId) {
+			for (const QJsonObject& response : serverResponses) {
+				if (response.value(QStringLiteral("type")).toString() == type
+					&& response.value(QStringLiteral("requestId")).toString() == requestId)
+					return response;
+			}
+			return QJsonObject{};
+		};
+		QTRY_VERIFY(!findServer(QStringLiteral("ServerRegisterAck"), QString()).isEmpty());
+
+		QTcpSocket client;
+		QByteArray clientBuffer;
+		QList<QJsonObject> clientResponses;
+		connect(&client, &QTcpSocket::readyRead, this, [&] {
+			for (const QJsonObject& response : gtd::takeMessages(&clientBuffer, client.readAll()))
+				clientResponses.append(response);
+		});
+		client.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(client.state(), QAbstractSocket::ConnectedState);
+		const auto tokenFor = [&sessionSecret](const QString& username) {
+			return gtd::createSessionToken(username, username, sessionSecret,
+				QDateTime::currentSecsSinceEpoch() + 600);
+		};
+		auto findClient = [&clientResponses](const QString& type, const QString& requestId) {
+			for (const QJsonObject& response : clientResponses) {
+				if (response.value(QStringLiteral("type")).toString() == type
+					&& response.value(QStringLiteral("requestId")).toString() == requestId)
+					return response;
+			}
+			return QJsonObject{};
+		};
+		auto sendClient = [&client, &tokenFor](const QString& actor, const QString& type,
+			const QString& requestId, QJsonObject fields) {
+			fields.insert(QStringLiteral("requestId"), requestId);
+			fields.insert(QStringLiteral("authToken"), tokenFor(actor));
+			return gtd::sendMessage(&client, gtd::makeMessage(type, fields));
+		};
+
+		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("StaffRoleRequest"),
+			QStringLiteral("role-1"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("newmod")},
+			 {QStringLiteral("role"), QStringLiteral("moderator")}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("StaffRoleResult"), QStringLiteral("role-1")).isEmpty());
+		QCOMPARE(accountStore.serverRole(QStringLiteral("moderation-room"), QStringLiteral("newmod"), &error),
+			QStringLiteral("moderator"));
+
+		QVERIFY(sendClient(QStringLiteral("moduser"), QStringLiteral("StaffRoleRequest"),
+			QStringLiteral("role-2"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("regularuser")},
+			 {QStringLiteral("role"), QStringLiteral("moderator")}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("Error"), QStringLiteral("role-2")).isEmpty());
+
+		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("ModerationRequest"),
+			QStringLiteral("ban-1"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("victim")},
+			 {QStringLiteral("action"), QStringLiteral("ban")},
+			 {QStringLiteral("reason"), QStringLiteral("Repeated disruption")}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("ban-1")).isEmpty());
+		QTRY_VERIFY(!findServer(QStringLiteral("ModerationApplied"), QString()).isEmpty());
+		const auto sanctions = accountStore.activeServerSanctions(QStringLiteral("moderation-room"),
+			QStringLiteral("victim"), -1, &error);
+		QCOMPARE(sanctions.size(), 1);
+		QCOMPARE(sanctions.first().kind, QStringLiteral("ban"));
+
+		const QString victimToken = tokenFor(QStringLiteral("victim"));
+		QVERIFY(gtd::sendMessage(&gameServer, gtd::makeMessage(QStringLiteral("ServerJoinCheck"),
+			{{QStringLiteral("requestId"), QStringLiteral("join-1")}, {QStringLiteral("authToken"), victimToken}})));
+		QTRY_VERIFY(!findServer(QStringLiteral("ServerJoinCheckResult"), QStringLiteral("join-1")).isEmpty());
+		QVERIFY(!findServer(QStringLiteral("ServerJoinCheckResult"), QStringLiteral("join-1"))
+			.value(QStringLiteral("ok")).toBool());
+
+		QVERIFY(sendClient(QStringLiteral("superuser"), QStringLiteral("ModerationRequest"),
+			QStringLiteral("ban-2"), {{QStringLiteral("serverId"), QStringLiteral("moderation-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("adminuser")},
+			 {QStringLiteral("action"), QStringLiteral("ban")},
+			 {QStringLiteral("reason"), QStringLiteral("Super-admin review")}}));
+		QTRY_VERIFY(!findClient(QStringLiteral("ModerationResult"), QStringLiteral("ban-2")).isEmpty());
+		QVERIFY(accountStore.activeServerSanctions(QStringLiteral("moderation-room"),
+			QStringLiteral("adminuser"), -1, &error).size() == 1);
+	}
+
+	void appliesExternalSuperAdminChangesWithoutRestart()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		const QString databasePath = directory.filePath(QStringLiteral("live-super-admin.sqlite"));
+		gtd::AccountStore accountStore(databasePath);
+		QString error;
+		QVERIFY2(accountStore.initialize(&error), qPrintable(error));
+		for (const QString& username : {QStringLiteral("liveadmin"), QStringLiteral("livetarget"),
+			QStringLiteral("liveoperator")})
+			QVERIFY2(accountStore.createAccount(username, QStringLiteral("password123"), username, &error), qPrintable(error));
+		QVERIFY2(accountStore.setServerRole(QStringLiteral("live-room"), QStringLiteral("liveadmin"),
+			QStringLiteral("admin"), QStringLiteral("liveadmin"), &error), qPrintable(error));
+
+		const QString serverSecret = QStringLiteral("live-test-server-secret-long-enough");
+		const QString sessionSecret = QStringLiteral("live-test-session-secret-long-enough");
+		gtd::MasterServer master(&accountStore, serverSecret, sessionSecret);
+		QVERIFY(master.start(QHostAddress::LocalHost, 0));
+		QTcpSocket gameServer;
+		QByteArray serverBuffer;
+		QList<QJsonObject> serverMessages;
+		connect(&gameServer, &QTcpSocket::readyRead, this, [&] {
+			for (const QJsonObject& message : gtd::takeMessages(&serverBuffer, gameServer.readAll()))
+				serverMessages.append(message);
+		});
+		gameServer.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(gameServer.state(), QAbstractSocket::ConnectedState);
+		QVERIFY(gtd::sendMessage(&gameServer, gtd::makeMessage(QStringLiteral("ServerRegister"),
+			{{QStringLiteral("serverId"), QStringLiteral("live-room")},
+			 {QStringLiteral("secret"), serverSecret}, {QStringLiteral("rooms"), QJsonArray{}}})));
+		QTRY_VERIFY(std::any_of(serverMessages.cbegin(), serverMessages.cend(), [](const QJsonObject& message) {
+			return message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerRegisterAck");
+		}));
+
+		const QString seedConnectionName = QUuid::createUuid().toString(QUuid::WithoutBraces);
+		{
+			QSqlDatabase seed = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), seedConnectionName);
+			seed.setDatabaseName(databasePath);
+			QVERIFY2(seed.open(), qPrintable(seed.lastError().text()));
+			QSqlQuery query(seed);
+			query.prepare(QStringLiteral("INSERT INTO master_super_admins(username) VALUES(:username)"));
+			query.bindValue(QStringLiteral(":username"), QStringLiteral("liveoperator"));
+			QVERIFY2(query.exec(), qPrintable(query.lastError().text()));
+			seed.close();
+		}
+		QSqlDatabase::removeDatabase(seedConnectionName);
+		auto hasRoleUpdate = [&serverMessages](bool enabled) {
+			return std::any_of(serverMessages.cbegin(), serverMessages.cend(), [enabled](const QJsonObject& message) {
+				return message.value(QStringLiteral("type")).toString() == QStringLiteral("StaffRoleChanged")
+					&& message.value(QStringLiteral("username")).toString() == QStringLiteral("liveoperator")
+					&& message.value(QStringLiteral("masterSuperAdmin")).toBool() == enabled;
+			});
+		};
+		QTRY_VERIFY_WITH_TIMEOUT(hasRoleUpdate(true), 4000);
+
+		QTcpSocket client;
+		QByteArray clientBuffer;
+		QList<QJsonObject> responses;
+		connect(&client, &QTcpSocket::readyRead, this, [&] {
+			for (const QJsonObject& message : gtd::takeMessages(&clientBuffer, client.readAll()))
+				responses.append(message);
+		});
+		client.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(client.state(), QAbstractSocket::ConnectedState);
+		const QString token = gtd::createSessionToken(QStringLiteral("liveoperator"),
+			QStringLiteral("liveoperator"), sessionSecret, QDateTime::currentSecsSinceEpoch() + 600);
+		QVERIFY(gtd::sendMessage(&client, gtd::makeMessage(QStringLiteral("ModerationRequest"),
+			{{QStringLiteral("requestId"), QStringLiteral("live-grant-action")},
+			 {QStringLiteral("authToken"), token}, {QStringLiteral("serverId"), QStringLiteral("live-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("liveadmin")},
+			 {QStringLiteral("action"), QStringLiteral("kick")},
+			 {QStringLiteral("reason"), QStringLiteral("Live super-admin test")}})));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& message) {
+			return message.value(QStringLiteral("type")).toString() == QStringLiteral("ModerationResult")
+				&& message.value(QStringLiteral("requestId")).toString() == QStringLiteral("live-grant-action");
+		}));
+
+		{
+			QSqlDatabase seed = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), seedConnectionName);
+			seed.setDatabaseName(databasePath);
+			QVERIFY2(seed.open(), qPrintable(seed.lastError().text()));
+			QSqlQuery query(seed);
+			query.prepare(QStringLiteral("DELETE FROM master_super_admins WHERE username = :username"));
+			query.bindValue(QStringLiteral(":username"), QStringLiteral("liveoperator"));
+			QVERIFY2(query.exec(), qPrintable(query.lastError().text()));
+			seed.close();
+		}
+		QSqlDatabase::removeDatabase(seedConnectionName);
+		QTRY_VERIFY_WITH_TIMEOUT(hasRoleUpdate(false), 4000);
+		QVERIFY(gtd::sendMessage(&client, gtd::makeMessage(QStringLiteral("ModerationRequest"),
+			{{QStringLiteral("requestId"), QStringLiteral("live-revoked-action")},
+			 {QStringLiteral("authToken"), token}, {QStringLiteral("serverId"), QStringLiteral("live-room")},
+			 {QStringLiteral("targetUsername"), QStringLiteral("liveadmin")},
+			 {QStringLiteral("action"), QStringLiteral("kick")},
+			 {QStringLiteral("reason"), QStringLiteral("Revoked super-admin test")}})));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& message) {
+			return message.value(QStringLiteral("type")).toString() == QStringLiteral("Error")
+				&& message.value(QStringLiteral("requestId")).toString() == QStringLiteral("live-revoked-action");
+		}));
 	}
 };
 

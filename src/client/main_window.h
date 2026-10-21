@@ -8,17 +8,22 @@
 #include <QMainWindow>
 #include <QHash>
 #include <QElapsedTimer>
+#include <QPoint>
+#include <QSet>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QVector>
 
 class QCheckBox;
+class QDateTimeEdit;
+class QDialog;
 class QAudioSink;
 class QAudioSource;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QIODevice;
 class QProgressBar;
 class QPushButton;
@@ -65,6 +70,14 @@ private:
 	void appendGameMessage(const QString& message);
 	void updateRoundControls();
 	void updateRoster(const QJsonArray& players, const QJsonObject& room);
+	void showRosterContextMenu(const QPoint& position);
+	void showModerationScreen();
+	void requestServerAdminData();
+	void refreshModerationPermissions();
+	void showPlayerProfile(const QString& username);
+	void sendPlayerMute(const QString& targetUsername, bool textChat, bool voiceChat);
+	void sendModerationAction(const QString& targetUsername, const QString& action, qint64 sanctionId = 0);
+	void sendStaffRole(const QString& targetUsername, const QString& role);
 	void updateQueueStatus(const QJsonObject& queue);
 	void updateRoomsRefreshStatus();
 	void probeRooms(const QJsonArray& rooms);
@@ -143,6 +156,7 @@ private:
 	QPushButton* joinRoomButton_ = nullptr;
 	QComboBox* joinRoleCombo_ = nullptr;
 	QLabel* gameRoomLabel_ = nullptr;
+	QPushButton* moderationButton_ = nullptr;
 	QLabel* queueStatusLabel_ = nullptr;
 	QProgressBar* queueProgressBar_ = nullptr;
 	QLabel* roundStatusLabel_ = nullptr;
@@ -150,6 +164,13 @@ private:
 	QLabel* timerLabel_ = nullptr;
 	DrawingCanvas* canvas_ = nullptr;
 	QListWidget* rosterList_ = nullptr;
+	QDialog* moderationDialog_ = nullptr;
+	QListWidget* bannedPlayersList_ = nullptr;
+	QListWidget* serverMutesList_ = nullptr;
+	QListWidget* serverStaffList_ = nullptr;
+	QLabel* moderationStatusLabel_ = nullptr;
+	QLineEdit* moderationStaffUsernameEdit_ = nullptr;
+	QComboBox* moderationStaffRoleCombo_ = nullptr;
 	QListWidget* chatList_ = nullptr;
 	QLineEdit* guessEdit_ = nullptr;
 	QPushButton* sendGuessButton_ = nullptr;
@@ -178,6 +199,9 @@ private:
 	QString authToken_;
 	QString languageCode_ = QStringLiteral("en");
 	QString username_;
+	QString currentServerRole_ = QStringLiteral("player");
+	QSet<QString> mutedTextUsers_;
+	QSet<QString> mutedVoiceUsers_;
 	QString currentDrawer_;
 	QJsonArray roomRoster_;
 	QString pendingAuthRequestId_;
@@ -198,6 +222,7 @@ private:
 	bool pendingJoinAsSpectator_ = false;
 	bool leavingRoom_ = false;
 	bool refreshingLayers_ = false;
+	bool masterSuperAdmin_ = false;
 };
 
 }

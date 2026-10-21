@@ -110,7 +110,9 @@ QJsonObject PlayerProfile::toJson() const
 			{QStringLiteral("guessingLeaderboardRank"), guessingLeaderboardRank},
 			{QStringLiteral("drawingLeaderboardRank"), drawingLeaderboardRank},
 			{QStringLiteral("guessingRank"), guessingRank},
-			{QStringLiteral("drawingRank"), drawingRank}};
+			{QStringLiteral("drawingRank"), drawingRank},
+			{QStringLiteral("serverRole"), serverRole},
+			{QStringLiteral("masterSuperAdmin"), masterSuperAdmin}};
 }
 
 PlayerProfile PlayerProfile::fromJson(const QJsonObject& object)
@@ -131,7 +133,68 @@ PlayerProfile PlayerProfile::fromJson(const QJsonObject& object)
 	profile.drawingLeaderboardRank = qMax(0, object.value(QStringLiteral("drawingLeaderboardRank")).toInt());
 	profile.guessingRank = object.value(QStringLiteral("guessingRank")).toString();
 	profile.drawingRank = object.value(QStringLiteral("drawingRank")).toString();
+	profile.serverRole = object.value(QStringLiteral("serverRole")).toString(QStringLiteral("player"));
+	profile.masterSuperAdmin = object.value(QStringLiteral("masterSuperAdmin")).toBool();
 	return profile;
+}
+
+QJsonObject ServerRoleAssignment::toJson() const
+{
+	return {{QStringLiteral("serverId"), serverId}, {QStringLiteral("username"), username},
+		{QStringLiteral("role"), role}, {QStringLiteral("assignedBy"), assignedBy}};
+}
+
+ServerRoleAssignment ServerRoleAssignment::fromJson(const QJsonObject& object)
+{
+	ServerRoleAssignment assignment;
+	assignment.serverId = object.value(QStringLiteral("serverId")).toString();
+	assignment.username = object.value(QStringLiteral("username")).toString().toLower();
+	assignment.role = object.value(QStringLiteral("role")).toString(QStringLiteral("player"));
+	assignment.assignedBy = object.value(QStringLiteral("assignedBy")).toString().toLower();
+	return assignment;
+}
+
+QJsonObject ServerSanction::toJson() const
+{
+	return {{QStringLiteral("id"), id}, {QStringLiteral("serverId"), serverId},
+		{QStringLiteral("targetUsername"), targetUsername}, {QStringLiteral("kind"), kind},
+		{QStringLiteral("textChat"), textChat}, {QStringLiteral("voiceChat"), voiceChat},
+		{QStringLiteral("reason"), reason}, {QStringLiteral("issuedBy"), issuedBy},
+		{QStringLiteral("createdAt"), createdAt}, {QStringLiteral("expiresAt"), expiresAt}};
+}
+
+ServerSanction ServerSanction::fromJson(const QJsonObject& object)
+{
+	ServerSanction sanction;
+	sanction.id = qMax(qint64(0), static_cast<qint64>(object.value(QStringLiteral("id")).toDouble()));
+	sanction.serverId = object.value(QStringLiteral("serverId")).toString();
+	sanction.targetUsername = object.value(QStringLiteral("targetUsername")).toString().toLower();
+	sanction.kind = object.value(QStringLiteral("kind")).toString();
+	sanction.textChat = object.value(QStringLiteral("textChat")).toBool();
+	sanction.voiceChat = object.value(QStringLiteral("voiceChat")).toBool();
+	sanction.reason = object.value(QStringLiteral("reason")).toString();
+	sanction.issuedBy = object.value(QStringLiteral("issuedBy")).toString().toLower();
+	sanction.createdAt = static_cast<qint64>(object.value(QStringLiteral("createdAt")).toDouble());
+	sanction.expiresAt = static_cast<qint64>(object.value(QStringLiteral("expiresAt")).toDouble());
+	return sanction;
+}
+
+QJsonObject PlayerMutePreference::toJson() const
+{
+	return {{QStringLiteral("serverId"), serverId}, {QStringLiteral("muterUsername"), muterUsername},
+		{QStringLiteral("targetUsername"), targetUsername}, {QStringLiteral("textChat"), textChat},
+		{QStringLiteral("voiceChat"), voiceChat}};
+}
+
+PlayerMutePreference PlayerMutePreference::fromJson(const QJsonObject& object)
+{
+	PlayerMutePreference preference;
+	preference.serverId = object.value(QStringLiteral("serverId")).toString();
+	preference.muterUsername = object.value(QStringLiteral("muterUsername")).toString().toLower();
+	preference.targetUsername = object.value(QStringLiteral("targetUsername")).toString().toLower();
+	preference.textChat = object.value(QStringLiteral("textChat")).toBool();
+	preference.voiceChat = object.value(QStringLiteral("voiceChat")).toBool();
+	return preference;
 }
 
 QJsonObject DrawingStroke::toJson() const
