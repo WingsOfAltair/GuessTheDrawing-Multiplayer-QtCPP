@@ -54,9 +54,11 @@
 #include <cstring>
 #include <utility>
 
+
 namespace gtd {
 
 namespace {
+// Dummy patch touch: no functional changes.
 
 QIcon countryFlagIcon(const QString& countryCode)
 {
@@ -2141,10 +2143,17 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 			: profile.serverRole == QStringLiteral("admin") ? localizedText(QStringLiteral("Server admin"), languageCode_)
 			: profile.serverRole == QStringLiteral("moderator") ? localizedText(QStringLiteral("Server moderator"), languageCode_)
 			: localizedText(QStringLiteral("Player"), languageCode_);
+		const QString targetUsername = profile.username.toLower();
+		const QString textMuteStatus = localizedText(mutedTextUsers_.contains(targetUsername)
+			? QStringLiteral("Muted by you") : QStringLiteral("Not muted by you"), languageCode_);
+		const QString voiceMuteStatus = localizedText(mutedVoiceUsers_.contains(targetUsername)
+			? QStringLiteral("Muted by you") : QStringLiteral("Not muted by you"), languageCode_);
 		QMessageBox::information(this, localizedText(QStringLiteral("Player profile"), languageCode_),
-			QStringLiteral("%1 (@%2)\n%3\n%4 points · %5 wins · %6 losses · %7 abandoned")
+			QStringLiteral("%1 (@%2)\n%3\n%4 points · %5 wins · %6 losses · %7 abandoned\n%8: %9\n%10: %11")
 				.arg(profile.displayName, profile.username, role).arg(profile.totalScore)
-				.arg(profile.roundsWon).arg(profile.roundsLost).arg(profile.roundsAbandoned));
+				.arg(profile.roundsWon).arg(profile.roundsLost).arg(profile.roundsAbandoned)
+				.arg(localizedText(QStringLiteral("Text chat"), languageCode_), textMuteStatus,
+					localizedText(QStringLiteral("Voice chat"), languageCode_), voiceMuteStatus));
 	} else if (type == QStringLiteral("StaffRoleResult") || type == QStringLiteral("ModerationResult")) {
 		if (moderationStatusLabel_)
 			moderationStatusLabel_->setText(localizedText(QStringLiteral("Moderation change saved."), languageCode_));
@@ -3126,41 +3135,49 @@ void MainWindow::sendModerationAction(const QString& targetUsername, const QStri
 		auto* reason = new QLineEdit(&dialog);
 		reason->setMaxLength(500);
 		layout->addRow(localizedText(QStringLiteral("Reason"), languageCode_), reason);
-		auto* text = new QCheckBox(localizedText(QStringLiteral("Text chat"), languageCode_), &dialog);
-		auto* voice = new QCheckBox(localizedText(QStringLiteral("Voice chat"), languageCode_), &dialog);
-		text->setChecked(true);
-		voice->setChecked(true);
+		QCheckBox* text = nullptr;
+		QCheckBox* voice = nullptr;
 		if (action == QStringLiteral("mute")) {
+			text = new QCheckBox(localizedText(QStringLiteral("Text chat"), languageCode_), &dialog);
+			voice = new QCheckBox(localizedText(QStringLiteral("Voice chat"), languageCode_), &dialog);
+			text->setChecked(true);
+			voice->setChecked(true);
 			layout->addRow(text);
 			layout->addRow(voice);
 		}
-		auto* durationMode = new QComboBox(&dialog);
-		durationMode->addItem(localizedText(QStringLiteral("Permanent"), languageCode_), QStringLiteral("permanent"));
-		durationMode->addItem(localizedText(QStringLiteral("For a duration"), languageCode_), QStringLiteral("duration"));
-		durationMode->addItem(localizedText(QStringLiteral("Until date and time"), languageCode_), QStringLiteral("datetime"));
-		auto* amount = new QSpinBox(&dialog);
-		amount->setRange(1, 100000);
-		auto* unit = new QComboBox(&dialog);
-		unit->addItem(localizedText(QStringLiteral("Minutes"), languageCode_), 60);
-		unit->addItem(localizedText(QStringLiteral("Hours"), languageCode_), 3600);
-		unit->addItem(localizedText(QStringLiteral("Days"), languageCode_), 86400);
-		auto* until = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &dialog);
-		until->setCalendarPopup(true);
-		until->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
-		auto* durationRow = new QWidget(&dialog);
-		auto* durationLayout = new QHBoxLayout(durationRow);
-		durationLayout->setContentsMargins(0, 0, 0, 0);
-		durationLayout->addWidget(amount);
-		durationLayout->addWidget(unit);
-		layout->addRow(localizedText(QStringLiteral("Duration"), languageCode_), durationMode);
-		layout->addRow(durationRow);
-		layout->addRow(localizedText(QStringLiteral("Expires"), languageCode_), until);
-		durationRow->setVisible(false);
-		until->setVisible(false);
-		connect(durationMode, &QComboBox::currentIndexChanged, &dialog, [=](int index) {
-			durationRow->setVisible(index == 1);
-			until->setVisible(index == 2);
-		});
+		QComboBox* durationMode = nullptr;
+		QSpinBox* amount = nullptr;
+		QComboBox* unit = nullptr;
+		QDateTimeEdit* until = nullptr;
+		if (action != QStringLiteral("kick")) {
+			durationMode = new QComboBox(&dialog);
+			durationMode->addItem(localizedText(QStringLiteral("Permanent"), languageCode_), QStringLiteral("permanent"));
+			durationMode->addItem(localizedText(QStringLiteral("For a duration"), languageCode_), QStringLiteral("duration"));
+			durationMode->addItem(localizedText(QStringLiteral("Until date and time"), languageCode_), QStringLiteral("datetime"));
+			amount = new QSpinBox(&dialog);
+			amount->setRange(1, 100000);
+			unit = new QComboBox(&dialog);
+			unit->addItem(localizedText(QStringLiteral("Minutes"), languageCode_), 60);
+			unit->addItem(localizedText(QStringLiteral("Hours"), languageCode_), 3600);
+			unit->addItem(localizedText(QStringLiteral("Days"), languageCode_), 86400);
+			until = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &dialog);
+			until->setCalendarPopup(true);
+			until->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+			auto* durationRow = new QWidget(&dialog);
+			auto* durationLayout = new QHBoxLayout(durationRow);
+			durationLayout->setContentsMargins(0, 0, 0, 0);
+			durationLayout->addWidget(amount);
+			durationLayout->addWidget(unit);
+			layout->addRow(localizedText(QStringLiteral("Duration"), languageCode_), durationMode);
+			layout->addRow(durationRow);
+			layout->addRow(localizedText(QStringLiteral("Expires"), languageCode_), until);
+			durationRow->setVisible(false);
+			until->setVisible(false);
+			connect(durationMode, &QComboBox::currentIndexChanged, &dialog, [=](int index) {
+				durationRow->setVisible(index == 1);
+				until->setVisible(index == 2);
+			});
+		}
 		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
 		layout->addRow(buttons);
 		connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
