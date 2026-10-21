@@ -3205,7 +3205,20 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 		return;
 	const PlayerProfile profile = PlayerProfile::fromJson(entry->toObject().value(QStringLiteral("profile")).toObject());
 	QMenu menu(this);
-	QAction* viewProfile = menu.addAction(localizedText(QStringLiteral("View profile"), languageCode_));
+	const QPalette themePalette = QApplication::palette();
+	menu.setStyleSheet(QStringLiteral(
+		"QMenu { background-color: %1; color: %2; }"
+		"QMenu::item { color: %2; }"
+		"QMenu::item:selected { background-color: %3; color: %4; }")
+		.arg(themePalette.color(QPalette::Window).name(),
+			themePalette.color(QPalette::WindowText).name(),
+			themePalette.color(QPalette::Highlight).name(),
+			themePalette.color(QPalette::HighlightedText).name()));
+	const auto addRosterAction = [this, &menu](const QString& source) {
+		const QString text = localizedText(source, languageCode_);
+		return menu.addAction(text.isEmpty() ? source : text);
+	};
+	QAction* viewProfile = addRosterAction(QStringLiteral("View profile"));
 	QAction* muteText = nullptr;
 	QAction* muteVoice = nullptr;
 	QAction* kick = nullptr;
@@ -3213,10 +3226,10 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 	QAction* mute = nullptr;
 	const bool protectedStaff = profile.masterSuperAdmin || profile.serverRole != QStringLiteral("player");
 	if (target != username_ && !protectedStaff) {
-		muteText = menu.addAction(mutedTextUsers_.contains(target)
-			? localizedText(QStringLiteral("Unmute text"), languageCode_) : localizedText(QStringLiteral("Mute text"), languageCode_));
-		muteVoice = menu.addAction(mutedVoiceUsers_.contains(target)
-			? localizedText(QStringLiteral("Unmute voice"), languageCode_) : localizedText(QStringLiteral("Mute voice"), languageCode_));
+		muteText = addRosterAction(mutedTextUsers_.contains(target)
+			? QStringLiteral("Unmute text") : QStringLiteral("Mute text"));
+		muteVoice = addRosterAction(mutedVoiceUsers_.contains(target)
+			? QStringLiteral("Unmute voice") : QStringLiteral("Mute voice"));
 	}
 	const int myLevel = masterSuperAdmin_ ? 3 : currentServerRole_ == QStringLiteral("admin") ? 2
 		: currentServerRole_ == QStringLiteral("moderator") ? 1 : 0;
@@ -3224,9 +3237,9 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 		: profile.serverRole == QStringLiteral("moderator") ? 1 : 0;
 	if (target != username_ && myLevel > targetLevel) {
 		menu.addSeparator();
-		kick = menu.addAction(localizedText(QStringLiteral("Kick…"), languageCode_));
-		ban = menu.addAction(localizedText(QStringLiteral("Ban…"), languageCode_));
-		mute = menu.addAction(localizedText(QStringLiteral("Server mute…"), languageCode_));
+		kick = addRosterAction(QStringLiteral("Kick…"));
+		ban = addRosterAction(QStringLiteral("Ban…"));
+		mute = addRosterAction(QStringLiteral("Server mute…"));
 	}
 	QAction* selected = menu.exec(rosterList_->mapToGlobal(position));
 	if (selected == viewProfile)

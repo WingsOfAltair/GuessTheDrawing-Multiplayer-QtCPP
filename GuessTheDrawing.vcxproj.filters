@@ -18,10 +18,10 @@
     <Text Include="CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="README.md" />
     <None Include=".github\copilot-instructions.md" />
     <None Include=".gitignore" />
     <None Include="dictionary" />
+    <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shared\models.h">
