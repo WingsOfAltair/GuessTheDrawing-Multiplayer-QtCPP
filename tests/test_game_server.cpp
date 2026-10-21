@@ -6,10 +6,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QtTest>
+
+#include <algorithm>
 
 class GameServerTests final : public QObject {
 	Q_OBJECT
@@ -47,6 +50,277 @@ private slots:
 		QTRY_COMPARE(pongRequestId, QStringLiteral("room-ping-probe"));
 	}
 
+	void preRoundIntermissionAllowsLeavingAndSpectatingWithoutLosses()
+	{
+		QTemporaryDir dictionaryDirectory;
+		QVERIFY(dictionaryDirectory.isValid());
+		const QString dictionaryPath = dictionaryDirectory.filePath(QStringLiteral("words.txt"));
+		QFile dictionary(dictionaryPath);
+		QVERIFY(dictionary.open(QIODevice::WriteOnly | QIODevice::Text));
+		QCOMPARE(dictionary.write("intermissionword\n"), qint64(17));
+		dictionary.close();
+
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("room-intermission");
+		room.roomName = QStringLiteral("Intermission room");
+		gtd::GameServer server(room, QStringLiteral("server-intermission"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"), dictionaryPath, 5);
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+		QByteArray masterBuffer;
+		QList<QJsonObject> masterMessages;
+		bool registered = false;
+		auto processMasterData = [&] {
+			const QList<QJsonObject> incoming = gtd::takeMessages(&masterBuffer, masterSocket->readAll());
+			for (const QJsonObject& message : incoming) {
+				masterMessages.append(message);
+				if (message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerRegister")) {
+					registered = true;
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+				}
+			}
+		};
+		connect(masterSocket, &QTcpSocket::readyRead, this, processMasterData);
+		if (masterSocket->bytesAvailable() > 0)
+			processMasterData();
+		QTRY_VERIFY(registered);
+
+		QHash<QTcpSocket*, QByteArray> buffers;
+		QHash<QTcpSocket*, QList<QJsonObject>> received;
+		auto monitor = [this, &buffers, &received](QTcpSocket* socket) {
+			connect(socket, &QTcpSocket::readyRead, this, [socket, &buffers, &received] {
+				const QList<QJsonObject> incoming = gtd::takeMessages(&buffers[socket], socket->readAll());
+				for (const QJsonObject& message : incoming)
+					received[socket].append(message);
+			});
+		};
+		auto findMessage = [&received](QTcpSocket* socket, const QString& type,
+									 const QString& requestId = QString()) {
+			for (const QJsonObject& message : received.value(socket)) {
+				if (message.value(QStringLiteral("type")).toString() == type
+					&& (requestId.isEmpty() || message.value(QStringLiteral("requestId")).toString() == requestId))
+					return message;
+			}
+			return QJsonObject{};
+		};
+		auto join = [&](QTcpSocket* socket, const QString& username, const QString& requestId) {
+			monitor(socket);
+			socket->connectToHost(QHostAddress::LocalHost, server.port());
+			QTRY_COMPARE(socket->state(), QAbstractSocket::ConnectedState);
+			const QString token = gtd::createSessionToken(username, username, QStringLiteral("session-secret"),
+				QDateTime::currentSecsSinceEpoch() + 300);
+			QVERIFY(gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("JoinRoom"),
+				{{QStringLiteral("requestId"), requestId}, {QStringLiteral("roomId"), room.roomId},
+				 {QStringLiteral("authToken"), token}})));
+			QTRY_VERIFY(!findMessage(socket, QStringLiteral("JoinResult"), requestId).isEmpty());
+			QVERIFY(findMessage(socket, QStringLiteral("JoinResult"), requestId)
+				.value(QStringLiteral("ok")).toBool());
+		};
+
+		QTcpSocket leavingPlayer;
+		QTcpSocket spectatingPlayer;
+		QTcpSocket activePlayerOne;
+		QTcpSocket activePlayerTwo;
+		join(&leavingPlayer, QStringLiteral("intermission-leaving"), QStringLiteral("join-leaving"));
+		QElapsedTimer intermissionElapsed;
+		intermissionElapsed.start();
+		join(&spectatingPlayer, QStringLiteral("intermission-spectating"), QStringLiteral("join-spectating"));
+		QTRY_VERIFY(!findMessage(&leavingPlayer, QStringLiteral("RoundStarting")).isEmpty());
+		join(&activePlayerOne, QStringLiteral("intermission-active-one"), QStringLiteral("join-active-one"));
+		join(&activePlayerTwo, QStringLiteral("intermission-active-two"), QStringLiteral("join-active-two"));
+
+		QVERIFY(gtd::sendMessage(&leavingPlayer, gtd::makeMessage(QStringLiteral("LeaveRoom"))));
+		QTRY_COMPARE(leavingPlayer.state(), QAbstractSocket::UnconnectedState);
+		QVERIFY(gtd::sendMessage(&spectatingPlayer, gtd::makeMessage(QStringLiteral("ChangeRole"),
+			{{QStringLiteral("requestId"), QStringLiteral("become-spectator")},
+			 {QStringLiteral("spectator"), true}})));
+		QTRY_VERIFY(!findMessage(&spectatingPlayer, QStringLiteral("RoleChangeResult"),
+			QStringLiteral("become-spectator")).isEmpty());
+		QVERIFY(findMessage(&spectatingPlayer, QStringLiteral("RoleChangeResult"),
+			QStringLiteral("become-spectator")).value(QStringLiteral("ok")).toBool());
+		QTRY_VERIFY(!findMessage(&activePlayerOne, QStringLiteral("IntermissionCountdown")).isEmpty());
+		QVERIFY(findMessage(&activePlayerOne, QStringLiteral("RoundStarted")).isEmpty());
+		QTRY_VERIFY(!findMessage(&activePlayerOne, QStringLiteral("RoundStarted")).isEmpty());
+		QVERIFY(intermissionElapsed.elapsed() >= 4000);
+
+		const QString drawerUsername = findMessage(&activePlayerOne, QStringLiteral("RoundStarted"))
+			.value(QStringLiteral("drawerUsername")).toString();
+		QTcpSocket* drawer = drawerUsername == QStringLiteral("intermission-active-one")
+			? &activePlayerOne : &activePlayerTwo;
+		QTcpSocket* guesser = drawer == &activePlayerOne ? &activePlayerTwo : &activePlayerOne;
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("WordAssigned")).isEmpty());
+		QVERIFY(gtd::sendMessage(guesser, gtd::makeMessage(QStringLiteral("Guess"),
+			{{QStringLiteral("text"), QStringLiteral("intermissionword")}})));
+		QTRY_VERIFY(!findMessage(guesser, QStringLiteral("RoundEnded")).isEmpty());
+		QTRY_VERIFY(std::count_if(masterMessages.cbegin(), masterMessages.cend(), [](const QJsonObject& message) {
+			return message.value(QStringLiteral("type")).toString() == QStringLiteral("RoundResult");
+		}) == 2);
+
+		QStringList resultUsernames;
+		for (const QJsonObject& message : masterMessages) {
+			if (message.value(QStringLiteral("type")).toString() == QStringLiteral("RoundResult"))
+				resultUsernames.append(message.value(QStringLiteral("username")).toString());
+		}
+		QStringList expectedUsernames{QStringLiteral("intermission-active-one"), QStringLiteral("intermission-active-two")};
+		resultUsernames.sort();
+		expectedUsernames.sort();
+		QCOMPARE(resultUsernames, expectedUsernames);
+		QVERIFY(std::none_of(masterMessages.cbegin(), masterMessages.cend(), [](const QJsonObject& message) {
+			return message.value(QStringLiteral("type")).toString() == QStringLiteral("RoundAbandonment");
+		}));
+	}
+
+	void activeRoundDepartureCountsAsAbandonmentInsteadOfLoss()
+	{
+		QTemporaryDir dictionaryDirectory;
+		QVERIFY(dictionaryDirectory.isValid());
+		const QString dictionaryPath = dictionaryDirectory.filePath(QStringLiteral("words.txt"));
+		QFile dictionary(dictionaryPath);
+		QVERIFY(dictionary.open(QIODevice::WriteOnly | QIODevice::Text));
+		QCOMPARE(dictionary.write("quitword\n"), qint64(9));
+		dictionary.close();
+
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("room-abandonment");
+		room.roomName = QStringLiteral("Abandonment room");
+		gtd::GameServer server(room, QStringLiteral("server-abandonment"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"), dictionaryPath, 5);
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+		QByteArray masterBuffer;
+		QList<QJsonObject> masterMessages;
+		bool registered = false;
+		auto processMasterData = [&] {
+			const QList<QJsonObject> incoming = gtd::takeMessages(&masterBuffer, masterSocket->readAll());
+			for (const QJsonObject& message : incoming) {
+				masterMessages.append(message);
+				if (message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerRegister")) {
+					registered = true;
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+				}
+			}
+		};
+		connect(masterSocket, &QTcpSocket::readyRead, this, processMasterData);
+		if (masterSocket->bytesAvailable() > 0)
+			processMasterData();
+		QTRY_VERIFY(registered);
+
+		QHash<QTcpSocket*, QByteArray> buffers;
+		QHash<QTcpSocket*, QList<QJsonObject>> received;
+		auto monitor = [this, &buffers, &received](QTcpSocket* socket) {
+			connect(socket, &QTcpSocket::readyRead, this, [socket, &buffers, &received] {
+				const QList<QJsonObject> incoming = gtd::takeMessages(&buffers[socket], socket->readAll());
+				for (const QJsonObject& message : incoming)
+					received[socket].append(message);
+			});
+		};
+		auto findMessage = [&received](QTcpSocket* socket, const QString& type,
+									 const QString& requestId = QString()) {
+			for (const QJsonObject& message : received.value(socket)) {
+				if (message.value(QStringLiteral("type")).toString() == type
+					&& (requestId.isEmpty() || message.value(QStringLiteral("requestId")).toString() == requestId))
+					return message;
+			}
+			return QJsonObject{};
+		};
+		auto join = [&](QTcpSocket* socket, const QString& username) {
+			monitor(socket);
+			socket->connectToHost(QHostAddress::LocalHost, server.port());
+			QTRY_COMPARE(socket->state(), QAbstractSocket::ConnectedState);
+			const QString token = gtd::createSessionToken(username, username, QStringLiteral("session-secret"),
+				QDateTime::currentSecsSinceEpoch() + 300);
+			QVERIFY(gtd::sendMessage(socket, gtd::makeMessage(QStringLiteral("JoinRoom"),
+				{{QStringLiteral("roomId"), room.roomId}, {QStringLiteral("authToken"), token}})));
+			QTRY_VERIFY(!findMessage(socket, QStringLiteral("JoinResult")).isEmpty());
+			QVERIFY(findMessage(socket, QStringLiteral("JoinResult")).value(QStringLiteral("ok")).toBool());
+		};
+
+		QTcpSocket firstPlayer;
+		QTcpSocket secondPlayer;
+		QTcpSocket thirdPlayer;
+		QTcpSocket fourthPlayer;
+		const QStringList usernames{QStringLiteral("abandon-first"), QStringLiteral("abandon-second"),
+		QStringLiteral("abandon-third"), QStringLiteral("abandon-fourth")};
+		join(&firstPlayer, usernames.at(0));
+		join(&secondPlayer, usernames.at(1));
+		join(&thirdPlayer, usernames.at(2));
+		join(&fourthPlayer, usernames.at(3));
+		QTRY_VERIFY(!findMessage(&firstPlayer, QStringLiteral("RoundStarted")).isEmpty());
+		const QString drawerUsername = findMessage(&firstPlayer, QStringLiteral("RoundStarted"))
+			.value(QStringLiteral("drawerUsername")).toString();
+		QHash<QString, QTcpSocket*> socketsByUsername{
+			{usernames.at(0), &firstPlayer}, {usernames.at(1), &secondPlayer},
+			{usernames.at(2), &thirdPlayer}, {usernames.at(3), &fourthPlayer}};
+		QStringList nonDrawerUsernames;
+		for (const QString& username : usernames) {
+			if (username != drawerUsername)
+				nonDrawerUsernames.append(username);
+		}
+		const QString abandonUsername = nonDrawerUsernames.at(0);
+		const QString spectatingUsername = nonDrawerUsernames.at(1);
+		const QString guesserUsername = nonDrawerUsernames.at(2);
+		QTcpSocket* abandoner = socketsByUsername.value(abandonUsername);
+		QTcpSocket* spectatingPlayer = socketsByUsername.value(spectatingUsername);
+		QTcpSocket* guesser = socketsByUsername.value(guesserUsername);
+		QVERIFY(abandoner);
+		QVERIFY(spectatingPlayer);
+		QVERIFY(guesser);
+		QVERIFY(gtd::sendMessage(abandoner, gtd::makeMessage(QStringLiteral("LeaveRoom"))));
+		QTRY_COMPARE(abandoner->state(), QAbstractSocket::UnconnectedState);
+		QVERIFY(gtd::sendMessage(spectatingPlayer, gtd::makeMessage(QStringLiteral("ChangeRole"),
+			{{QStringLiteral("requestId"), QStringLiteral("active-round-spectate")},
+			 {QStringLiteral("spectator"), true}})));
+		QTRY_VERIFY(!findMessage(spectatingPlayer, QStringLiteral("RoleChangeResult"),
+			QStringLiteral("active-round-spectate")).isEmpty());
+		QVERIFY(findMessage(spectatingPlayer, QStringLiteral("RoleChangeResult"),
+			QStringLiteral("active-round-spectate")).value(QStringLiteral("ok")).toBool());
+		QTRY_VERIFY(std::count_if(masterMessages.cbegin(), masterMessages.cend(),
+			[](const QJsonObject& message) {
+				return message.value(QStringLiteral("type")).toString() == QStringLiteral("RoundAbandonment");
+			}) == 2);
+		QVERIFY(gtd::sendMessage(guesser, gtd::makeMessage(QStringLiteral("Guess"),
+			{{QStringLiteral("text"), QStringLiteral("quitword")}})));
+		QTRY_VERIFY(!findMessage(guesser, QStringLiteral("RoundEnded")).isEmpty());
+		QTRY_VERIFY(std::count_if(masterMessages.cbegin(), masterMessages.cend(),
+			[](const QJsonObject& message) {
+				return message.value(QStringLiteral("type")).toString() == QStringLiteral("RoundResult");
+			}) == 2);
+
+		QStringList abandonedUsernames;
+		QStringList resultUsernames;
+		for (const QJsonObject& message : masterMessages) {
+			const QString type = message.value(QStringLiteral("type")).toString();
+			if (type == QStringLiteral("RoundAbandonment"))
+				abandonedUsernames.append(message.value(QStringLiteral("username")).toString());
+			else if (type == QStringLiteral("RoundResult"))
+				resultUsernames.append(message.value(QStringLiteral("username")).toString());
+		}
+		QStringList expectedAbandonedUsernames{abandonUsername, spectatingUsername};
+		QStringList expectedResultUsernames = usernames;
+		expectedResultUsernames.removeAll(abandonUsername);
+		expectedResultUsernames.removeAll(spectatingUsername);
+		abandonedUsernames.sort();
+		expectedAbandonedUsernames.sort();
+		resultUsernames.sort();
+		expectedResultUsernames.sort();
+		QCOMPARE(abandonedUsernames, expectedAbandonedUsernames);
+		QCOMPARE(resultUsernames, expectedResultUsernames);
+	}
+
 	void relaysRoomChatAndVoiceWhileDrawerIsReceiveOnly()
 	{
 		QTemporaryDir dictionaryDirectory;
@@ -66,7 +340,7 @@ private slots:
 		room.maxPlayers = 2;
 		gtd::GameServer server(room, QStringLiteral("server-chat-voice"), QStringLiteral("127.0.0.1"),
 			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
-			QStringLiteral("session-secret"), dictionaryPath);
+			QStringLiteral("session-secret"), dictionaryPath, 0);
 		QString error;
 		QVERIFY2(server.start(&error), qPrintable(error));
 		QTRY_VERIFY(master.hasPendingConnections());

@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -17,7 +18,7 @@ class GameServer final : public QObject {
 public:
 	GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 			   quint16 masterPort, QString serverSecret, QString sessionSecret,
-			   QString dictionaryPath = {}, QObject* parent = nullptr);
+			   QString dictionaryPath = {}, int intermissionSeconds = 15, QObject* parent = nullptr);
 	~GameServer() override;
 	bool start(QString* error = nullptr);
 	quint16 port() const;
@@ -35,6 +36,7 @@ private:
 		int drawingScore = 0;
 		int roundsWon = 0;
 		int roundsLost = 0;
+		int roundsAbandoned = 0;
 		int leaderboardRank = 0;
 		int guessingLeaderboardRank = 0;
 		int drawingLeaderboardRank = 0;
@@ -83,6 +85,8 @@ private:
 	void requestProfile(const Player& player);
 	void reportScore(const Player& player, int points, bool drawingPoints);
 	void reportRoundResult(const QString& username, const QString& authToken, bool roundWon);
+	void reportRoundAbandonment(const QString& username, const QString& authToken);
+	void markRoundAbandoned(const QString& username);
 	void handleCanvasOperation(QTcpSocket* socket, const QJsonObject& request);
 	bool applyCanvasOperation(const QJsonObject& operation, QJsonObject* normalized,
 							 QString* error);
@@ -90,6 +94,8 @@ private:
 	QJsonArray canvasObjectsJson() const;
 	void resetCanvas();
 	void startRound();
+	void startRoundNow();
+	void cancelIntermissionIfInsufficientPlayers();
 	void endRound(const QString& reason);
 	void sendGuess(const QString& username, const QString& text);
 	bool validStroke(const QJsonObject& object, DrawingStroke* stroke) const;
@@ -104,6 +110,7 @@ private:
 	QString serverSecret_;
 	QString sessionSecret_;
 	QString dictionaryPath_;
+	int intermissionSeconds_ = 15;
 	QStringList words_;
 	QTcpServer listener_;
 	QTcpSocket masterSocket_;
@@ -111,6 +118,7 @@ private:
 	QTimer heartbeatTimer_;
 	QTimer reconnectTimer_;
 	QTimer roundTimer_;
+	QTimer intermissionTimer_;
 	QTimer countdownTimer_;
 	QElapsedTimer actionRateLimitClock_;
 	QHash<QTcpSocket*, QByteArray> playerBuffers_;
@@ -121,6 +129,7 @@ private:
 	QStringList playerOrder_;
 	QStringList playerQueue_;
 	QStringList roundParticipants_;
+	QSet<QString> roundAbandonedParticipants_;
 	QHash<QString, QString> roundParticipantTokens_;
 	QList<CanvasLayer> canvasLayers_;
 	QList<CanvasObject> canvasObjects_;
@@ -129,6 +138,7 @@ private:
 	QString lastDrawer_;
 	QString currentWord_;
 	QDateTime roundDeadline_;
+	QDateTime intermissionDeadline_;
 	int roundNumber_ = 0;
 	int correctGuesses_ = 0;
 	quint64 roundResultSequence_ = 1;
@@ -138,6 +148,7 @@ private:
 	int lastStatusQueueCount_ = -1;
 	quint64 nextMasterRequestId_ = 1;
 	bool roundActive_ = false;
+	bool roundStarting_ = false;
 	bool masterRegistered_ = false;
 };
 

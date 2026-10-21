@@ -191,6 +191,7 @@ private:
 	int secondsRemaining_ = 0;
 	int activePingMs_ = -1;
 	bool roundActive_ = false;
+	bool roundStarting_ = false;
 	bool inRoom_ = false;
 	bool isSpectator_ = false;
 	bool queuedForPlayer_ = false;

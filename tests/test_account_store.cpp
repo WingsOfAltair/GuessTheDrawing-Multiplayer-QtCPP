@@ -25,6 +25,7 @@ private slots:
 			QVERIFY2(store.addScore(QStringLiteral("sketcher"), 7, false, &error), qPrintable(error));
 			QVERIFY2(store.recordRoundResult(QStringLiteral("sketcher"), true, &error), qPrintable(error));
 			QVERIFY2(store.recordRoundResult(QStringLiteral("sketcher"), false, &error), qPrintable(error));
+			QVERIFY2(store.recordRoundAbandonment(QStringLiteral("sketcher"), &error), qPrintable(error));
 		}
 
 		gtd::AccountStore reopened(databasePath);
@@ -34,6 +35,7 @@ private slots:
 		QCOMPARE(profile->totalScore, 7);
 		QCOMPARE(profile->roundsWon, 1);
 		QCOMPARE(profile->roundsLost, 1);
+		QCOMPARE(profile->roundsAbandoned, 1);
 		QCOMPARE(profile->guessingScore, 7);
 		QCOMPARE(profile->drawingScore, 0);
 		QCOMPARE(profile->guessingRank, QStringLiteral("Word Seeker I"));

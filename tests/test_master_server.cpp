@@ -99,6 +99,22 @@ private slots:
 		profile = accountStore.profile(QStringLiteral("scoreuser"), &error);
 		QVERIFY2(profile.has_value(), qPrintable(error));
 		QCOMPARE(profile->roundsWon, 1);
+
+		const auto sendAbandonment = [&gameServer, &authToken](const QString& sequence) {
+			return gtd::sendMessage(&gameServer, gtd::makeMessage(QStringLiteral("RoundAbandonment"),
+				{{QStringLiteral("requestId"), sequence},
+				 {QStringLiteral("authToken"), authToken}, {QStringLiteral("username"), QStringLiteral("scoreuser")}}));
+		};
+		QVERIFY(sendAbandonment(QStringLiteral("4")));
+		QTRY_VERIFY(!findResponse(QStringLiteral("RoundAbandonmentStored"), QStringLiteral("4")).isEmpty());
+		profile = accountStore.profile(QStringLiteral("scoreuser"), &error);
+		QVERIFY2(profile.has_value(), qPrintable(error));
+		QCOMPARE(profile->roundsAbandoned, 1);
+		QVERIFY(sendAbandonment(QStringLiteral("4")));
+		QTRY_VERIFY(!findResponse(QStringLiteral("Error"), QStringLiteral("4")).isEmpty());
+		profile = accountStore.profile(QStringLiteral("scoreuser"), &error);
+		QVERIFY2(profile.has_value(), qPrintable(error));
+		QCOMPARE(profile->roundsAbandoned, 1);
 	}
 };
 

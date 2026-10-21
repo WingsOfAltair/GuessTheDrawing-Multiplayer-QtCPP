@@ -79,6 +79,7 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("masterPort"), 45450},
 			{QStringLiteral("roundSeconds"), 60},
+			{QStringLiteral("intermissionSeconds"), 15},
 			{QStringLiteral("maxPlayers"), 8}}},
 		{QStringLiteral("client"), QJsonObject{
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},
@@ -189,9 +190,11 @@ bool AppConfig::validate(QString* error) const
 		return false;
 
 	const int roundSeconds = game.value(QStringLiteral("roundSeconds")).toInt(-1);
+	const int intermissionSeconds = game.value(QStringLiteral("intermissionSeconds")).toInt(-1);
 	const int maxPlayers = game.value(QStringLiteral("maxPlayers")).toInt(-1);
-	if (roundSeconds < 10 || roundSeconds > 600 || maxPlayers < 2 || maxPlayers > 32) {
-		setError(error, QStringLiteral("Game roundSeconds must be 10-600 and maxPlayers must be 2-32"));
+	if (roundSeconds < 10 || roundSeconds > 600 || intermissionSeconds < 0
+		|| intermissionSeconds > 120 || maxPlayers < 2 || maxPlayers > 32) {
+		setError(error, QStringLiteral("Game roundSeconds must be 10-600, intermissionSeconds 0-120, and maxPlayers 2-32"));
 		return false;
 	}
 	return true;

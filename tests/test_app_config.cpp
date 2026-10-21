@@ -35,6 +35,7 @@ void AppConfigTests::createsAndPersistsConfiguration()
 		gtd::AppConfig::defaultExportDirectory());
 	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
 		gtd::AppConfig::defaultDictionaryPath());
+	QCOMPARE(first.intValue(QStringLiteral("gameServer"), QStringLiteral("intermissionSeconds")), 15);
 
 	gtd::AppConfig second;
 	QVERIFY2(second.loadOrCreate(path, &error), qPrintable(error));

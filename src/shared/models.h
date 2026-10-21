@@ -31,6 +31,7 @@ struct PlayerProfile {
 	int drawingScore = 0;
 	int roundsWon = 0;
 	int roundsLost = 0;
+	int roundsAbandoned = 0;
 	int leaderboardRank = 0;
 	int guessingLeaderboardRank = 0;
 	int drawingLeaderboardRank = 0;

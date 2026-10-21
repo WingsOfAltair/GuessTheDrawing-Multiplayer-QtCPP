@@ -53,7 +53,7 @@ On Linux, run the executables from the build directory in separate terminals so 
 
 Use `--config <path>` to select a shared file explicitly. Config values supply defaults; command-line options override them, and `GTD_SERVER_SECRET`/`GTD_SESSION_SECRET` override the corresponding generated secrets. A malformed config is reported and left unchanged. Treat the config as sensitive: it contains signing secrets. The generated config and database are excluded from source control. Use `--help` on each executable to see available overrides.
 
-Create an account in the client, select the registered room, and join. To host additional rooms, run more game-server processes with unique server IDs, room IDs, and ports. The room timer is configurable per server with `--round-seconds` (10-600 seconds). Use `--help` on each executable for all options. Run tests with `ctest --test-dir build -C Debug --output-on-failure`.
+Create an account in the client, select the registered room, and join. To host additional rooms, run more game-server processes with unique server IDs, room IDs, and ports. The room timer is configurable per server with `--round-seconds` (10-600 seconds). The pre-round intermission defaults to 15 seconds and is configurable through `gameServer.intermissionSeconds` in `gtd-config.json` or `--intermission-seconds` (0-120; 0 disables it). Use `--help` on each executable for all options. Run tests with `ctest --test-dir build -C Debug --output-on-failure`.
 
 ## Canvas editing
 

@@ -425,7 +425,9 @@ void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& me
 		sendMessage(socket, withRequestId(QStringLiteral("ScoreStored"), message,
 			{{QStringLiteral("username"), username},
 			 {QStringLiteral("profile"), profile ? profile->toJson() : QJsonObject{}}}));
-	} else if (type == QStringLiteral("RoundResult")) {
+	} else if (type == QStringLiteral("RoundResult")
+		|| type == QStringLiteral("RoundAbandonment")) {
+		const bool abandoned = type == QStringLiteral("RoundAbandonment");
 		QString username;
 		QString error;
 		bool sequenceOk = false;
@@ -439,18 +441,22 @@ void MasterServer::handleServerMessage(QTcpSocket* socket, const QJsonObject& me
 			sendError(socket, message, QStringLiteral("Round result account does not match its session"));
 			return;
 		}
-		if (!message.value(QStringLiteral("roundWon")).isBool()
+		if ((!abandoned && !message.value(QStringLiteral("roundWon")).isBool())
 			|| sequence <= lastRoundResultSequence_.value(socket, 0)) {
 			sendError(socket, message, QStringLiteral("Invalid or replayed round result"));
 			return;
 		}
-		if (!accountStore_->recordRoundResult(username, message.value(QStringLiteral("roundWon")).toBool(), &error)) {
+		const bool recorded = abandoned
+			? accountStore_->recordRoundAbandonment(username, &error)
+			: accountStore_->recordRoundResult(username, message.value(QStringLiteral("roundWon")).toBool(), &error);
+		if (!recorded) {
 			sendError(socket, message, error);
 			return;
 		}
 		lastRoundResultSequence_.insert(socket, sequence);
 		const auto profile = accountStore_->profile(username, &error);
-		sendMessage(socket, withRequestId(QStringLiteral("RoundResultStored"), message,
+		sendMessage(socket, withRequestId(abandoned ? QStringLiteral("RoundAbandonmentStored")
+															 : QStringLiteral("RoundResultStored"), message,
 			{{QStringLiteral("username"), username},
 			 {QStringLiteral("profile"), profile ? profile->toJson() : QJsonObject{}}}));
 	} else if (type == QStringLiteral("ProfileRequest")) {

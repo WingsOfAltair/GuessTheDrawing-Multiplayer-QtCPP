@@ -63,6 +63,7 @@ PlayerProfile profileFromQuery(const QSqlQuery& query)
 	profile.totalScore = profile.guessingScore + profile.drawingScore;
 	profile.roundsWon = query.value(6).toInt();
 	profile.roundsLost = query.value(7).toInt();
+	profile.roundsAbandoned = query.value(8).toInt();
 	return profile;
 }
 
@@ -117,6 +118,11 @@ bool AccountStore::initialize(QString* error)
 		return false;
 	}
 	if (!query.exec(QStringLiteral("ALTER TABLE accounts ADD COLUMN rounds_lost INTEGER NOT NULL DEFAULT 0 CHECK(rounds_lost >= 0)"))
+		&& !query.lastError().text().contains(QStringLiteral("duplicate column name"), Qt::CaseInsensitive)) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	if (!query.exec(QStringLiteral("ALTER TABLE accounts ADD COLUMN rounds_abandoned INTEGER NOT NULL DEFAULT 0 CHECK(rounds_abandoned >= 0)"))
 		&& !query.lastError().text().contains(QStringLiteral("duplicate column name"), Qt::CaseInsensitive)) {
 		setError(error, query.lastError().text());
 		return false;
@@ -373,7 +379,7 @@ QList<PlayerProfile> AccountStore::topPlayers(bool drawingPoints, int limit, QSt
 	const QString scoreColumn = drawingPoints ? QStringLiteral("drawing_score") : QStringLiteral("guessing_score");
 	QSqlQuery query(database_);
 	query.prepare(QStringLiteral(
-		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost "
+		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned "
 		"FROM accounts WHERE %1 > 0 ORDER BY %1 DESC, %2 ASC, username ASC LIMIT :limit")
 		.arg(scoreColumn, drawingPoints ? QStringLiteral("drawing_order") : QStringLiteral("guessing_order")));
 	query.bindValue(QStringLiteral(":limit"), boundedLimit);
@@ -397,7 +403,7 @@ std::optional<PlayerProfile> AccountStore::loadProfile(const QString& normalized
 {
 	QSqlQuery query(database_);
 	query.prepare(QStringLiteral(
-		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost "
+		"SELECT username, display_name, country_code, avatar_url, guessing_score, drawing_score, rounds_won, rounds_lost, rounds_abandoned "
 		"FROM accounts WHERE username = :username"));
 	query.bindValue(QStringLiteral(":username"), normalizedUsername);
 	if (!query.exec()) {
@@ -513,6 +519,19 @@ bool AccountStore::recordRoundResult(const QString& username, bool roundWon, QSt
 	query.prepare(roundWon
 		? QStringLiteral("UPDATE accounts SET rounds_won = rounds_won + 1 WHERE username = :username")
 		: QStringLiteral("UPDATE accounts SET rounds_lost = rounds_lost + 1 WHERE username = :username"));
+	query.bindValue(QStringLiteral(":username"), normalizedUsername(username));
+	if (!query.exec() || query.numRowsAffected() != 1) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Profile not found") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::recordRoundAbandonment(const QString& username, QString* error)
+{
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("UPDATE accounts SET rounds_abandoned = rounds_abandoned + 1 WHERE username = :username"));
 	query.bindValue(QStringLiteral(":username"), normalizedUsername(username));
 	if (!query.exec() || query.numRowsAffected() != 1) {
 		setError(error, query.lastError().text().isEmpty()

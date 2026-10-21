@@ -28,6 +28,7 @@ public:
 	QList<PlayerProfile> topPlayers(bool drawingPoints, int limit = 1000, QString* error = nullptr);
 	bool addScore(const QString& username, int points, bool drawingPoints, QString* error = nullptr);
 	bool recordRoundResult(const QString& username, bool roundWon, QString* error = nullptr);
+	bool recordRoundAbandonment(const QString& username, QString* error = nullptr);
 
 private:
 	std::optional<PlayerProfile> loadProfile(const QString& normalizedUsername, QString* error);

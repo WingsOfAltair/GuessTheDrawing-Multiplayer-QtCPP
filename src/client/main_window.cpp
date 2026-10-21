@@ -2016,8 +2016,9 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		if (nicknameEdit_)
 			nicknameEdit_->setText(profile.displayName);
 		if (auto* account = lobbyPage_->findChild<QLabel*>(QStringLiteral("accountLabel")))
-			setLocalizedFormattedText(account, QStringLiteral("Signed in as %1 · %2 points"),
-				{profile.displayName, QString::number(profile.totalScore)}, languageCode_);
+			setLocalizedFormattedText(account, QStringLiteral("Signed in as %1 · %2 points · Abandoned games: %3"),
+				{profile.displayName, QString::number(profile.totalScore),
+				 QString::number(profile.roundsAbandoned)}, languageCode_);
 		if (countryCombo_) {
 			const int countryIndex = countryCombo_->findData(profile.countryCode);
 			countryCombo_->setCurrentIndex(countryIndex >= 0 ? countryIndex : 0);
@@ -2049,8 +2050,9 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		if (profileStatusLabel_)
 			profileStatusLabel_->setText(localizedText(QStringLiteral("Profile saved."), languageCode_));
 		if (auto* account = lobbyPage_->findChild<QLabel*>(QStringLiteral("accountLabel")))
-			setLocalizedFormattedText(account, QStringLiteral("Signed in as %1 · %2 points"),
-				{profile.displayName, QString::number(profile.totalScore)}, languageCode_);
+			setLocalizedFormattedText(account, QStringLiteral("Signed in as %1 · %2 points · Abandoned games: %3"),
+				{profile.displayName, QString::number(profile.totalScore),
+				 QString::number(profile.roundsAbandoned)}, languageCode_);
 		requestLeaderboards();
 	} else if (type == QStringLiteral("Error")) {
 		const QString text = message.value(QStringLiteral("message")).toString();
@@ -2170,6 +2172,10 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 			updateRoster(message.value(QStringLiteral("players")).toArray(), {});
 			setLocalizedFormattedText(roundStatusLabel_, QStringLiteral("Round in progress · drawing: %1"),
 				{currentDrawer_}, languageCode_);
+		} else if (message.value(QStringLiteral("roundStarting")).toBool()) {
+			roundStarting_ = true;
+			setLocalizedFormattedText(roundStatusLabel_, QStringLiteral("Round begins in %1 seconds · You can leave or spectate"),
+				{QString::number(message.value(QStringLiteral("secondsRemaining")).toInt())}, languageCode_);
 		}
 		updateRoundControls();
 		return;
@@ -2214,6 +2220,7 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 				{currentDrawer_}, languageCode_);
 		updateRoundControls();
 	} else if (type == QStringLiteral("RoundStarted")) {
+		roundStarting_ = false;
 		roundActive_ = true;
 		currentDrawer_ = message.value(QStringLiteral("drawerUsername")).toString();
 		updateRoster(roomRoster_, {});
@@ -2230,10 +2237,22 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		secondsRemaining_ = message.value(QStringLiteral("secondsRemaining")).toInt();
 		timerLabel_->setText(QStringLiteral("%1:%2").arg(secondsRemaining_ / 60, 2, 10, QLatin1Char('0'))
 													   .arg(secondsRemaining_ % 60, 2, 10, QLatin1Char('0')));
+	} else if (type == QStringLiteral("RoundStarting")) {
+		roundActive_ = false;
+		roundStarting_ = true;
+		currentDrawer_.clear();
+		setLocalizedFormattedText(roundStatusLabel_, QStringLiteral("Round begins in %1 seconds · You can leave or spectate"),
+			{QString::number(message.value(QStringLiteral("secondsRemaining")).toInt())}, languageCode_);
+		updateRoundControls();
+	} else if (type == QStringLiteral("IntermissionCountdown")) {
+		if (roundStarting_)
+			setLocalizedFormattedText(roundStatusLabel_, QStringLiteral("Round begins in %1 seconds · You can leave or spectate"),
+				{QString::number(message.value(QStringLiteral("secondsRemaining")).toInt())}, languageCode_);
 	} else if (type == QStringLiteral("ClearCanvas")) {
 		canvas_->applyOperation({{QStringLiteral("action"), QStringLiteral("clear")}});
 	} else if (type == QStringLiteral("RoundEnded")) {
 		roundActive_ = false;
+		roundStarting_ = false;
 		currentDrawer_.clear();
 		updateRoster(roomRoster_, {});
 		setLocalizedFormattedText(wordLabel_, QStringLiteral("Answer: %1"),
@@ -2244,6 +2263,7 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		updateRoundControls();
 	} else if (type == QStringLiteral("RoundPaused")) {
 		roundActive_ = false;
+		roundStarting_ = false;
 		updateRoster(roomRoster_, {});
 		roundStatusLabel_->setText(localizedText(message.value(QStringLiteral("message")).toString(), languageCode_));
 		updateRoundControls();
@@ -2450,6 +2470,7 @@ void MainWindow::joinSelectedRoom()
 	activeLatencyIndicator_->setPing(-1);
 	isSpectator_ = false;
 	roundActive_ = false;
+	roundStarting_ = false;
 	leavingRoom_ = false;
 		setLocalizedFormattedText(connectionStatusLabel_, QStringLiteral("Connecting to %1…"),
 			{joiningRoom_.roomName}, languageCode_);
@@ -2476,6 +2497,7 @@ void MainWindow::leaveRoom()
 	isSpectator_ = false;
 	pendingRoleChangeRequestId_.clear();
 	roundActive_ = false;
+	roundStarting_ = false;
 	pages_->setCurrentWidget(lobbyPage_);
 	requestRooms();
 }
@@ -2804,11 +2826,12 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 			? QString::number(static_cast<double>(profile.roundsWon) / static_cast<double>(profile.roundsLost), 'f', 2)
 			: (profile.roundsWon > 0 ? QStringLiteral("∞")
 				: localizedText(QStringLiteral("N/A"), languageCode_));
-		QString rosterToolTip = localizedText(QStringLiteral("%1 (@%2)\nGuessing: %3 points · %4 · Rank %5\nDrawing: %6 points · %7 · Rank %8\nCombined: %9 points · Rank %10\nWins: %11\nLosses: %12\nWin/Loss ratio: %13"), languageCode_);
+		QString rosterToolTip = localizedText(QStringLiteral("%1 (@%2)\nGuessing: %3 points · %4 · Rank %5\nDrawing: %6 points · %7 · Rank %8\nCombined: %9 points · Rank %10\nWins: %11\nLosses: %12\nWin/Loss ratio: %13\nAbandoned games: %14"), languageCode_);
 		rosterToolTip = rosterToolTip.arg(profile.displayName, profile.username)
 			.arg(profile.guessingScore).arg(guessingRank, guessingLeaderboardRank)
 			.arg(profile.drawingScore).arg(drawingRank, drawingLeaderboardRank)
-			.arg(profile.totalScore).arg(globalRank).arg(profile.roundsWon).arg(profile.roundsLost).arg(ratio);
+			.arg(profile.totalScore).arg(globalRank).arg(profile.roundsWon).arg(profile.roundsLost)
+			.arg(ratio).arg(profile.roundsAbandoned);
 		rosterToolTip = rosterToolTip.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"));
 		if (profile.countryCode.isEmpty()) {
 			rosterToolTip += QStringLiteral("<br>%1")

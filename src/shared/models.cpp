@@ -105,6 +105,7 @@ QJsonObject PlayerProfile::toJson() const
 			{QStringLiteral("drawingScore"), drawingScore},
 			{QStringLiteral("roundsWon"), roundsWon},
 			{QStringLiteral("roundsLost"), roundsLost},
+			{QStringLiteral("roundsAbandoned"), roundsAbandoned},
 			{QStringLiteral("leaderboardRank"), leaderboardRank},
 			{QStringLiteral("guessingLeaderboardRank"), guessingLeaderboardRank},
 			{QStringLiteral("drawingLeaderboardRank"), drawingLeaderboardRank},
@@ -124,6 +125,7 @@ PlayerProfile PlayerProfile::fromJson(const QJsonObject& object)
 	profile.drawingScore = qMax(0, object.value(QStringLiteral("drawingScore")).toInt());
 	profile.roundsWon = qMax(0, object.value(QStringLiteral("roundsWon")).toInt());
 	profile.roundsLost = qMax(0, object.value(QStringLiteral("roundsLost")).toInt());
+	profile.roundsAbandoned = qMax(0, object.value(QStringLiteral("roundsAbandoned")).toInt());
 	profile.leaderboardRank = qMax(0, object.value(QStringLiteral("leaderboardRank")).toInt());
 	profile.guessingLeaderboardRank = qMax(0, object.value(QStringLiteral("guessingLeaderboardRank")).toInt());
 	profile.drawingLeaderboardRank = qMax(0, object.value(QStringLiteral("drawingLeaderboardRank")).toInt());

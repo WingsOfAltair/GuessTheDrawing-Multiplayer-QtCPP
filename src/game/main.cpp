@@ -30,6 +30,8 @@ int main(int argc, char* argv[])
 					  QStringLiteral("port")});
 	parser.addOption({QStringLiteral("round-seconds"), QStringLiteral("Seconds per drawing round (10-600)"),
 					  QStringLiteral("seconds")});
+	parser.addOption({QStringLiteral("intermission-seconds"), QStringLiteral("Seconds before each drawing round (0 disables; maximum 120)"),
+					  QStringLiteral("seconds")});
 	parser.addOption({QStringLiteral("max-players"), QStringLiteral("Maximum room players (2-32)"),
 					  QStringLiteral("count")});
 	parser.addOption({QStringLiteral("server-secret"), QStringLiteral("Master registration secret"),
@@ -67,13 +69,15 @@ int main(int argc, char* argv[])
 	const uint roomPort = static_cast<uint>(configuredInt(QStringLiteral("port"), QStringLiteral("port")));
 	const uint masterPort = static_cast<uint>(configuredInt(QStringLiteral("master-port"), QStringLiteral("masterPort")));
 	const int duration = configuredInt(QStringLiteral("round-seconds"), QStringLiteral("roundSeconds"));
+	const int intermissionDuration = configuredInt(QStringLiteral("intermission-seconds"), QStringLiteral("intermissionSeconds"));
 	const int maxPlayers = configuredInt(QStringLiteral("max-players"), QStringLiteral("maxPlayers"));
 	portOk = roomPort <= 65535;
 	masterPortOk = masterPort <= 65535;
 	durationOk = duration >= 10 && duration <= 600;
+	const bool intermissionOk = intermissionDuration >= 0 && intermissionDuration <= 120;
 	maxPlayersOk = maxPlayers >= 2 && maxPlayers <= 32;
 	if (!portOk || roomPort > 65535 || !masterPortOk || masterPort == 0 || masterPort > 65535
-		|| !durationOk || !maxPlayersOk || serverSecret.size() < 32 || sessionSecret.size() < 32) {
+		|| !durationOk || !intermissionOk || !maxPlayersOk || serverSecret.size() < 32 || sessionSecret.size() < 32) {
 		QTextStream(stderr) << "Invalid port/settings or security secrets shorter than 32 characters.\n";
 		return 2;
 	}
@@ -90,7 +94,8 @@ int main(int argc, char* argv[])
 						   publicHost,
 						   masterAddress,
 						   static_cast<quint16>(masterPort), serverSecret, sessionSecret,
-						   config.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")));
+						   config.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
+						   intermissionDuration);
 	if (!server.start(&error)) {
 		QTextStream(stderr) << "Unable to start game server: " << error << '\n';
 		return 1;

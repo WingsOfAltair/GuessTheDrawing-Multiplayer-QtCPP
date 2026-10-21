@@ -74,7 +74,7 @@ void writeConsoleStatus(const QString& status)
 
 GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 					   quint16 masterPort, QString serverSecret, QString sessionSecret,
-					   QString dictionaryPath, QObject* parent)
+					   QString dictionaryPath, int intermissionSeconds, QObject* parent)
 	: QObject(parent),
 	  room_(std::move(room)),
 	  serverId_(std::move(serverId)),
@@ -85,7 +85,8 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	  sessionSecret_(std::move(sessionSecret)),
 	  dictionaryPath_(dictionaryPath.trimmed().isEmpty()
 		? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("dictionary"))
-		: std::move(dictionaryPath))
+		: std::move(dictionaryPath)),
+	  intermissionSeconds_(qBound(0, intermissionSeconds, 120))
 {
 	room_.serverId = serverId_;
 	room_.roomId = room_.roomId.trimmed();
@@ -136,6 +137,13 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	connect(&roundTimer_, &QTimer::timeout, this, [this] { endRound(QStringLiteral("time")); });
 	countdownTimer_.setInterval(1000);
 	connect(&countdownTimer_, &QTimer::timeout, this, [this] {
+		if (roundStarting_) {
+			const int remaining = qMax(0, static_cast<int>(QDateTime::currentSecsSinceEpoch()
+				- intermissionDeadline_.toSecsSinceEpoch()) * -1);
+			broadcast(makeMessage(QStringLiteral("IntermissionCountdown"),
+				{{QStringLiteral("secondsRemaining"), remaining}}));
+			return;
+		}
 		if (!roundActive_)
 			return;
 		const int remaining = qMax(0, static_cast<int>(QDateTime::currentSecsSinceEpoch()
@@ -144,6 +152,14 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 							  {{QStringLiteral("secondsRemaining"), remaining}}));
 		if (remaining == 0)
 			endRound(QStringLiteral("time"));
+	});
+	intermissionTimer_.setSingleShot(true);
+	connect(&intermissionTimer_, &QTimer::timeout, this, [this] {
+		if (!roundStarting_)
+			return;
+		roundStarting_ = false;
+		countdownTimer_.stop();
+		startRoundNow();
 	});
 }
 
@@ -155,6 +171,7 @@ GameServer::~GameServer()
 	heartbeatTimer_.stop();
 	reconnectTimer_.stop();
 	roundTimer_.stop();
+	intermissionTimer_.stop();
 	countdownTimer_.stop();
 	disconnect(&masterSocket_, nullptr, this, nullptr);
 	masterSocket_.abort();
@@ -422,13 +439,16 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 		 {QStringLiteral("players"), roster()}, {QStringLiteral("roundActive"), roundActive_},
 			 {QStringLiteral("spectator"), spectator},
 			 {QStringLiteral("queuedForPlayer"), queuedForPlayer},
+		 {QStringLiteral("roundStarting"), roundStarting_},
 			 {QStringLiteral("queue"), queueStatus(username)},
 		 {QStringLiteral("drawerUsername"), currentDrawer_},
 		 {QStringLiteral("layers"), canvasLayersJson()},
 		 {QStringLiteral("objects"), canvasObjectsJson()},
 		 {QStringLiteral("secondsRemaining"), roundActive_
 			? qMax(0, static_cast<int>(QDateTime::currentSecsSinceEpoch()
-				- roundDeadline_.toSecsSinceEpoch()) * -1) : 0}}));
+				- roundDeadline_.toSecsSinceEpoch()) * -1)
+			: roundStarting_ ? qMax(0, static_cast<int>(intermissionDeadline_.toSecsSinceEpoch()
+				- QDateTime::currentSecsSinceEpoch())) : 0}}));
 	broadcastRoster();
 	broadcastQueueStatus();
 	updateMasterRoom();
@@ -478,6 +498,8 @@ void GameServer::changePlayerRole(QTcpSocket* socket, const QJsonObject& request
 		return;
 	}
 	const bool wasDrawer = username == currentDrawer_;
+	if (spectator)
+		markRoundAbandoned(username);
 	if (spectator && player->guessed)
 		--correctGuesses_;
 	if (spectator)
@@ -496,6 +518,7 @@ void GameServer::changePlayerRole(QTcpSocket* socket, const QJsonObject& request
 		endRound(QStringLiteral("drawer_left"));
 	else if (roundActive_ && activePlayerCount() <= correctGuesses_ + 1)
 		endRound(QStringLiteral("all_guessed"));
+	cancelIntermissionIfInsufficientPlayers();
 	if (!roundActive_ && activePlayerCount() >= 2)
 		startRound();
 	processPlayerQueue();
@@ -517,6 +540,7 @@ void GameServer::removePlayer(QTcpSocket* socket)
 	}
 	removeFromPlayerQueue(username);
 	const bool wasDrawer = username == currentDrawer_;
+	markRoundAbandoned(username);
 	players_.remove(username);
 	playerOrder_.removeAll(username);
 	updateConsoleStatus();
@@ -538,6 +562,7 @@ void GameServer::removePlayer(QTcpSocket* socket)
 		broadcast(makeMessage(QStringLiteral("RoundPaused"),
 							  {{QStringLiteral("message"), QStringLiteral("Waiting for another player")}}));
 	}
+	cancelIntermissionIfInsufficientPlayers();
 	processPlayerQueue();
 }
 
@@ -676,6 +701,7 @@ QJsonArray GameServer::roster() const
 		profile.totalScore = player.guessingScore + player.drawingScore;
 		profile.roundsWon = player.roundsWon;
 		profile.roundsLost = player.roundsLost;
+		profile.roundsAbandoned = player.roundsAbandoned;
 		profile.leaderboardRank = player.leaderboardRank;
 		profile.guessingLeaderboardRank = player.guessingLeaderboardRank;
 		profile.drawingLeaderboardRank = player.drawingLeaderboardRank;
@@ -756,6 +782,7 @@ void GameServer::readMaster()
 				player->drawingScore = profile.drawingScore;
 				player->roundsWon = profile.roundsWon;
 				player->roundsLost = profile.roundsLost;
+				player->roundsAbandoned = profile.roundsAbandoned;
 				player->leaderboardRank = profile.leaderboardRank;
 				player->guessingLeaderboardRank = profile.guessingLeaderboardRank;
 				player->drawingLeaderboardRank = profile.drawingLeaderboardRank;
@@ -771,6 +798,7 @@ void GameServer::readMaster()
 					message.value(QStringLiteral("profile")).toObject());
 				player->roundsWon = profile.roundsWon;
 				player->roundsLost = profile.roundsLost;
+				player->roundsAbandoned = profile.roundsAbandoned;
 				player->countryCode = profile.countryCode;
 				player->guessingScore = profile.guessingScore;
 				player->drawingScore = profile.drawingScore;
@@ -793,11 +821,21 @@ void GameServer::readMaster()
 				player->countryCode = profile.countryCode;
 				player->roundsWon = profile.roundsWon;
 				player->roundsLost = profile.roundsLost;
+				player->roundsAbandoned = profile.roundsAbandoned;
 				player->leaderboardRank = profile.leaderboardRank;
 				player->guessingLeaderboardRank = profile.guessingLeaderboardRank;
 				player->drawingLeaderboardRank = profile.drawingLeaderboardRank;
 				player->guessingRank = profile.guessingRank;
 				player->drawingRank = profile.drawingRank;
+				broadcastRoster();
+			}
+		} else if (type == QStringLiteral("RoundAbandonmentStored")) {
+			const QString username = message.value(QStringLiteral("username")).toString();
+			auto player = players_.find(username);
+			if (player != players_.end()) {
+				const PlayerProfile profile = PlayerProfile::fromJson(
+					message.value(QStringLiteral("profile")).toObject());
+				player->roundsAbandoned = profile.roundsAbandoned;
 				broadcastRoster();
 			}
 		} else if (type == QStringLiteral("Error")) {
@@ -828,6 +866,16 @@ void GameServer::reportRoundResult(const QString& username, const QString& authT
 		 {QStringLiteral("authToken"), authToken},
 		 {QStringLiteral("username"), username},
 		 {QStringLiteral("roundWon"), roundWon}}));
+}
+
+void GameServer::reportRoundAbandonment(const QString& username, const QString& authToken)
+{
+	if (!masterRegistered_)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("RoundAbandonment"),
+		{{QStringLiteral("requestId"), QString::number(roundResultSequence_++)},
+		 {QStringLiteral("authToken"), authToken},
+		 {QStringLiteral("username"), username}}));
 }
 
 void GameServer::requestProfile(const Player& player)
@@ -1063,6 +1111,22 @@ void GameServer::resetCanvas()
 
 void GameServer::startRound()
 {
+	if (activePlayerCount() < 2 || roundActive_ || roundStarting_)
+		return;
+	if (intermissionSeconds_ > 0) {
+		roundStarting_ = true;
+		intermissionDeadline_ = QDateTime::currentDateTime().addSecs(intermissionSeconds_);
+		intermissionTimer_.start(intermissionSeconds_ * 1000);
+		countdownTimer_.start();
+		broadcast(makeMessage(QStringLiteral("RoundStarting"),
+			{{QStringLiteral("secondsRemaining"), intermissionSeconds_}}));
+		return;
+	}
+	startRoundNow();
+}
+
+void GameServer::startRoundNow()
+{
 	if (activePlayerCount() < 2 || roundActive_)
 		return;
 	QStringList activePlayers;
@@ -1080,6 +1144,7 @@ void GameServer::startRound()
 	lastDrawer_ = currentDrawer_;
 	roundWinnerUsername_.clear();
 	roundParticipants_ = activePlayers;
+	roundAbandonedParticipants_.clear();
 	roundParticipantTokens_.clear();
 	for (const QString& username : roundParticipants_)
 		roundParticipantTokens_.insert(username, players_.value(username).authToken);
@@ -1107,6 +1172,17 @@ void GameServer::startRound()
 				makeMessage(QStringLiteral("WordAssigned"), {{QStringLiteral("word"), currentWord_}}));
 }
 
+void GameServer::cancelIntermissionIfInsufficientPlayers()
+{
+	if (!roundStarting_ || activePlayerCount() >= 2)
+		return;
+	roundStarting_ = false;
+	intermissionTimer_.stop();
+	countdownTimer_.stop();
+	broadcast(makeMessage(QStringLiteral("RoundPaused"),
+		{{QStringLiteral("message"), QStringLiteral("Waiting for another player")}}));
+}
+
 void GameServer::endRound(const QString& reason)
 {
 	if (!roundActive_)
@@ -1116,11 +1192,14 @@ void GameServer::endRound(const QString& reason)
 	countdownTimer_.stop();
 	if (reason != QStringLiteral("drawer_left")) {
 		for (const QString& username : roundParticipants_) {
+			if (roundAbandonedParticipants_.contains(username))
+				continue;
 			reportRoundResult(username, roundParticipantTokens_.value(username), username == roundWinnerUsername_);
 		}
 	}
 	roundWinnerUsername_.clear();
 	roundParticipants_.clear();
+	roundAbandonedParticipants_.clear();
 	roundParticipantTokens_.clear();
 	broadcast(makeMessage(QStringLiteral("RoundEnded"),
 		{{QStringLiteral("round"), roundNumber_}, {QStringLiteral("word"), currentWord_},
@@ -1134,6 +1213,15 @@ void GameServer::endRound(const QString& reason)
 				startRound();
 		});
 	}
+}
+
+void GameServer::markRoundAbandoned(const QString& username)
+{
+	if (!roundActive_ || !roundParticipantTokens_.contains(username)
+		|| roundAbandonedParticipants_.contains(username))
+		return;
+	roundAbandonedParticipants_.insert(username);
+	reportRoundAbandonment(username, roundParticipantTokens_.value(username));
 }
 
 void GameServer::sendGuess(const QString& username, const QString& rawText)
