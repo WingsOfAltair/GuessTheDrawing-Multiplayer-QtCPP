@@ -912,6 +912,8 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	connect(&gameSocket_, &QTcpSocket::disconnected, this, [this] {
 		canvasOperationFlushTimer_.stop();
 		pendingCanvasOperations_.clear();
+		if (spectatorsDialog_)
+			spectatorsDialog_->close();
 		activePingTimer_.stop();
 		stopVoiceInput();
 		clearVoiceOutputs();
@@ -1638,7 +1640,7 @@ QWidget* MainWindow::createGamePage()
 	setLocalizedText(layersLabel, QStringLiteral("Layers · bottom to top"), languageCode_);
 	sidePanel->addWidget(layersLabel);
 	layerList_ = new QListWidget(page);
-	layerList_->setMinimumWidth(260);
+	layerList_->setMinimumWidth(320);
 	layerList_->setMaximumHeight(180);
 	sidePanel->addWidget(layerList_);
 	auto* layerButtons = new QGridLayout;
@@ -1664,14 +1666,21 @@ QWidget* MainWindow::createGamePage()
 	layerButtons->addWidget(layerUpButton_, 2, 1);
 	layerButtons->addWidget(layerDownButton_, 3, 0, 1, 2);
 	sidePanel->addLayout(layerButtons);
+	auto* rosterHeader = new QHBoxLayout;
 	auto* rosterLabel = new QLabel(QStringLiteral("Players and spectators"), page);
 	setLocalizedText(rosterLabel, QStringLiteral("Players and spectators"), languageCode_);
-	sidePanel->addWidget(rosterLabel);
+	rosterHeader->addWidget(rosterLabel, 1);
+	showSpectatorsButton_ = new QPushButton(QStringLiteral("Show spectators (0)"), page);
+	showSpectatorsButton_->setText(localizedText(QStringLiteral("Show spectators (%1)"), languageCode_).arg(0));
+	rosterHeader->addWidget(showSpectatorsButton_);
+	sidePanel->addLayout(rosterHeader);
 	rosterList_ = new QListWidget(page);
 	rosterList_->setIconSize(QSize(24, 16));
 	rosterList_->setContextMenuPolicy(Qt::CustomContextMenu);
-	rosterList_->setMinimumHeight(90);
-	rosterList_->setMaximumHeight(140);
+	rosterList_->setWordWrap(true);
+	rosterList_->setTextElideMode(Qt::ElideNone);
+	rosterList_->setMinimumHeight(160);
+	rosterList_->setMaximumHeight(240);
 	sidePanel->addWidget(rosterList_);
 	auto* chatLabel = new QLabel(QStringLiteral("Room chat and guesses"), page);
 	setLocalizedText(chatLabel, QStringLiteral("Room chat and guesses"), languageCode_);
@@ -1727,6 +1736,7 @@ QWidget* MainWindow::createGamePage()
 	connect(moderationButton_, &QPushButton::clicked, this, [this] { showModerationScreen(); });
 	connect(rosterList_, &QListWidget::customContextMenuRequested, this,
 		[this](const QPoint& position) { showRosterContextMenu(position); });
+	connect(showSpectatorsButton_, &QPushButton::clicked, this, [this] { showSpectatorsScreen(); });
 	connect(canvas_, &DrawingCanvas::currentColorChanged, this, [this](const QString& color) {
 		updateColorButton(color);
 	});
@@ -2671,6 +2681,8 @@ void MainWindow::joinSelectedRoom()
 
 void MainWindow::leaveRoom()
 {
+	if (spectatorsDialog_)
+		spectatorsDialog_->close();
 	if (gameSocket_.state() == QAbstractSocket::ConnectedState) {
 		flushPendingCanvasOperations();
 		leavingRoom_ = true;
@@ -2993,6 +3005,7 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		{joiningRoom_.roomName, QString::number(joiningRoom_.players),
 		 QString::number(joiningRoom_.maxPlayers), QString::number(joiningRoom_.spectators)}, languageCode_);
 	rosterList_->clear();
+	int spectatorCount = 0;
 	for (const QJsonValue& value : players) {
 		const QJsonObject entry = value.toObject();
 		const PlayerProfile profile = PlayerProfile::fromJson(entry.value(QStringLiteral("profile")).toObject());
@@ -3007,19 +3020,25 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 			staffRole = localizedText(QStringLiteral(" · Server moderator"), languageCode_);
 		if (profile.masterSuperAdmin)
 			staffRole += localizedText(QStringLiteral(" · Master super-admin"), languageCode_);
-		const QString role = entry.value(QStringLiteral("spectator")).toBool()
+		const bool spectator = entry.value(QStringLiteral("spectator")).toBool();
+		if (spectator)
+			++spectatorCount;
+		const QString role = spectator
 			? localizedText(QStringLiteral(" · Spectator"), languageCode_) : QString();
 		const QString drawing = roundActive_ && profile.username == currentDrawer_
 			? localizedText(QStringLiteral(" · Drawing"), languageCode_) : QString();
-		QString rosterText = localizedText(QStringLiteral("%1%2%3%4 (@%5)\nRoom: %6 · Total: %7"), languageCode_);
-		rosterText = rosterText.arg(profile.displayName, role, drawing, staffRole, profile.username)
-			.arg(entry.value(QStringLiteral("roomScore")).toInt()).arg(profile.totalScore);
 		const QString countryText = profile.countryCode.isEmpty()
 			? localizedText(QStringLiteral("Country not set"), languageCode_) : profile.countryCode;
-		rosterText.insert(rosterText.indexOf(QLatin1Char('\n')), QStringLiteral(" · %1").arg(countryText));
+		const QString playerStatus = role.isEmpty()
+			? localizedText(QStringLiteral("Player"), languageCode_) : role.mid(3);
+		QString rosterText = localizedText(QStringLiteral("%1 (@%2) · %3\n%4%5%6\nRoom: %7 · Total: %8"), languageCode_);
+		rosterText = rosterText.arg(profile.displayName, profile.username, countryText,
+			playerStatus, drawing, staffRole)
+			.arg(entry.value(QStringLiteral("roomScore")).toInt()).arg(profile.totalScore);
 		auto* rosterItem = new QListWidgetItem(rosterText, rosterList_);
 		rosterItem->setIcon(countryFlagIcon(profile.countryCode));
 		rosterItem->setData(Qt::UserRole, profile.username);
+		rosterItem->setData(Qt::UserRole + 1, spectator);
 		const QString globalRank = profile.leaderboardRank > 0
 			? QStringLiteral("#%1").arg(profile.leaderboardRank)
 			: localizedText(QStringLiteral("Unranked"), languageCode_);
@@ -3054,8 +3073,76 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		}
 		rosterItem->setToolTip(rosterToolTip);
 	}
+	if (showSpectatorsButton_)
+		setLocalizedFormattedText(showSpectatorsButton_, QStringLiteral("Show spectators (%1)"),
+			{QString::number(spectatorCount)}, languageCode_);
+	updateSpectatorsList();
 	refreshModerationPermissions();
 	updateRoundControls();
+}
+
+void MainWindow::updateSpectatorsList()
+{
+	if (!spectatorsList_)
+		return;
+	spectatorsList_->clear();
+	for (int index = 0; index < rosterList_->count(); ++index) {
+		const QListWidgetItem* playerItem = rosterList_->item(index);
+		if (playerItem->data(Qt::UserRole + 1).toBool())
+			spectatorsList_->addItem(new QListWidgetItem(*playerItem));
+	}
+	if (spectatorsList_->count() == 0) {
+		auto* emptyItem = new QListWidgetItem(
+			localizedText(QStringLiteral("No spectators are in this room."), languageCode_));
+		emptyItem->setFlags(Qt::NoItemFlags);
+		spectatorsList_->addItem(emptyItem);
+	}
+}
+
+void MainWindow::showSpectatorsScreen()
+{
+	if (spectatorsDialog_) {
+		spectatorsDialog_->raise();
+		spectatorsDialog_->activateWindow();
+		return;
+	}
+	auto* dialog = new QDialog(this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->setWindowTitle(localizedText(QStringLiteral("Room spectators"), languageCode_));
+	dialog->resize(640, 480);
+	auto* layout = new QVBoxLayout(dialog);
+	spectatorsList_ = new QListWidget(dialog);
+	spectatorsList_->setIconSize(QSize(24, 16));
+	spectatorsList_->setWordWrap(true);
+	spectatorsList_->setTextElideMode(Qt::ElideNone);
+	spectatorsList_->setContextMenuPolicy(Qt::CustomContextMenu);
+	layout->addWidget(spectatorsList_);
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+	connect(spectatorsList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+		const QString username = item->data(Qt::UserRole).toString();
+		if (!username.isEmpty())
+			showPlayerProfile(username);
+	});
+	connect(spectatorsList_, &QListWidget::customContextMenuRequested, this,
+		[this](const QPoint& position) {
+			if (!spectatorsList_)
+				return;
+			QListWidgetItem* item = spectatorsList_->itemAt(position);
+			if (!item)
+				return;
+			const QString username = item->data(Qt::UserRole).toString();
+			if (username.isEmpty())
+				return;
+			QMenu menu(this);
+			QAction* viewProfile = menu.addAction(localizedText(QStringLiteral("View profile"), languageCode_));
+			if (menu.exec(spectatorsList_->mapToGlobal(position)) == viewProfile)
+				showPlayerProfile(username);
+		});
+	spectatorsDialog_ = dialog;
+	updateSpectatorsList();
+	dialog->show();
 }
 
 void MainWindow::refreshModerationPermissions()
@@ -3330,6 +3417,8 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 		mute = addRosterAction(QStringLiteral("Server mute…"));
 	}
 	QAction* selected = menu.exec(rosterList_->mapToGlobal(position));
+	if (!selected)
+		return;
 	if (selected == viewProfile)
 		showPlayerProfile(target);
 	else if (selected == muteText || selected == muteVoice) {

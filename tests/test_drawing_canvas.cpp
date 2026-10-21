@@ -153,6 +153,32 @@ private slots:
 		}
 	}
 
+	void curvePassesThroughItsSampledPointsSmoothly()
+	{
+		gtd::CanvasObject curve;
+		curve.id = QStringLiteral("curve");
+		curve.layerId = QStringLiteral("visible");
+		curve.type = QStringLiteral("curve");
+		curve.color = QStringLiteral("#ff0000");
+		curve.strokeWidth = 12;
+		curve.x = 0.1;
+		curve.y = 0.2;
+		curve.width = 0.8;
+		curve.height = 0.6;
+		curve.points = QJsonArray{
+			QJsonObject{{QStringLiteral("x"), 0.1}, {QStringLiteral("y"), 0.8}},
+			QJsonObject{{QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.2}},
+			QJsonObject{{QStringLiteral("x"), 0.9}, {QStringLiteral("y"), 0.8}}};
+		gtd::DrawingCanvas canvas;
+		canvas.setMinimumSize(0, 0);
+		canvas.resize(100, 100);
+		canvas.setScene(
+			QJsonArray{gtd::CanvasLayer{QStringLiteral("visible"), QStringLiteral("Visible"), 0, true, false}.toJson()},
+			QJsonArray{curve.toJson()});
+
+		QVERIFY(canvas.renderImage().pixelColor(50, 20).red() > 240);
+	}
+
 	void roundedRectangleUsesCurrentShapeSettings()
 	{
 		gtd::DrawingCanvas canvas;

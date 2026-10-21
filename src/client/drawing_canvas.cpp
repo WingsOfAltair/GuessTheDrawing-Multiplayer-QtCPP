@@ -1276,15 +1276,17 @@ void DrawingCanvas::paintObject(QPainter& painter, const CanvasObject& object) c
 		path.moveTo(first.x() * width(), first.y() * height());
 		QPointF last = first;
 		if (object.type == QStringLiteral("curve") && object.points.size() > 2) {
-			for (qsizetype index = 1; index + 1 < object.points.size(); ++index) {
-				const QPointF control = pointFromJson(object.points.at(index));
-				const QPointF next = pointFromJson(object.points.at(index + 1));
-				const QPointF midpoint = (control + next) / 2.0;
-				path.quadTo(control.x() * width(), control.y() * height(),
-							midpoint.x() * width(), midpoint.y() * height());
+			for (qsizetype index = 0; index + 1 < object.points.size(); ++index) {
+				const QPointF previous = pointFromJson(object.points.at(qMax<qsizetype>(0, index - 1)));
+				const QPointF start = pointFromJson(object.points.at(index));
+				const QPointF end = pointFromJson(object.points.at(index + 1));
+				const QPointF next = pointFromJson(object.points.at(
+					qMin<qsizetype>(object.points.size() - 1, index + 2)));
+				const QPointF control1 = start + (end - previous) / 6.0;
+				const QPointF control2 = end - (next - start) / 6.0;
+				path.cubicTo(control1.x() * width(), control1.y() * height(),
+					control2.x() * width(), control2.y() * height(), end.x() * width(), end.y() * height());
 			}
-			last = pointFromJson(object.points.last());
-			path.lineTo(last.x() * width(), last.y() * height());
 		} else {
 			for (qsizetype index = 1; index < object.points.size(); ++index) {
 				last = pointFromJson(object.points.at(index));

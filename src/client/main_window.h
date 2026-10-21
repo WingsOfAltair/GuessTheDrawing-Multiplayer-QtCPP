@@ -8,6 +8,7 @@
 #include <QMainWindow>
 #include <QHash>
 #include <QElapsedTimer>
+#include <QPointer>
 #include <QPoint>
 #include <QSet>
 #include <QTcpSocket>
@@ -71,6 +72,8 @@ private:
 	void appendGameMessage(const QString& message);
 	void updateRoundControls();
 	void updateRoster(const QJsonArray& players, const QJsonObject& room);
+	void updateSpectatorsList();
+	void showSpectatorsScreen();
 	void showRosterContextMenu(const QPoint& position);
 	void showModerationScreen();
 	void requestServerAdminData();
@@ -165,6 +168,9 @@ private:
 	QLabel* timerLabel_ = nullptr;
 	DrawingCanvas* canvas_ = nullptr;
 	QListWidget* rosterList_ = nullptr;
+	QPushButton* showSpectatorsButton_ = nullptr;
+	QPointer<QDialog> spectatorsDialog_;
+	QPointer<QListWidget> spectatorsList_;
 	QDialog* moderationDialog_ = nullptr;
 	QListWidget* bannedPlayersList_ = nullptr;
 	QListWidget* serverMutesList_ = nullptr;
