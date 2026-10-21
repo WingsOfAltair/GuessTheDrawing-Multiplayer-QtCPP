@@ -251,12 +251,323 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	const QString type = message.value(QStringLiteral("type")).toString();
 	const QString username = message.value(QStringLiteral("username")).toString();
 	QString error;
-
-	if (type == QStringLiteral("Logout")) {
-		if (authenticatedClients_.remove(socket) > 0)
-			logPopulationStats();
+	if (type == QStringLiteral("UserSearchRequest") || type == QStringLiteral("UserProfileRequest")) {
+		QString viewer;
+		if (!verifyClientSession(message, &viewer, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		if (type == QStringLiteral("UserSearchRequest")) {
+			const QList<PlayerProfile> profiles = accountStore_->searchProfiles(
+				message.value(QStringLiteral("query")).toString(), MaximumUserSearchResults, &error);
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			QJsonArray users;
+			for (const PlayerProfile& profile : profiles) {
+				const UserDirectoryEntry entry = directoryEntry(viewer, profile, &error);
+				if (!error.isEmpty())
+					break;
+				users.append(entry.toJson());
+			}
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			sendMessage(socket, withRequestId(QStringLiteral("UserSearchResult"), message,
+				{{QStringLiteral("users"), users}}));
+			return;
+		}
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		const auto profile = accountStore_->profile(target, &error);
+		if (!profile) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("User not found") : error);
+			return;
+		}
+		const UserDirectoryEntry entry = directoryEntry(viewer, *profile, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("UserProfileResult"), message,
+			{{QStringLiteral("user"), entry.toJson()}}));
 		return;
 	}
+	if (type == QStringLiteral("SocialListRequest")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QList<QString> friendNames = accountStore_->friends(actor, &error);
+		const QList<FriendRequest> requests = accountStore_->friendRequests(actor, &error);
+		const QList<QString> blocked = accountStore_->blockedUsers(actor, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		QJsonArray friendsJson;
+		QJsonArray requestsJson;
+		QJsonArray blockedJson;
+		for (const QString& friendName : friendNames) {
+			const auto profile = accountStore_->profile(friendName, &error);
+			if (!profile)
+				break;
+			friendsJson.append(directoryEntry(actor, *profile, &error).toJson());
+		}
+		for (const FriendRequest& request : requests)
+			requestsJson.append(request.toJson());
+		for (const QString& blockedName : blocked)
+			blockedJson.append(blockedName);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("SocialListResult"), message,
+			{{QStringLiteral("friends"), friendsJson}, {QStringLiteral("requests"), requestsJson},
+			 {QStringLiteral("blocked"), blockedJson}}));
+		return;
+	}
+	const QStringList socialActions{QStringLiteral("FriendRequestSend"), QStringLiteral("FriendRequestAccept"),
+		QStringLiteral("FriendRequestDeny"), QStringLiteral("FriendRequestClear"),
+		QStringLiteral("FriendRemove"), QStringLiteral("BlockSet")};
+	if (socialActions.contains(type)) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		const qint64 requestId = message.value(QStringLiteral("friendRequestId")).toVariant().toLongLong();
+		QString relatedUser;
+		if (requestId > 0 && (type == QStringLiteral("FriendRequestAccept")
+			|| type == QStringLiteral("FriendRequestDeny") || type == QStringLiteral("FriendRequestClear"))) {
+			for (const FriendRequest& request : accountStore_->friendRequests(actor, &error)) {
+				if (request.id == requestId && (request.senderUsername == actor || request.recipientUsername == actor)) {
+					relatedUser = request.senderUsername == actor
+						? request.recipientUsername : request.senderUsername;
+					break;
+				}
+			}
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+		}
+		bool succeeded = false;
+		if (type == QStringLiteral("FriendRequestSend")) {
+			succeeded = accountStore_->sendFriendRequest(actor, target, nullptr, &error);
+		} else if (type == QStringLiteral("FriendRequestAccept")) {
+			succeeded = accountStore_->acceptFriendRequest(actor, requestId, &error);
+		} else if (type == QStringLiteral("FriendRequestDeny")) {
+			succeeded = accountStore_->denyFriendRequest(actor, requestId, &error);
+		} else if (type == QStringLiteral("FriendRequestClear")) {
+			succeeded = accountStore_->clearDeniedFriendRequest(actor, requestId, &error);
+		} else if (type == QStringLiteral("FriendRemove")) {
+			succeeded = accountStore_->removeFriend(actor, target, &error);
+		} else {
+			succeeded = accountStore_->setBlocked(actor, target, message.value(QStringLiteral("blocked")).toBool(), &error);
+		}
+		if (!succeeded) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("Social action could not be completed") : error);
+			return;
+		}
+		QJsonObject fields{{QStringLiteral("ok"), true}, {QStringLiteral("action"), type}};
+		if (type == QStringLiteral("FriendRequestSend"))
+			fields.insert(QStringLiteral("targetUsername"), target);
+		if (requestId > 0)
+			fields.insert(QStringLiteral("friendRequestId"), static_cast<double>(requestId));
+		sendMessage(socket, withRequestId(QStringLiteral("SocialActionResult"), message, fields));
+		QSet<QString> notifyUsers{actor};
+		if (!target.isEmpty())
+			notifyUsers.insert(target);
+		if (!relatedUser.isEmpty())
+			notifyUsers.insert(relatedUser);
+		for (const QString& notifyUser : std::as_const(notifyUsers)) {
+			for (auto client = authenticatedClients_.cbegin(); client != authenticatedClients_.cend(); ++client) {
+				if (client.value() == notifyUser && client.key() != socket)
+					sendMessage(client.key(), makeMessage(QStringLiteral("SocialChanged"),
+						{{QStringLiteral("username"), actor}}));
+			}
+		}
+		return;
+	}
+	if (type == QStringLiteral("InboxListRequest")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QList<QString> contacts = accountStore_->inboxContacts(actor, &error);
+		QJsonArray conversations;
+		for (const QString& contact : contacts) {
+			const auto profile = accountStore_->profile(contact, &error);
+			const int unread = accountStore_->unreadDirectMessageCount(actor, contact, &error);
+			if (!profile || !error.isEmpty())
+				break;
+			conversations.append(QJsonObject{{QStringLiteral("username"), contact},
+				{QStringLiteral("displayName"), profile->displayName},
+				{QStringLiteral("countryCode"), profile->countryCode},
+				{QStringLiteral("unreadCount"), unread},
+				{QStringLiteral("presence"), presenceData(contact).value(QStringLiteral("status"))}});
+		}
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("InboxListResult"), message,
+			{{QStringLiteral("conversations"), conversations}}));
+		return;
+	}
+	if (type == QStringLiteral("InboxConversationDelete") || type == QStringLiteral("InboxMessageDelete")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const bool deleted = type == QStringLiteral("InboxConversationDelete")
+			? accountStore_->deleteInboxConversation(actor,
+				message.value(QStringLiteral("targetUsername")).toString(), &error)
+			: accountStore_->deleteDirectMessage(actor,
+				static_cast<qint64>(message.value(QStringLiteral("messageId")).toDouble()), &error);
+		if (!deleted) {
+			sendError(socket, message, error);
+			return;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("InboxDeleteResult"), message,
+			{{QStringLiteral("action"), type},
+			 {QStringLiteral("targetUsername"), message.value(QStringLiteral("targetUsername"))},
+			 {QStringLiteral("messageId"), message.value(QStringLiteral("messageId"))}}));
+		return;
+	}
+	if (type == QStringLiteral("InboxMarkRead")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString otherUser = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		if (!accountStore_->markDirectMessagesRead(actor, otherUser, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const int unread = accountStore_->unreadDirectMessageCount(actor, otherUser, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("UnreadCountChanged"), message,
+			{{QStringLiteral("username"), otherUser}, {QStringLiteral("unreadCount"), unread}}));
+		return;
+	}
+	if (type == QStringLiteral("InboxRequest") || type == QStringLiteral("DirectMessageSend")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString otherUser = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		if (otherUser.isEmpty() || otherUser == actor || !accountStore_->profile(otherUser, &error)) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("User not found") : error);
+			return;
+		}
+		if (type == QStringLiteral("InboxRequest")) {
+			const qint64 beforeId = qMax<qint64>(0, message.value(QStringLiteral("beforeId")).toVariant().toLongLong());
+			const QList<DirectMessage> history = accountStore_->directMessageHistory(actor, otherUser, beforeId,
+				MaximumInboxHistory, &error);
+			QJsonArray messages;
+			for (const DirectMessage& item : history)
+				messages.append(item.toJson());
+			if (!error.isEmpty()) {
+				sendError(socket, message, error);
+				return;
+			}
+			if (!accountStore_->markDirectMessagesRead(actor, otherUser, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			sendMessage(socket, withRequestId(QStringLiteral("InboxResult"), message,
+				{{QStringLiteral("targetUsername"), otherUser}, {QStringLiteral("messages"), messages}}));
+			return;
+		}
+		qint64 messageId = 0;
+		if (!accountStore_->sendDirectMessage(actor, otherUser,
+			message.value(QStringLiteral("body")).toString(), &messageId, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QList<DirectMessage> saved = accountStore_->directMessageHistory(actor, otherUser, 0, 1, &error);
+		if (!error.isEmpty() || saved.isEmpty()) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("Message could not be loaded") : error);
+			return;
+		}
+		const QJsonObject messageJson = saved.constLast().toJson();
+		sendMessage(socket, withRequestId(QStringLiteral("DirectMessageResult"), message,
+			{{QStringLiteral("message"), messageJson}}));
+		sendMessage(socket, makeMessage(QStringLiteral("UnreadCountChanged"),
+			{{QStringLiteral("username"), otherUser},
+			 {QStringLiteral("unreadCount"), accountStore_->unreadDirectMessageCount(actor, otherUser, &error)}}));
+		for (auto client = authenticatedClients_.cbegin(); client != authenticatedClients_.cend(); ++client) {
+			if (client.value() == otherUser) {
+				sendMessage(client.key(), makeMessage(QStringLiteral("DirectMessageReceived"),
+					{{QStringLiteral("message"), messageJson}}));
+				sendMessage(client.key(), makeMessage(QStringLiteral("UnreadCountChanged"),
+					{{QStringLiteral("username"), actor},
+					 {QStringLiteral("unreadCount"), accountStore_->unreadDirectMessageCount(otherUser, actor, &error)}}));
+			}
+		}
+		return;
+	}
+	if (type == QStringLiteral("RoomInviteSend")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		const auto targetProfile = accountStore_->profile(target, &error);
+		if (!targetProfile) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("User not found") : error);
+			return;
+		}
+		if (target == actor || !accountStore_->areFriends(actor, target, &error)) {
+			sendError(socket, message, error.isEmpty() ? QStringLiteral("Only friends can invite each other to rooms") : error);
+			return;
+		}
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QJsonObject actorPresence = presenceData(actor);
+		const QJsonObject targetPresence = presenceData(target);
+		if (!actorPresence.value(QStringLiteral("hasRoom")).toBool()
+			|| targetPresence.value(QStringLiteral("status")).toString() == QStringLiteral("offline")) {
+			sendError(socket, message, QStringLiteral("You must be in a room and your friend must be online"));
+			return;
+		}
+		QJsonObject fields{{QStringLiteral("fromUsername"), actor},
+			{QStringLiteral("room"), actorPresence.value(QStringLiteral("room"))}};
+	const QJsonObject room = actorPresence.value(QStringLiteral("room")).toObject();
+		sendMessage(socket, withRequestId(QStringLiteral("RoomInviteResult"), message,
+			{{QStringLiteral("ok"), true}, {QStringLiteral("targetUsername"), target},
+			 {QStringLiteral("room"), room}}));
+		for (auto client = authenticatedClients_.cbegin(); client != authenticatedClients_.cend(); ++client) {
+			if (client.value() == target)
+				sendMessage(client.key(), makeMessage(QStringLiteral("RoomInviteReceived"), fields));
+		}
+		return;
+	}
+
+	if (type == QStringLiteral("Logout")) {
+		const QString loggedOut = authenticatedClients_.take(socket);
+		if (!loggedOut.isEmpty()) {
+			logPopulationStats();
+			broadcastPresence(loggedOut);
+		}
+		return;
+	}
+
 	if (type == QStringLiteral("ServerAdminDataRequest")
 		|| type == QStringLiteral("StaffRoleRequest")
 		|| type == QStringLiteral("ModerationRequest")
@@ -611,6 +922,92 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	sendError(socket, message, QStringLiteral("Unknown master request"));
 }
 
+UserDirectoryEntry MasterServer::directoryEntry(const QString& viewer, const PlayerProfile& profile,
+	QString* error)
+{
+	UserDirectoryEntry entry;
+	entry.profile = profile;
+	const QString target = profile.username.toLower();
+	const QJsonObject presence = presenceData(target);
+	entry.presenceStatus = presence.value(QStringLiteral("status")).toString(QStringLiteral("offline"));
+	entry.hasRoom = presence.value(QStringLiteral("hasRoom")).toBool();
+	entry.room = RoomInfo::fromJson(presence.value(QStringLiteral("room")).toObject());
+	if (viewer != target) {
+		if (accountStore_->areFriends(viewer, target, error)) {
+			entry.relationship = QStringLiteral("friend");
+		} else if (error && !error->isEmpty()) {
+			return entry;
+		} else if (accountStore_->isBlocked(viewer, target, error)) {
+			entry.relationship = QStringLiteral("blocked");
+		} else if (error && !error->isEmpty()) {
+			return entry;
+		} else {
+			for (const FriendRequest& request : accountStore_->friendRequests(viewer, error)) {
+				if (!error || error->isEmpty()) {
+					if (request.senderUsername == viewer && request.recipientUsername == target) {
+						entry.relationship = request.status == QStringLiteral("denied")
+							? QStringLiteral("denied") : QStringLiteral("outgoing");
+						entry.relationshipId = request.id;
+					} else if (request.senderUsername == target && request.recipientUsername == viewer) {
+						entry.relationship = QStringLiteral("incoming");
+						entry.relationshipId = request.id;
+					}
+				}
+			}
+		}
+	}
+	const QList<ServerSanction> bans = accountStore_->activeBansForUser(target, error);
+	for (const ServerSanction& ban : bans)
+		entry.activeBans.append(QJsonObject{{QStringLiteral("serverId"), ban.serverId},
+			{QStringLiteral("expiresAt"), static_cast<double>(ban.expiresAt)},
+			{QStringLiteral("permanent"), ban.expiresAt == 0}});
+	return entry;
+}
+
+QJsonObject MasterServer::presenceData(const QString& username) const
+{
+	const QString target = username.toLower();
+	const auto roomPresence = roomPresenceByUsername_.constFind(target);
+	if (roomPresence != roomPresenceByUsername_.cend()) {
+		QJsonObject result = roomPresence.value();
+		result.insert(QStringLiteral("username"), target);
+		result.insert(QStringLiteral("status"), result.value(QStringLiteral("spectator")).toBool()
+			? QStringLiteral("spectating") : QStringLiteral("in-game"));
+		result.insert(QStringLiteral("hasRoom"), true);
+		return result;
+	}
+	for (const QString& connected : authenticatedClients_) {
+		if (connected == target)
+			return {{QStringLiteral("username"), target}, {QStringLiteral("status"), QStringLiteral("online")},
+				{QStringLiteral("hasRoom"), false}};
+	}
+	return {{QStringLiteral("username"), target}, {QStringLiteral("status"), QStringLiteral("offline")},
+		{QStringLiteral("hasRoom"), false}};
+}
+
+void MasterServer::broadcastPresence(const QString& username)
+{
+	const QJsonObject presence = presenceData(username);
+	const QJsonObject message = makeMessage(QStringLiteral("PresenceChanged"), presence);
+	for (auto client = authenticatedClients_.cbegin(); client != authenticatedClients_.cend(); ++client)
+		sendMessage(client.key(), message);
+}
+
+void MasterServer::clearPresenceForServer(const QString& serverId)
+{
+	QStringList changedUsers;
+	for (auto presence = roomPresenceByUsername_.begin(); presence != roomPresenceByUsername_.end();) {
+		if (presence->value(QStringLiteral("serverId")).toString() == serverId) {
+			changedUsers.append(presence.key());
+			presence = roomPresenceByUsername_.erase(presence);
+		} else {
+			++presence;
+		}
+	}
+	for (const QString& username : changedUsers)
+		broadcastPresence(username);
+}
+
 bool MasterServer::verifyClientSession(const QJsonObject& request, QString* username, QString* error) const
 {
 	if (!verifySessionToken(request.value(QStringLiteral("authToken")).toString(), sessionSecret_, username)) {
@@ -644,6 +1041,7 @@ void MasterServer::sendAuthResult(QTcpSocket* socket, const QJsonObject& request
 	}
 	authenticatedClients_.insert(socket, profile->username);
 	logPopulationStats();
+	broadcastPresence(profile->username);
 	const qint64 expiresAt = QDateTime::currentSecsSinceEpoch() + SessionLifetimeSeconds;
 	const QString token = createSessionToken(profile->username, profile->displayName, sessionSecret_, expiresAt);
 	sendMessage(socket, withRequestId(QStringLiteral("AuthResult"), request,
@@ -919,6 +1317,50 @@ void MasterServer::updateRegistration(QTcpSocket* socket, const QJsonObject& mes
 		registration.rooms = rooms;
 		logPopulationStats();
 	}
+	const QJsonValue presenceValue = message.value(QStringLiteral("presence"));
+	if (!presenceValue.isArray())
+		return;
+	const QJsonArray presenceEntries = presenceValue.toArray();
+	if (presenceEntries.size() > MaximumPresenceEntriesPerServer)
+		return;
+	const QList<RoomInfo> serverRooms = registrations_.value(serverId).rooms;
+	QHash<QString, QJsonObject> updatedPresence;
+	for (const QJsonValue& value : presenceEntries) {
+		if (!value.isObject())
+			continue;
+		const QJsonObject item = value.toObject();
+		const QString username = item.value(QStringLiteral("username")).toString().trimmed().toLower();
+		static const QRegularExpression usernamePattern(QStringLiteral("^[a-zA-Z0-9_]{3,24}$"));
+		const bool spectator = item.value(QStringLiteral("spectator")).toBool();
+		const QString roomId = item.value(QStringLiteral("roomId")).toString();
+		if (!usernamePattern.match(username).hasMatch() || updatedPresence.contains(username))
+			continue;
+		const auto registeredRoom = std::find_if(serverRooms.cbegin(), serverRooms.cend(), [&roomId](const RoomInfo& room) {
+				return room.roomId == roomId;
+			});
+		if (registeredRoom == serverRooms.cend())
+			continue;
+		QJsonObject entry{{QStringLiteral("username"), username}, {QStringLiteral("serverId"), serverId},
+			{QStringLiteral("spectator"), spectator}, {QStringLiteral("queued"), item.value(QStringLiteral("queued")).toBool()},
+			{QStringLiteral("room"), registeredRoom->toJson()}};
+		updatedPresence.insert(username, entry);
+	}
+	QStringList changedUsers;
+	for (auto current = roomPresenceByUsername_.begin(); current != roomPresenceByUsername_.end();) {
+		if (current->value(QStringLiteral("serverId")).toString() != serverId) {
+			++current;
+			continue;
+		}
+		changedUsers.append(current.key());
+		current = roomPresenceByUsername_.erase(current);
+	}
+	for (auto updated = updatedPresence.cbegin(); updated != updatedPresence.cend(); ++updated) {
+		roomPresenceByUsername_.insert(updated.key(), updated.value());
+		if (!changedUsers.contains(updated.key()))
+			changedUsers.append(updated.key());
+	}
+	for (const QString& username : changedUsers)
+		broadcastPresence(username);
 }
 
 void MasterServer::logPopulationStats()
@@ -951,20 +1393,25 @@ void MasterServer::logPopulationStats()
 void MasterServer::removeSocket(QTcpSocket* socket, bool logDisconnect)
 {
 	pendingData_.remove(socket);
-	const bool clientRemoved = authenticatedClients_.remove(socket) > 0;
+	const QString clientUsername = authenticatedClients_.take(socket);
+	const bool clientRemoved = !clientUsername.isEmpty();
 	lastRoundResultSequence_.remove(socket);
 	lastScoreUpdateSequence_.remove(socket);
 	const QString serverId = serverIdsBySocket_.take(socket);
 	if (serverId.isEmpty()) {
-		if (clientRemoved)
+		if (clientRemoved) {
 			logPopulationStats();
+			broadcastPresence(clientUsername);
+		}
 		return;
 	}
 	if (logDisconnect)
 		qInfo().noquote() << QStringLiteral("Game server disconnected: %1").arg(serverId);
 	const auto registration = registrations_.find(serverId);
-	if (registration != registrations_.end() && registration->socket == socket)
+	if (registration != registrations_.end() && registration->socket == socket) {
 		registrations_.erase(registration);
+		clearPresenceForServer(serverId);
+	}
 	logPopulationStats();
 }
 
@@ -975,11 +1422,12 @@ void MasterServer::expireServers()
 	for (auto registration = registrations_.begin(); registration != registrations_.end();) {
 		if (now - registration->lastHeartbeat > ServerTimeoutSeconds) {
 			expiredAny = true;
-			qWarning().noquote() << QStringLiteral("Game server heartbeat timed out: %1")
-				.arg(registration.key());
+			const QString serverId = registration.key();
+			qWarning().noquote() << QStringLiteral("Game server heartbeat timed out: %1").arg(serverId);
 			QTcpSocket* socket = registration->socket;
 			serverIdsBySocket_.remove(socket);
 			registration = registrations_.erase(registration);
+			clearPresenceForServer(serverId);
 			if (socket && socket->state() != QAbstractSocket::UnconnectedState)
 				socket->disconnectFromHost();
 		} else {

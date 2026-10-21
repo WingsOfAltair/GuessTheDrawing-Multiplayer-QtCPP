@@ -44,6 +44,41 @@ struct PlayerProfile {
 	static PlayerProfile fromJson(const QJsonObject& object);
 };
 
+struct UserDirectoryEntry {
+	PlayerProfile profile;
+	QString presenceStatus = QStringLiteral("offline");
+	QString relationship = QStringLiteral("none");
+	qint64 relationshipId = 0;
+	RoomInfo room;
+	bool hasRoom = false;
+	QJsonArray activeBans;
+
+	QJsonObject toJson() const;
+	static UserDirectoryEntry fromJson(const QJsonObject& object);
+};
+
+struct FriendRequest {
+	qint64 id = 0;
+	QString senderUsername;
+	QString recipientUsername;
+	QString status;
+	qint64 createdAt = 0;
+
+	QJsonObject toJson() const;
+	static FriendRequest fromJson(const QJsonObject& object);
+};
+
+struct DirectMessage {
+	qint64 id = 0;
+	QString senderUsername;
+	QString recipientUsername;
+	QString body;
+	qint64 createdAt = 0;
+
+	QJsonObject toJson() const;
+	static DirectMessage fromJson(const QJsonObject& object);
+};
+
 struct ServerRoleAssignment {
 	QString serverId;
 	QString username;

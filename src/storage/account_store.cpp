@@ -1,4 +1,5 @@
 #include "storage/account_store.h"
+#include "shared/protocol.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -9,8 +10,10 @@
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSet>
 #include <QUuid>
 
+#include <algorithm>
 #include <iterator>
 
 namespace gtd {
@@ -215,7 +218,47 @@ bool AccountStore::initialize(QString* error)
 			"text_chat INTEGER NOT NULL CHECK(text_chat IN (0, 1)), "
 			"voice_chat INTEGER NOT NULL CHECK(voice_chat IN (0, 1)), updated_at INTEGER NOT NULL, "
 			"CHECK(text_chat = 1 OR voice_chat = 1), "
-			"CHECK(muter_username <> target_username), PRIMARY KEY(server_id, muter_username, target_username))")};
+			"CHECK(muter_username <> target_username), PRIMARY KEY(server_id, muter_username, target_username))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS friendships ("
+			"user_a TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"user_b TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"created_at INTEGER NOT NULL, CHECK(user_a < user_b), PRIMARY KEY(user_a, user_b))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS friend_requests ("
+			"id INTEGER PRIMARY KEY AUTOINCREMENT, sender_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"recipient_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"status TEXT NOT NULL CHECK(status IN ('pending', 'denied')), created_at INTEGER NOT NULL, "
+			"CHECK(sender_username <> recipient_username), UNIQUE(sender_username, recipient_username))"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS friend_requests_by_recipient "
+			"ON friend_requests(recipient_username, status, created_at)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS user_blocks ("
+			"blocker_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"target_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"created_at INTEGER NOT NULL, CHECK(blocker_username <> target_username), "
+			"PRIMARY KEY(blocker_username, target_username))"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS user_blocks_by_target ON user_blocks(target_username, blocker_username)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS direct_messages ("
+			"id INTEGER PRIMARY KEY AUTOINCREMENT, sender_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"recipient_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000), created_at INTEGER NOT NULL, "
+			"CHECK(sender_username <> recipient_username))"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS direct_messages_between_users "
+			"ON direct_messages(sender_username, recipient_username, id)"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS direct_messages_inbox "
+			"ON direct_messages(recipient_username, id)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS direct_message_reads ("
+			"username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"other_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"last_read_id INTEGER NOT NULL DEFAULT 0 CHECK(last_read_id >= 0), "
+			"CHECK(username <> other_username), PRIMARY KEY(username, other_username))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS direct_message_hides ("
+			"username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"message_id INTEGER NOT NULL REFERENCES direct_messages(id) ON DELETE CASCADE, "
+			"PRIMARY KEY(username, message_id))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS direct_message_conversation_hides ("
+			"username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"other_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"hidden_through_id INTEGER NOT NULL DEFAULT 0 CHECK(hidden_through_id >= 0), "
+			"CHECK(username <> other_username), PRIMARY KEY(username, other_username))")};
 	for (const QString& statement : moderationTables) {
 		if (!query.exec(statement)) {
 			setError(error, query.lastError().text());
@@ -299,6 +342,670 @@ std::optional<PlayerProfile> AccountStore::authenticate(const QString& username,
 std::optional<PlayerProfile> AccountStore::profile(const QString& username, QString* error)
 {
 	return loadProfile(normalizedUsername(username), error);
+}
+
+QList<PlayerProfile> AccountStore::searchProfiles(const QString& text, int limit, QString* error)
+{
+	const QString search = text.trimmed();
+	if (search.isEmpty() || search.size() > 64 || !isValidSingleLineText(search, 64)) {
+		setError(error, QStringLiteral("Enter a valid user search"));
+		return {};
+	}
+	QString escaped = search;
+	escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+	escaped.replace(QLatin1Char('%'), QStringLiteral("\\%"));
+	escaped.replace(QLatin1Char('_'), QStringLiteral("\\_"));
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT username FROM accounts WHERE username LIKE :pattern ESCAPE '\\' "
+		"OR display_name LIKE :pattern ESCAPE '\\' "
+		"ORDER BY CASE WHEN username = :exact THEN 0 ELSE 1 END, username LIMIT :limit"));
+	query.bindValue(QStringLiteral(":pattern"), QStringLiteral("%") + escaped + QStringLiteral("%"));
+	query.bindValue(QStringLiteral(":exact"), normalizedUsername(search));
+	query.bindValue(QStringLiteral(":limit"), qBound(1, limit, MaximumUserSearchResults));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<PlayerProfile> result;
+	while (query.next()) {
+		auto found = loadProfile(query.value(0).toString(), error);
+		if (!found)
+			return {};
+		result.append(*found);
+	}
+	return result;
+}
+
+QList<ServerSanction> AccountStore::activeBansForUser(const QString& username, QString* error)
+{
+	const QString target = normalizedUsername(username);
+	if (!validModerationIdentity(target)) {
+		setError(error, QStringLiteral("Invalid profile username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT id, server_id, target_username, kind, text_chat, voice_chat, reason, issued_by, created_at, "
+		"COALESCE(expires_at, 0) FROM server_sanctions WHERE target_username = :target AND kind = 'ban' "
+		"AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :now) ORDER BY server_id"));
+	query.bindValue(QStringLiteral(":target"), target);
+	query.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<ServerSanction> result;
+	while (query.next()) {
+		ServerSanction sanction;
+		sanction.id = query.value(0).toLongLong();
+		sanction.serverId = query.value(1).toString();
+		sanction.targetUsername = query.value(2).toString();
+		sanction.kind = query.value(3).toString();
+		sanction.textChat = query.value(4).toBool();
+		sanction.voiceChat = query.value(5).toBool();
+		sanction.reason = query.value(6).toString();
+		sanction.issuedBy = query.value(7).toString();
+		sanction.createdAt = query.value(8).toLongLong();
+		sanction.expiresAt = query.value(9).toLongLong();
+		result.append(sanction);
+	}
+	return result;
+}
+
+QList<QString> AccountStore::friends(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT CASE WHEN user_a = :user THEN user_b ELSE user_a END FROM friendships "
+		"WHERE user_a = :user OR user_b = :user ORDER BY created_at DESC LIMIT :limit"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":limit"), MaximumSocialListItems);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<QString> result;
+	while (query.next())
+		result.append(query.value(0).toString());
+	return result;
+}
+
+QList<FriendRequest> AccountStore::friendRequests(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT id, sender_username, recipient_username, status, created_at FROM friend_requests "
+		"WHERE (recipient_username = :user AND status = 'pending') "
+		"OR (sender_username = :user AND status IN ('pending', 'denied')) "
+		"ORDER BY created_at DESC LIMIT :limit"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":limit"), MaximumSocialListItems);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<FriendRequest> result;
+	while (query.next()) {
+		FriendRequest request;
+		request.id = query.value(0).toLongLong();
+		request.senderUsername = query.value(1).toString();
+		request.recipientUsername = query.value(2).toString();
+		request.status = query.value(3).toString();
+		request.createdAt = query.value(4).toLongLong();
+		result.append(request);
+	}
+	return result;
+}
+
+QList<QString> AccountStore::blockedUsers(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT target_username FROM user_blocks WHERE blocker_username = :user "
+		"ORDER BY created_at DESC LIMIT :limit"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":limit"), MaximumSocialListItems);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<QString> result;
+	while (query.next())
+		result.append(query.value(0).toString());
+	return result;
+}
+
+bool AccountStore::areFriends(const QString& firstUsername, const QString& secondUsername, QString* error)
+{
+	const QString first = normalizedUsername(firstUsername);
+	const QString second = normalizedUsername(secondUsername);
+	if (!validModerationIdentity(first) || !validModerationIdentity(second) || first == second) {
+		setError(error, QStringLiteral("Invalid friendship query"));
+		return false;
+	}
+	const QString userA = first < second ? first : second;
+	const QString userB = first < second ? second : first;
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("SELECT 1 FROM friendships WHERE user_a = :first AND user_b = :second"));
+	query.bindValue(QStringLiteral(":first"), userA);
+	query.bindValue(QStringLiteral(":second"), userB);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return query.next();
+}
+
+bool AccountStore::isBlocked(const QString& firstUsername, const QString& secondUsername, QString* error)
+{
+	const QString first = normalizedUsername(firstUsername);
+	const QString second = normalizedUsername(secondUsername);
+	if (!validModerationIdentity(first) || !validModerationIdentity(second) || first == second) {
+		setError(error, QStringLiteral("Invalid block query"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT 1 FROM user_blocks WHERE (blocker_username = :first AND target_username = :second) "
+		"OR (blocker_username = :second AND target_username = :first)"));
+	query.bindValue(QStringLiteral(":first"), first);
+	query.bindValue(QStringLiteral(":second"), second);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return query.next();
+}
+
+bool AccountStore::sendFriendRequest(const QString& senderUsername, const QString& recipientUsername,
+	qint64* requestId, QString* error)
+{
+	const QString sender = normalizedUsername(senderUsername);
+	const QString recipient = normalizedUsername(recipientUsername);
+	if (!validModerationIdentity(sender) || !validModerationIdentity(recipient) || sender == recipient) {
+		setError(error, QStringLiteral("Invalid friend request"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	const auto rollbackWith = [this, error](const QString& message) {
+		database_.rollback();
+		setError(error, message);
+		return false;
+	};
+	if (!profile(recipient, error)) {
+		database_.rollback();
+		return false;
+	}
+	if (isBlocked(sender, recipient, error))
+		return rollbackWith(QStringLiteral("Friend requests are unavailable for this user"));
+	if (error && !error->isEmpty()) {
+		database_.rollback();
+		return false;
+	}
+	if (areFriends(sender, recipient, error))
+		return rollbackWith(QStringLiteral("You are already friends"));
+	if (error && !error->isEmpty()) {
+		database_.rollback();
+		return false;
+	}
+	QSqlQuery existing(database_);
+	existing.prepare(QStringLiteral(
+		"SELECT status FROM friend_requests WHERE sender_username = :sender AND recipient_username = :recipient"));
+	existing.bindValue(QStringLiteral(":sender"), sender);
+	existing.bindValue(QStringLiteral(":recipient"), recipient);
+	if (!existing.exec())
+		return rollbackWith(existing.lastError().text());
+	if (existing.next())
+		return rollbackWith(existing.value(0).toString() == QStringLiteral("denied")
+			? QStringLiteral("Clear the denied request before sending another")
+			: QStringLiteral("Friend request is already pending"));
+	QSqlQuery reverse(database_);
+	reverse.prepare(QStringLiteral(
+		"SELECT 1 FROM friend_requests WHERE sender_username = :recipient "
+		"AND recipient_username = :sender AND status = 'pending'"));
+	reverse.bindValue(QStringLiteral(":sender"), sender);
+	reverse.bindValue(QStringLiteral(":recipient"), recipient);
+	if (!reverse.exec())
+		return rollbackWith(reverse.lastError().text());
+	if (reverse.next())
+		return rollbackWith(QStringLiteral("This user has already sent you a friend request"));
+	QSqlQuery insert(database_);
+	insert.prepare(QStringLiteral(
+		"INSERT INTO friend_requests(sender_username, recipient_username, status, created_at) "
+		"VALUES(:sender, :recipient, 'pending', :now)"));
+	insert.bindValue(QStringLiteral(":sender"), sender);
+	insert.bindValue(QStringLiteral(":recipient"), recipient);
+	insert.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	if (!insert.exec() || !database_.commit())
+		return rollbackWith(insert.lastError().text().isEmpty() ? database_.lastError().text() : insert.lastError().text());
+	if (requestId)
+		*requestId = insert.lastInsertId().toLongLong();
+	return true;
+}
+
+bool AccountStore::acceptFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error)
+{
+	const QString recipient = normalizedUsername(recipientUsername);
+	if (!validModerationIdentity(recipient) || requestId <= 0) {
+		setError(error, QStringLiteral("Invalid friend request"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	QSqlQuery request(database_);
+	request.prepare(QStringLiteral(
+		"SELECT sender_username FROM friend_requests WHERE id = :id AND recipient_username = :recipient "
+		"AND status = 'pending'"));
+	request.bindValue(QStringLiteral(":id"), requestId);
+	request.bindValue(QStringLiteral(":recipient"), recipient);
+	if (!request.exec() || !request.next()) {
+		database_.rollback();
+		setError(error, request.lastError().text().isEmpty()
+			? QStringLiteral("Friend request is no longer available") : request.lastError().text());
+		return false;
+	}
+	const QString sender = request.value(0).toString();
+	if (isBlocked(sender, recipient, error)) {
+		database_.rollback();
+		setError(error, QStringLiteral("Friend requests are unavailable for this user"));
+		return false;
+	}
+	if (error && !error->isEmpty()) {
+		database_.rollback();
+		return false;
+	}
+	const QString userA = sender < recipient ? sender : recipient;
+	const QString userB = sender < recipient ? recipient : sender;
+	QSqlQuery insert(database_);
+	insert.prepare(QStringLiteral("INSERT OR IGNORE INTO friendships(user_a, user_b, created_at) VALUES(:a, :b, :now)"));
+	insert.bindValue(QStringLiteral(":a"), userA);
+	insert.bindValue(QStringLiteral(":b"), userB);
+	insert.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	QSqlQuery remove(database_);
+	remove.prepare(QStringLiteral("DELETE FROM friend_requests WHERE id = :id"));
+	remove.bindValue(QStringLiteral(":id"), requestId);
+	if (!insert.exec() || !remove.exec() || !database_.commit()) {
+		const QString message = !insert.lastError().text().isEmpty() ? insert.lastError().text()
+			: (!remove.lastError().text().isEmpty() ? remove.lastError().text() : database_.lastError().text());
+		database_.rollback();
+		setError(error, message);
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::denyFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error)
+{
+	const QString recipient = normalizedUsername(recipientUsername);
+	if (!validModerationIdentity(recipient) || requestId <= 0) {
+		setError(error, QStringLiteral("Invalid friend request"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"UPDATE friend_requests SET status = 'denied' WHERE id = :id AND recipient_username = :recipient "
+		"AND status = 'pending'"));
+	query.bindValue(QStringLiteral(":id"), requestId);
+	query.bindValue(QStringLiteral(":recipient"), recipient);
+	if (!query.exec() || query.numRowsAffected() != 1) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Friend request is no longer available") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::clearDeniedFriendRequest(const QString& senderUsername, qint64 requestId, QString* error)
+{
+	const QString sender = normalizedUsername(senderUsername);
+	if (!validModerationIdentity(sender) || requestId <= 0) {
+		setError(error, QStringLiteral("Invalid friend request"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"DELETE FROM friend_requests WHERE id = :id AND sender_username = :sender AND status = 'denied'"));
+	query.bindValue(QStringLiteral(":id"), requestId);
+	query.bindValue(QStringLiteral(":sender"), sender);
+	if (!query.exec() || query.numRowsAffected() != 1) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Denied friend request is no longer available") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::removeFriend(const QString& username, const QString& friendUsername, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString other = normalizedUsername(friendUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(other) || user == other) {
+		setError(error, QStringLiteral("Invalid friendship"));
+		return false;
+	}
+	const QString userA = user < other ? user : other;
+	const QString userB = user < other ? other : user;
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("DELETE FROM friendships WHERE user_a = :a AND user_b = :b"));
+	query.bindValue(QStringLiteral(":a"), userA);
+	query.bindValue(QStringLiteral(":b"), userB);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::setBlocked(const QString& blockerUsername, const QString& targetUsername, bool blocked,
+	QString* error)
+{
+	const QString blocker = normalizedUsername(blockerUsername);
+	const QString target = normalizedUsername(targetUsername);
+	if (!validModerationIdentity(blocker) || !validModerationIdentity(target) || blocker == target) {
+		setError(error, QStringLiteral("Invalid block request"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	QSqlQuery change(database_);
+	change.prepare(blocked
+		? QStringLiteral("INSERT OR IGNORE INTO user_blocks(blocker_username, target_username, created_at) "
+			"VALUES(:blocker, :target, :now)")
+		: QStringLiteral("DELETE FROM user_blocks WHERE blocker_username = :blocker AND target_username = :target"));
+	change.bindValue(QStringLiteral(":blocker"), blocker);
+	change.bindValue(QStringLiteral(":target"), target);
+	if (blocked)
+		change.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	if (!change.exec()) {
+		database_.rollback();
+		setError(error, change.lastError().text());
+		return false;
+	}
+	if (blocked) {
+		const QString userA = blocker < target ? blocker : target;
+		const QString userB = blocker < target ? target : blocker;
+		QSqlQuery friendship(database_);
+		friendship.prepare(QStringLiteral("DELETE FROM friendships WHERE user_a = :a AND user_b = :b"));
+		friendship.bindValue(QStringLiteral(":a"), userA);
+		friendship.bindValue(QStringLiteral(":b"), userB);
+		QSqlQuery requests(database_);
+		requests.prepare(QStringLiteral(
+			"DELETE FROM friend_requests WHERE status = 'pending' AND "
+			"((sender_username = :blocker AND recipient_username = :target) "
+			"OR (sender_username = :target AND recipient_username = :blocker))"));
+		requests.bindValue(QStringLiteral(":blocker"), blocker);
+		requests.bindValue(QStringLiteral(":target"), target);
+		if (!friendship.exec() || !requests.exec()) {
+			const QString message = !friendship.lastError().text().isEmpty()
+				? friendship.lastError().text() : requests.lastError().text();
+			database_.rollback();
+			setError(error, message);
+			return false;
+		}
+	}
+	if (!database_.commit()) {
+		setError(error, database_.lastError().text());
+		database_.rollback();
+		return false;
+	}
+	return true;
+}
+
+QList<QString> AccountStore::inboxContacts(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT CASE WHEN m.sender_username = :user THEN m.recipient_username ELSE m.sender_username END AS other_user, "
+		"MAX(id) AS last_message FROM direct_messages m WHERE (sender_username = :user OR recipient_username = :user) "
+		"AND id > COALESCE((SELECT hidden_through_id FROM direct_message_conversation_hides h "
+		"WHERE h.username = :user AND h.other_username = CASE WHEN m.sender_username = :user "
+		"THEN m.recipient_username ELSE m.sender_username END), 0) "
+		"AND NOT EXISTS (SELECT 1 FROM direct_message_hides dmh WHERE dmh.username = :user AND dmh.message_id = m.id) "
+		"GROUP BY other_user ORDER BY last_message DESC LIMIT :limit"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":limit"), MaximumSocialListItems);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<QString> result;
+	while (query.next()) {
+		const QString other = query.value(0).toString();
+		QString blockError;
+		if (!isBlocked(user, other, &blockError)) {
+			if (!blockError.isEmpty()) {
+				setError(error, blockError);
+				return {};
+			}
+			result.append(other);
+		}
+	}
+	return result;
+}
+
+bool AccountStore::deleteInboxConversation(const QString& username, const QString& otherUsername, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString other = normalizedUsername(otherUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(other) || user == other) {
+		setError(error, QStringLiteral("Invalid inbox conversation"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	QSqlQuery hide(database_);
+	hide.prepare(QStringLiteral(
+		"INSERT INTO direct_message_conversation_hides(username, other_username, hidden_through_id) "
+		"SELECT :user, :other, COALESCE(MAX(id), 0) FROM direct_messages "
+		"WHERE (sender_username = :user AND recipient_username = :other) "
+		"OR (sender_username = :other AND recipient_username = :user) "
+		"ON CONFLICT(username, other_username) DO UPDATE SET hidden_through_id = "
+		"MAX(hidden_through_id, excluded.hidden_through_id)"));
+	hide.bindValue(QStringLiteral(":user"), user);
+	hide.bindValue(QStringLiteral(":other"), other);
+	if (!hide.exec() || !database_.commit()) {
+		database_.rollback();
+		setError(error, hide.lastError().text().isEmpty() ? database_.lastError().text() : hide.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::deleteDirectMessage(const QString& username, qint64 messageId, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user) || messageId <= 0) {
+		setError(error, QStringLiteral("Invalid direct message"));
+		return false;
+	}
+	QSqlQuery hide(database_);
+	hide.prepare(QStringLiteral(
+		"INSERT INTO direct_message_hides(username, message_id) "
+		"SELECT :user, id FROM direct_messages WHERE id = :id "
+		"AND (sender_username = :user OR recipient_username = :user) "
+		"ON CONFLICT(username, message_id) DO NOTHING"));
+	hide.bindValue(QStringLiteral(":user"), user);
+	hide.bindValue(QStringLiteral(":id"), messageId);
+	if (!hide.exec() || hide.numRowsAffected() != 1) {
+		setError(error, hide.lastError().text().isEmpty()
+			? QStringLiteral("Message not found") : hide.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+int AccountStore::unreadDirectMessageCount(const QString& username, const QString& otherUsername, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString other = normalizedUsername(otherUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(other) || user == other) {
+		setError(error, QStringLiteral("Invalid inbox query"));
+		return 0;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT COUNT(*) FROM direct_messages m WHERE recipient_username = :user AND sender_username = :other "
+		"AND id > COALESCE((SELECT last_read_id FROM direct_message_reads "
+		"WHERE username = :user AND other_username = :other), 0) "
+		"AND id > COALESCE((SELECT hidden_through_id FROM direct_message_conversation_hides "
+		"WHERE username = :user AND other_username = :other), 0) "
+		"AND NOT EXISTS (SELECT 1 FROM direct_message_hides WHERE username = :user AND message_id = m.id)"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":other"), other);
+	if (!query.exec() || !query.next()) {
+		setError(error, query.lastError().text());
+		return 0;
+	}
+	return query.value(0).toInt();
+}
+
+bool AccountStore::markDirectMessagesRead(const QString& username, const QString& otherUsername, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString other = normalizedUsername(otherUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(other) || user == other) {
+		setError(error, QStringLiteral("Invalid inbox query"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	QSqlQuery update(database_);
+	update.prepare(QStringLiteral(
+		"INSERT INTO direct_message_reads(username, other_username, last_read_id) "
+		"VALUES(:user, :other, COALESCE((SELECT MAX(id) FROM direct_messages "
+		"WHERE recipient_username = :user AND sender_username = :other), 0)) "
+		"ON CONFLICT(username, other_username) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)"));
+	update.bindValue(QStringLiteral(":user"), user);
+	update.bindValue(QStringLiteral(":other"), other);
+	if (!update.exec() || !database_.commit()) {
+		database_.rollback();
+		setError(error, update.lastError().text().isEmpty() ? database_.lastError().text() : update.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::sendDirectMessage(const QString& senderUsername, const QString& recipientUsername,
+	const QString& body, qint64* messageId, QString* error)
+{
+	const QString sender = normalizedUsername(senderUsername);
+	const QString recipient = normalizedUsername(recipientUsername);
+	const QString messageBody = body.trimmed();
+	if (!validModerationIdentity(sender) || !validModerationIdentity(recipient) || sender == recipient
+		|| messageBody.size() > MaximumDirectMessageLength
+		|| !isValidSingleLineText(messageBody, MaximumDirectMessageLength)) {
+		setError(error, QStringLiteral("Invalid private message"));
+		return false;
+	}
+	if (!database_.transaction()) {
+		setError(error, database_.lastError().text());
+		return false;
+	}
+	const bool blocked = isBlocked(sender, recipient, error);
+	if ((error && !error->isEmpty()) || blocked) {
+		database_.rollback();
+		if (blocked)
+			setError(error, QStringLiteral("Private messaging is unavailable for this user"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"INSERT INTO direct_messages(sender_username, recipient_username, body, created_at) "
+		"VALUES(:sender, :recipient, :body, :now)"));
+	query.bindValue(QStringLiteral(":sender"), sender);
+	query.bindValue(QStringLiteral(":recipient"), recipient);
+	query.bindValue(QStringLiteral(":body"), messageBody);
+	query.bindValue(QStringLiteral(":now"), QDateTime::currentSecsSinceEpoch());
+	if (!query.exec() || !database_.commit()) {
+		const QString message = query.lastError().text().isEmpty() ? database_.lastError().text() : query.lastError().text();
+		database_.rollback();
+		setError(error, message);
+		return false;
+	}
+	if (messageId)
+		*messageId = query.lastInsertId().toLongLong();
+	return true;
+}
+
+QList<DirectMessage> AccountStore::directMessageHistory(const QString& username, const QString& otherUsername,
+	qint64 beforeId, int limit, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString other = normalizedUsername(otherUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(other) || user == other || beforeId < 0) {
+		setError(error, QStringLiteral("Invalid inbox query"));
+		return {};
+	}
+	QString blockError;
+	if (isBlocked(user, other, &blockError)) {
+		setError(error, QStringLiteral("Private messaging is unavailable for this user"));
+		return {};
+	}
+	if (!blockError.isEmpty()) {
+		setError(error, blockError);
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT id, sender_username, recipient_username, body, created_at FROM direct_messages m "
+		"WHERE ((sender_username = :user AND recipient_username = :other) "
+		"OR (sender_username = :other AND recipient_username = :user)) "
+		"AND id > COALESCE((SELECT hidden_through_id FROM direct_message_conversation_hides "
+		"WHERE username = :user AND other_username = :other), 0) "
+		"AND NOT EXISTS (SELECT 1 FROM direct_message_hides WHERE username = :user AND message_id = m.id) "
+		"AND (:before = 0 OR id < :before) ORDER BY id DESC LIMIT :limit"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":other"), other);
+	query.bindValue(QStringLiteral(":before"), beforeId);
+	query.bindValue(QStringLiteral(":limit"), qBound(1, limit, MaximumInboxHistory));
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<DirectMessage> result;
+	while (query.next()) {
+		DirectMessage message;
+		message.id = query.value(0).toLongLong();
+		message.senderUsername = query.value(1).toString();
+		message.recipientUsername = query.value(2).toString();
+		message.body = query.value(3).toString();
+		message.createdAt = query.value(4).toLongLong();
+		result.append(message);
+	}
+	std::reverse(result.begin(), result.end());
+	return result;
 }
 
 bool AccountStore::updateCountry(const QString& username, const QString& countryCode, QString* error)

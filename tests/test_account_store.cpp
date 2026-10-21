@@ -12,6 +12,61 @@ class AccountStoreTests final : public QObject {
 	Q_OBJECT
 
 private slots:
+	void persistsFriendRequestsBlocksAndInbox()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		gtd::AccountStore store(directory.filePath(QStringLiteral("social.sqlite")));
+		QString error;
+		QVERIFY2(store.initialize(&error), qPrintable(error));
+		for (const QString& username : {QStringLiteral("alice"), QStringLiteral("bob"), QStringLiteral("carol")})
+			QVERIFY2(store.createAccount(username, QStringLiteral("password123"), username, &error), qPrintable(error));
+
+		qint64 requestId = 0;
+		QVERIFY2(store.sendFriendRequest(QStringLiteral("alice"), QStringLiteral("bob"), &requestId, &error), qPrintable(error));
+		QCOMPARE(store.friendRequests(QStringLiteral("alice"), &error).size(), 1);
+		QCOMPARE(store.friendRequests(QStringLiteral("bob"), &error).size(), 1);
+		QVERIFY2(store.denyFriendRequest(QStringLiteral("bob"), requestId, &error), qPrintable(error));
+		QCOMPARE(store.friendRequests(QStringLiteral("alice"), &error).first().status, QStringLiteral("denied"));
+		QVERIFY(store.friendRequests(QStringLiteral("bob"), &error).isEmpty());
+		QVERIFY2(store.clearDeniedFriendRequest(QStringLiteral("alice"), requestId, &error), qPrintable(error));
+
+		QVERIFY2(store.sendFriendRequest(QStringLiteral("alice"), QStringLiteral("bob"), &requestId, &error), qPrintable(error));
+		QVERIFY2(store.acceptFriendRequest(QStringLiteral("bob"), requestId, &error), qPrintable(error));
+		QVERIFY(store.areFriends(QStringLiteral("alice"), QStringLiteral("bob"), &error));
+		QVERIFY2(store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("Hello"), nullptr, &error), qPrintable(error));
+		QCOMPARE(store.directMessageHistory(QStringLiteral("bob"), QStringLiteral("alice"), 0, 10, &error).size(), 1);
+		QCOMPARE(store.unreadDirectMessageCount(QStringLiteral("bob"), QStringLiteral("alice"), &error), 1);
+		QVERIFY2(store.markDirectMessagesRead(QStringLiteral("bob"), QStringLiteral("alice"), &error), qPrintable(error));
+		QCOMPARE(store.unreadDirectMessageCount(QStringLiteral("bob"), QStringLiteral("alice"), &error), 0);
+		QVERIFY2(store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("Another message"), nullptr, &error), qPrintable(error));
+		QCOMPARE(store.unreadDirectMessageCount(QStringLiteral("bob"), QStringLiteral("alice"), &error), 1);
+		qint64 hiddenMessageId = 0;
+		QVERIFY2(store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("Delete only for Bob"), &hiddenMessageId, &error), qPrintable(error));
+		QVERIFY2(store.deleteDirectMessage(QStringLiteral("bob"), hiddenMessageId, &error), qPrintable(error));
+		QCOMPARE(store.directMessageHistory(QStringLiteral("bob"), QStringLiteral("alice"), 0, 10, &error).size(), 2);
+		QCOMPARE(store.directMessageHistory(QStringLiteral("alice"), QStringLiteral("bob"), 0, 10, &error).size(), 3);
+		QVERIFY2(store.deleteInboxConversation(QStringLiteral("bob"), QStringLiteral("alice"), &error), qPrintable(error));
+		QVERIFY(store.inboxContacts(QStringLiteral("bob"), &error).isEmpty());
+		QVERIFY(!store.inboxContacts(QStringLiteral("alice"), &error).isEmpty());
+		QVERIFY2(store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("Conversation returns with new message"), nullptr, &error), qPrintable(error));
+		QCOMPARE(store.inboxContacts(QStringLiteral("bob"), &error).size(), 1);
+
+		QVERIFY2(store.setBlocked(QStringLiteral("bob"), QStringLiteral("alice"), true, &error), qPrintable(error));
+		QVERIFY(!store.areFriends(QStringLiteral("alice"), QStringLiteral("bob"), &error));
+		QVERIFY(!store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("Blocked"), nullptr, &error));
+		error.clear();
+		QVERIFY(!store.sendFriendRequest(QStringLiteral("alice"), QStringLiteral("bob"), nullptr, &error));
+		error.clear();
+		QVERIFY2(store.setBlocked(QStringLiteral("bob"), QStringLiteral("alice"), false, &error), qPrintable(error));
+		QVERIFY2(store.sendFriendRequest(QStringLiteral("alice"), QStringLiteral("bob"), &requestId, &error), qPrintable(error));
+	}
+
 	void persistsAccountsAndScores()
 	{
 		QTemporaryDir directory;

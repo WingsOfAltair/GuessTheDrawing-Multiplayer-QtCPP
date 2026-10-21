@@ -138,6 +138,70 @@ PlayerProfile PlayerProfile::fromJson(const QJsonObject& object)
 	return profile;
 }
 
+QJsonObject UserDirectoryEntry::toJson() const
+{
+	return {{QStringLiteral("profile"), profile.toJson()},
+		{QStringLiteral("presenceStatus"), presenceStatus},
+		{QStringLiteral("relationship"), relationship},
+		{QStringLiteral("relationshipId"), static_cast<double>(relationshipId)},
+		{QStringLiteral("hasRoom"), hasRoom},
+		{QStringLiteral("room"), hasRoom ? room.toJson() : QJsonObject{}},
+		{QStringLiteral("activeBans"), activeBans}};
+}
+
+UserDirectoryEntry UserDirectoryEntry::fromJson(const QJsonObject& object)
+{
+	UserDirectoryEntry entry;
+	entry.profile = PlayerProfile::fromJson(object.value(QStringLiteral("profile")).toObject());
+	entry.presenceStatus = object.value(QStringLiteral("presenceStatus")).toString(QStringLiteral("offline"));
+	entry.relationship = object.value(QStringLiteral("relationship")).toString(QStringLiteral("none"));
+	entry.relationshipId = static_cast<qint64>(object.value(QStringLiteral("relationshipId")).toDouble());
+	entry.hasRoom = object.value(QStringLiteral("hasRoom")).toBool();
+	entry.room = RoomInfo::fromJson(object.value(QStringLiteral("room")).toObject());
+	entry.activeBans = object.value(QStringLiteral("activeBans")).toArray();
+	return entry;
+}
+
+QJsonObject FriendRequest::toJson() const
+{
+	return {{QStringLiteral("id"), static_cast<double>(id)},
+		{QStringLiteral("senderUsername"), senderUsername},
+		{QStringLiteral("recipientUsername"), recipientUsername},
+		{QStringLiteral("status"), status},
+		{QStringLiteral("createdAt"), static_cast<double>(createdAt)}};
+}
+
+FriendRequest FriendRequest::fromJson(const QJsonObject& object)
+{
+	FriendRequest request;
+	request.id = static_cast<qint64>(object.value(QStringLiteral("id")).toDouble());
+	request.senderUsername = object.value(QStringLiteral("senderUsername")).toString();
+	request.recipientUsername = object.value(QStringLiteral("recipientUsername")).toString();
+	request.status = object.value(QStringLiteral("status")).toString();
+	request.createdAt = static_cast<qint64>(object.value(QStringLiteral("createdAt")).toDouble());
+	return request;
+}
+
+QJsonObject DirectMessage::toJson() const
+{
+	return {{QStringLiteral("id"), static_cast<double>(id)},
+		{QStringLiteral("senderUsername"), senderUsername},
+		{QStringLiteral("recipientUsername"), recipientUsername},
+		{QStringLiteral("body"), body},
+		{QStringLiteral("createdAt"), static_cast<double>(createdAt)}};
+}
+
+DirectMessage DirectMessage::fromJson(const QJsonObject& object)
+{
+	DirectMessage message;
+	message.id = static_cast<qint64>(object.value(QStringLiteral("id")).toDouble());
+	message.senderUsername = object.value(QStringLiteral("senderUsername")).toString();
+	message.recipientUsername = object.value(QStringLiteral("recipientUsername")).toString();
+	message.body = object.value(QStringLiteral("body")).toString();
+	message.createdAt = static_cast<qint64>(object.value(QStringLiteral("createdAt")).toDouble());
+	return message;
+}
+
 QJsonObject ServerRoleAssignment::toJson() const
 {
 	return {{QStringLiteral("serverId"), serverId}, {QStringLiteral("username"), username},

@@ -1082,10 +1082,19 @@ void GameServer::readMaster()
 void GameServer::sendMasterRegistration(bool initial)
 {
 	QJsonArray rooms{currentRoomInfo().toJson()};
+	QJsonArray presence;
+	for (const QString& username : playerOrder_) {
+		const auto player = players_.constFind(username);
+		if (player == players_.cend())
+			continue;
+		presence.append(QJsonObject{{QStringLiteral("username"), username},
+			{QStringLiteral("roomId"), room_.roomId}, {QStringLiteral("spectator"), player->spectator},
+			{QStringLiteral("queued"), player->queuedForPlayer}});
+	}
 	QJsonObject message = makeMessage(initial ? QStringLiteral("ServerRegister")
 											   : QStringLiteral("ServerHeartbeat"),
 		{{QStringLiteral("serverId"), serverId_}, {QStringLiteral("host"), publicHost_},
-		 {QStringLiteral("rooms"), rooms}});
+		 {QStringLiteral("rooms"), rooms}, {QStringLiteral("presence"), presence}});
 	if (initial)
 		message.insert(QStringLiteral("secret"), serverSecret_);
 	sendMessage(&masterSocket_, message);

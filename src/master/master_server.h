@@ -46,6 +46,10 @@ private:
 						bool replaceExistingSession = false);
 	void sendError(QTcpSocket* socket, const QJsonObject& request, const QString& message);
 	bool verifyClientSession(const QJsonObject& request, QString* username, QString* error) const;
+	UserDirectoryEntry directoryEntry(const QString& viewer, const PlayerProfile& profile, QString* error);
+	QJsonObject presenceData(const QString& username) const;
+	void broadcastPresence(const QString& username);
+	void clearPresenceForServer(const QString& serverId);
 
 	QTcpServer listener_;
 	QTimer expiryTimer_;
@@ -59,6 +63,7 @@ private:
 	QHash<QTcpSocket*, quint64> lastRoundResultSequence_;
 	QHash<QTcpSocket*, quint64> lastScoreUpdateSequence_;
 	QHash<QString, Registration> registrations_;
+	QHash<QString, QJsonObject> roomPresenceByUsername_;
 	QSet<QString> masterSuperAdmins_;
 	qint64 masterSuperAdminDataVersion_ = -1;
 	int lastRoomCount_ = -1;

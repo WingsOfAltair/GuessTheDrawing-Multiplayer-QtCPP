@@ -23,6 +23,30 @@ public:
 	std::optional<PlayerProfile> authenticate(const QString& username, const QString& password,
 											   QString* error = nullptr);
 	std::optional<PlayerProfile> profile(const QString& username, QString* error = nullptr);
+	QList<PlayerProfile> searchProfiles(const QString& text, int limit = 50, QString* error = nullptr);
+	QList<ServerSanction> activeBansForUser(const QString& username, QString* error = nullptr);
+	QList<QString> friends(const QString& username, QString* error = nullptr);
+	QList<FriendRequest> friendRequests(const QString& username, QString* error = nullptr);
+	QList<QString> blockedUsers(const QString& username, QString* error = nullptr);
+	QList<QString> inboxContacts(const QString& username, QString* error = nullptr);
+	bool deleteInboxConversation(const QString& username, const QString& otherUsername, QString* error = nullptr);
+	bool deleteDirectMessage(const QString& username, qint64 messageId, QString* error = nullptr);
+	int unreadDirectMessageCount(const QString& username, const QString& otherUsername, QString* error = nullptr);
+	bool markDirectMessagesRead(const QString& username, const QString& otherUsername, QString* error = nullptr);
+	bool areFriends(const QString& firstUsername, const QString& secondUsername, QString* error = nullptr);
+	bool isBlocked(const QString& firstUsername, const QString& secondUsername, QString* error = nullptr);
+	bool sendFriendRequest(const QString& senderUsername, const QString& recipientUsername,
+		qint64* requestId = nullptr, QString* error = nullptr);
+	bool acceptFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error = nullptr);
+	bool denyFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error = nullptr);
+	bool clearDeniedFriendRequest(const QString& senderUsername, qint64 requestId, QString* error = nullptr);
+	bool removeFriend(const QString& username, const QString& friendUsername, QString* error = nullptr);
+	bool setBlocked(const QString& blockerUsername, const QString& targetUsername, bool blocked,
+		QString* error = nullptr);
+	bool sendDirectMessage(const QString& senderUsername, const QString& recipientUsername,
+		const QString& body, qint64* messageId = nullptr, QString* error = nullptr);
+	QList<DirectMessage> directMessageHistory(const QString& username, const QString& otherUsername,
+		qint64 beforeId = 0, int limit = 100, QString* error = nullptr);
 	bool updateCountry(const QString& username, const QString& countryCode, QString* error = nullptr);
 	bool updateProfile(const QString& username, const QString& displayName, const QString& countryCode,
 		const QString& currentPassword, const QString& newPassword, QString* error = nullptr);
