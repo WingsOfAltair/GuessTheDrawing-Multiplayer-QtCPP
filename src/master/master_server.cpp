@@ -1,6 +1,7 @@
 #include "master/master_server.h"
 
 #include "shared/auth_token.h"
+#include "shared/models.h"
 #include "shared/protocol.h"
 
 #include <QDateTime>
@@ -32,6 +33,7 @@ namespace {
 constexpr qint64 ServerTimeoutSeconds = 15;
 constexpr qint64 SessionLifetimeSeconds = 24 * 60 * 60;
 constexpr qsizetype MaximumRoomsPerServer = 128;
+constexpr int AutomaticBanReportThreshold = 3;
 
 bool validServerId(const QString& serverId)
 {
@@ -491,6 +493,10 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 				{{QStringLiteral("targetUsername"), otherUser}, {QStringLiteral("messages"), messages}}));
 			return;
 		}
+		if (containsProfanity(message.value(QStringLiteral("body")).toString())) {
+			sendError(socket, message, QStringLiteral("Your message was blocked by the profanity filter"));
+			return;
+		}
 		qint64 messageId = 0;
 		if (!accountStore_->sendDirectMessage(actor, otherUser,
 			message.value(QStringLiteral("body")).toString(), &messageId, &error)) {
@@ -556,6 +562,65 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 			if (client.value() == target)
 				sendMessage(client.key(), makeMessage(QStringLiteral("RoomInviteReceived"), fields));
 		}
+		return;
+	}
+	if (type == QStringLiteral("PlayerReport")) {
+		QString reporter;
+		if (!verifyClientSession(message, &reporter, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QString target = message.value(QStringLiteral("targetUsername")).toString().trimmed().toLower();
+		const QString reason = message.value(QStringLiteral("reason")).toString().trimmed();
+		const auto reporterPresence = roomPresenceByUsername_.constFind(reporter);
+		const auto targetPresence = roomPresenceByUsername_.constFind(target);
+		if (target.isEmpty() || target == reporter || reporterPresence == roomPresenceByUsername_.cend()
+			|| targetPresence == roomPresenceByUsername_.cend()
+			|| reporterPresence->value(QStringLiteral("serverId")).toString()
+				!= targetPresence->value(QStringLiteral("serverId")).toString()
+			|| reporterPresence->value(QStringLiteral("room")).toObject().value(QStringLiteral("roomId")).toString()
+				!= targetPresence->value(QStringLiteral("room")).toObject().value(QStringLiteral("roomId")).toString()
+			|| accountStore_->serverRole(reporterPresence->value(QStringLiteral("serverId")).toString(), target, &error)
+				!= QStringLiteral("player")
+			|| !isValidSingleLineText(reason, 500)) {
+			sendError(socket, message, error.isEmpty()
+				? QStringLiteral("Reports require a valid reason and both players in the same room") : error);
+			return;
+		}
+		const QString serverId = reporterPresence->value(QStringLiteral("serverId")).toString();
+		int recentReportCount = 0;
+		if (!accountStore_->reportPlayer(serverId, reporter, target, reason, &recentReportCount, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		bool automaticBanApplied = false;
+		if (recentReportCount == AutomaticBanReportThreshold) {
+			ServerSanction sanction;
+			sanction.serverId = serverId;
+			sanction.targetUsername = target;
+			sanction.kind = QStringLiteral("ban");
+			sanction.reason = QStringLiteral("Automatic temporary ban after multiple player reports");
+			sanction.issuedBy = reporter;
+			sanction.expiresAt = QDateTime::currentSecsSinceEpoch() + 60 * 60;
+			if (!accountStore_->addServerSanction(sanction, nullptr, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			const QJsonObject sanctionJson = sanction.toJson();
+			const auto registration = registrations_.constFind(serverId);
+			if (registration != registrations_.cend() && registration->socket) {
+				sendMessage(registration->socket, makeMessage(QStringLiteral("ModerationApplied"),
+					{{QStringLiteral("serverId"), serverId}, {QStringLiteral("targetUsername"), target},
+					 {QStringLiteral("issuedBy"), reporter},
+					 {QStringLiteral("action"), QStringLiteral("ban")},
+					 {QStringLiteral("reason"), sanction.reason},
+					 {QStringLiteral("sanction"), sanctionJson}}));
+			}
+			automaticBanApplied = true;
+		}
+		sendMessage(socket, withRequestId(QStringLiteral("PlayerReportResult"), message,
+			{{QStringLiteral("ok"), true}, {QStringLiteral("recentReportCount"), recentReportCount},
+			 {QStringLiteral("automaticBanApplied"), automaticBanApplied}}));
 		return;
 	}
 

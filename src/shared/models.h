@@ -16,6 +16,7 @@ struct RoomInfo {
 	int spectators = 0;
 	int maxPlayers = 8;
 	int roundSeconds = 60;
+	bool privateRoom = false;
 
 	QJsonObject toJson() const;
 	static RoomInfo fromJson(const QJsonObject& object);
@@ -166,5 +167,6 @@ struct CanvasObject {
 bool isValidCanvasLayer(const CanvasLayer& layer, QString* error = nullptr);
 bool isValidCanvasObject(const CanvasObject& object, QString* error = nullptr);
 bool isValidSingleLineText(const QString& text, qsizetype maximumLength);
+bool containsProfanity(const QString& text);
 
 }

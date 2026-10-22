@@ -73,6 +73,8 @@ public:
 		const QString& muterUsername, QString* error = nullptr);
 	bool clearPlayerMutePreferencesForTarget(const QString& serverId,
 		const QString& targetUsername, QString* error = nullptr);
+	bool reportPlayer(const QString& serverId, const QString& reporterUsername, const QString& targetUsername,
+		const QString& reason, int* recentReportCount = nullptr, QString* error = nullptr);
 
 private:
 	std::optional<PlayerProfile> loadProfile(const QString& normalizedUsername, QString* error);

@@ -219,6 +219,14 @@ bool AccountStore::initialize(QString* error)
 			"voice_chat INTEGER NOT NULL CHECK(voice_chat IN (0, 1)), updated_at INTEGER NOT NULL, "
 			"CHECK(text_chat = 1 OR voice_chat = 1), "
 			"CHECK(muter_username <> target_username), PRIMARY KEY(server_id, muter_username, target_username))"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS player_reports ("
+			"id INTEGER PRIMARY KEY AUTOINCREMENT, server_id TEXT NOT NULL, "
+			"reporter_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"target_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"reason TEXT NOT NULL, created_at INTEGER NOT NULL, "
+			"CHECK(reporter_username <> target_username), UNIQUE(server_id, reporter_username, target_username))"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS player_reports_recent "
+			"ON player_reports(server_id, target_username, created_at)"),
 		QStringLiteral("CREATE TABLE IF NOT EXISTS friendships ("
 			"user_a TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
 			"user_b TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
@@ -282,8 +290,8 @@ bool AccountStore::createAccount(const QString& username, const QString& passwor
 		return false;
 	}
 	const QString safeDisplayName = displayName.trimmed();
-	if (!isValidSingleLineText(safeDisplayName, 32)) {
-		setError(error, QStringLiteral("Display name must be 1-32 characters without control characters"));
+	if (!isValidSingleLineText(safeDisplayName, 32) || containsProfanity(safeDisplayName)) {
+		setError(error, QStringLiteral("Display name must be 1-32 characters without control characters or profanity"));
 		return false;
 	}
 
@@ -1040,8 +1048,8 @@ bool AccountStore::updateProfile(const QString& username, const QString& display
 	const QString& currentPassword, const QString& newPassword, QString* error)
 {
 	const QString safeDisplayName = displayName.trimmed();
-	if (!isValidSingleLineText(safeDisplayName, 32)) {
-		setError(error, QStringLiteral("Nickname must be 1-32 characters without control characters"));
+	if (!isValidSingleLineText(safeDisplayName, 32) || containsProfanity(safeDisplayName)) {
+		setError(error, QStringLiteral("Nickname must be 1-32 characters without control characters or profanity"));
 		return false;
 	}
 	const QString normalizedCountryCode = countryCode.trimmed().toUpper();
@@ -1619,6 +1627,48 @@ bool AccountStore::clearPlayerMutePreferencesForTarget(const QString& serverId,
 		setError(error, query.lastError().text());
 		return false;
 	}
+	return true;
+}
+
+bool AccountStore::reportPlayer(const QString& serverId, const QString& reporterUsername,
+	const QString& targetUsername, const QString& reason, int* recentReportCount, QString* error)
+{
+	const QString reporter = normalizedUsername(reporterUsername);
+	const QString target = normalizedUsername(targetUsername);
+	const qint64 now = QDateTime::currentSecsSinceEpoch();
+	if (!validServerId(serverId) || !validModerationIdentity(reporter) || !validModerationIdentity(target)
+		|| reporter == target || !isValidSingleLineText(reason.trimmed(), 500)) {
+		setError(error, QStringLiteral("Invalid player report"));
+		return false;
+	}
+	QSqlQuery insert(database_);
+	insert.prepare(QStringLiteral(
+		"INSERT INTO player_reports(server_id, reporter_username, target_username, reason, created_at) "
+		"VALUES(:server, :reporter, :target, :reason, :now) "
+		"ON CONFLICT(server_id, reporter_username, target_username) DO UPDATE SET "
+		"reason = excluded.reason, created_at = excluded.created_at"));
+	insert.bindValue(QStringLiteral(":server"), serverId);
+	insert.bindValue(QStringLiteral(":reporter"), reporter);
+	insert.bindValue(QStringLiteral(":target"), target);
+	insert.bindValue(QStringLiteral(":reason"), reason.trimmed());
+	insert.bindValue(QStringLiteral(":now"), now);
+	if (!insert.exec()) {
+		setError(error, insert.lastError().text());
+		return false;
+	}
+	QSqlQuery count(database_);
+	count.prepare(QStringLiteral(
+		"SELECT COUNT(DISTINCT reporter_username) FROM player_reports "
+		"WHERE server_id = :server AND target_username = :target AND created_at >= :since"));
+	count.bindValue(QStringLiteral(":server"), serverId);
+	count.bindValue(QStringLiteral(":target"), target);
+	count.bindValue(QStringLiteral(":since"), now - 24 * 60 * 60);
+	if (!count.exec() || !count.next()) {
+		setError(error, count.lastError().text());
+		return false;
+	}
+	if (recentReportCount)
+		*recentReportCount = count.value(0).toInt();
 	return true;
 }
 

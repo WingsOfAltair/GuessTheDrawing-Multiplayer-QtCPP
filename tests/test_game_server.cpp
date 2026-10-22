@@ -4,9 +4,11 @@
 #include "shared/protocol.h"
 
 #include <QJsonArray>
+#include <QCryptographicHash>
 #include <QJsonObject>
 #include <QFile>
 #include <QElapsedTimer>
+#include <QPasswordDigestor>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -51,6 +53,62 @@ class GameServerTests final : public QObject {
 	Q_OBJECT
 
 private slots:
+	void privateRoomRequiresPasskeyProof()
+	{
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("private-room");
+		room.roomName = QStringLiteral("Private room");
+		const QByteArray salt = QByteArray::fromHex("00112233445566778899aabbccddeeff");
+		const QByteArray verifier = QPasswordDigestor::deriveKeyPbkdf2(QCryptographicHash::Sha256,
+			QByteArrayLiteral("room-secret"), salt, 210000, 32);
+		gtd::GameServer server(room, QStringLiteral("private-server"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"), {}, 15, nullptr, salt, verifier);
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+		QByteArray masterBuffer;
+		connect(masterSocket, &QTcpSocket::readyRead, this, [&] {
+			const QList<QJsonObject> incoming = gtd::takeMessages(&masterBuffer, masterSocket->readAll());
+			for (const QJsonObject& message : incoming) {
+				const QString type = message.value(QStringLiteral("type")).toString();
+				if (type == QStringLiteral("ServerRegister"))
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+				else if (type == QStringLiteral("ServerJoinCheck"))
+					respondToJoinCheck(masterSocket, message);
+			}
+		});
+		QTRY_VERIFY(server.port() != 0);
+		QTest::qWait(50);
+
+		QTcpSocket player;
+		player.connectToHost(QHostAddress::LocalHost, server.port());
+		QTRY_COMPARE(player.state(), QAbstractSocket::ConnectedState);
+		QByteArray playerBuffer;
+		QList<QJsonObject> responses;
+		connect(&player, &QTcpSocket::readyRead, this, [&] {
+			responses.append(gtd::takeMessages(&playerBuffer, player.readAll()));
+		});
+		const QString token = gtd::createSessionToken(QStringLiteral("private-player"),
+			QStringLiteral("Private Player"), QStringLiteral("session-secret"),
+			QDateTime::currentSecsSinceEpoch() + 300);
+		const QJsonObject request = gtd::makeMessage(QStringLiteral("JoinRoom"),
+			{{QStringLiteral("requestId"), QStringLiteral("private-join")},
+			 {QStringLiteral("roomId"), room.roomId}, {QStringLiteral("authToken"), token}});
+		QVERIFY(gtd::sendMessage(&player, request));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("RoomPasskeyChallenge");
+		}));
+		QVERIFY(std::none_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("JoinResult");
+		}));
+	}
+
 	void repliesToPingBeforeJoin()
 	{
 		QTcpServer master;
@@ -456,6 +514,11 @@ private slots:
 		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("hello room")).isEmpty());
 		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("hello room"))
 			.value(QStringLiteral("roomChat")).toBool());
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("profanity-chat")},
+			 {QStringLiteral("text"), QStringLiteral("fuck")}})));
+		QTRY_VERIFY(!findMessage(listener, QStringLiteral("Error"), QStringLiteral("profanity-chat")).isEmpty());
+		QVERIFY(findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("fuck")).isEmpty());
 
 		const QString oversizedChat(301, QLatin1Char('x'));
 		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),

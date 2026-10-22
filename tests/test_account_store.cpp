@@ -357,6 +357,31 @@ private slots:
 		QCOMPARE(reopened.playerMutePreferences(QStringLiteral("room-server-a"),
 			QStringLiteral("viewer"), &error).size(), 0);
 	}
+
+	void countsIndependentPlayerReports()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		gtd::AccountStore store(directory.filePath(QStringLiteral("reports.sqlite")));
+		QString error;
+		QVERIFY2(store.initialize(&error), qPrintable(error));
+		for (const QString& username : {QStringLiteral("reporter1"), QStringLiteral("reporter2"),
+			QStringLiteral("reporter3"), QStringLiteral("reported")})
+			QVERIFY2(store.createAccount(username, QStringLiteral("password123"), username, &error), qPrintable(error));
+
+		int recentCount = 0;
+		QVERIFY2(store.reportPlayer(QStringLiteral("reports-server"), QStringLiteral("reporter1"),
+			QStringLiteral("reported"), QStringLiteral("Harassment"), &recentCount, &error), qPrintable(error));
+		QCOMPARE(recentCount, 1);
+		QVERIFY2(store.reportPlayer(QStringLiteral("reports-server"), QStringLiteral("reporter1"),
+			QStringLiteral("reported"), QStringLiteral("Updated reason"), &recentCount, &error), qPrintable(error));
+		QCOMPARE(recentCount, 1);
+		QVERIFY2(store.reportPlayer(QStringLiteral("reports-server"), QStringLiteral("reporter2"),
+			QStringLiteral("reported"), QStringLiteral("Harassment"), &recentCount, &error), qPrintable(error));
+		QCOMPARE(recentCount, 2);
+		QVERIFY(!store.reportPlayer(QStringLiteral("reports-server"), QStringLiteral("reporter1"),
+			QStringLiteral("reporter1"), QStringLiteral("Self report"), &recentCount, &error));
+	}
 };
 
 QTEST_GUILESS_MAIN(AccountStoreTests)

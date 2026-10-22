@@ -17,6 +17,10 @@ inline constexpr int MaximumUserSearchResults = 50;
 inline constexpr int MaximumSocialListItems = 200;
 inline constexpr int MaximumInboxHistory = 100;
 inline constexpr int MaximumDirectMessageLength = 2000;
+inline constexpr int MaximumUsernameLength = 64;
+inline constexpr int MaximumPasswordLength = 128;
+inline constexpr int MaximumAuthTokenLength = 512;
+inline constexpr int MaximumRoomPasskeyLength = 128;
 inline constexpr int MaximumPresenceEntriesPerServer = 512;
 
 QByteArray encodeMessage(const QJsonObject& message);

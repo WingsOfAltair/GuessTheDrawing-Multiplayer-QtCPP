@@ -76,7 +76,8 @@ QJsonObject RoomInfo::toJson() const
 			{QStringLiteral("players"), players},
 			{QStringLiteral("spectators"), spectators},
 			{QStringLiteral("maxPlayers"), maxPlayers},
-			{QStringLiteral("roundSeconds"), roundSeconds}};
+			{QStringLiteral("roundSeconds"), roundSeconds},
+			{QStringLiteral("privateRoom"), privateRoom}};
 }
 
 RoomInfo RoomInfo::fromJson(const QJsonObject& object)
@@ -91,6 +92,7 @@ RoomInfo RoomInfo::fromJson(const QJsonObject& object)
 	room.spectators = qMax(0, object.value(QStringLiteral("spectators")).toInt());
 	room.maxPlayers = qBound(1, object.value(QStringLiteral("maxPlayers")).toInt(8), 32);
 	room.roundSeconds = qBound(10, object.value(QStringLiteral("roundSeconds")).toInt(60), 600);
+	room.privateRoom = object.value(QStringLiteral("privateRoom")).toBool(false);
 	return room;
 }
 
@@ -338,6 +340,23 @@ bool isValidSingleLineText(const QString& text, qsizetype maximumLength)
 	return true;
 }
 
+bool containsProfanity(const QString& text)
+{
+	static const QStringList blockedWords{
+		QStringLiteral("asshole"), QStringLiteral("bastard"), QStringLiteral("bitch"),
+		QStringLiteral("damn"), QStringLiteral("fuck"), QStringLiteral("motherfucker"),
+		QStringLiteral("shit")};
+	static const QRegularExpression wordCharacters(QStringLiteral("[a-z0-9]+"),
+		QRegularExpression::CaseInsensitiveOption);
+	auto matches = wordCharacters.globalMatch(text.toLower());
+	while (matches.hasNext()) {
+		const QString word = matches.next().captured();
+		if (std::find(blockedWords.cbegin(), blockedWords.cend(), word) != blockedWords.cend())
+			return true;
+	}
+	return false;
+}
+
 bool isValidCanvasLayer(const CanvasLayer& layer, QString* error)
 {
 	if (!validId(layer.id)) {
@@ -385,8 +404,8 @@ bool isValidCanvasObject(const CanvasObject& item, QString* error)
 		return false;
 	}
 	if (item.type == QStringLiteral("text")) {
-		if (item.text.trimmed().isEmpty() || item.text.size() > 256) {
-			setValidationError(error, QStringLiteral("Text objects must contain 1-256 characters"));
+		if (item.text.trimmed().isEmpty() || item.text.size() > 256 || containsProfanity(item.text)) {
+			setValidationError(error, QStringLiteral("Text objects must contain 1-256 characters and pass the content filter"));
 			return false;
 		}
 	} else if (!item.text.isEmpty()) {

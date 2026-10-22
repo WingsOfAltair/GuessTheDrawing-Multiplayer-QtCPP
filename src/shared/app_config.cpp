@@ -75,6 +75,7 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("serverId"), QStringLiteral("local-room-1")},
 			{QStringLiteral("roomId"), QStringLiteral("room-1")},
 			{QStringLiteral("roomName"), QStringLiteral("Drawing Room")},
+			{QStringLiteral("roomPasskey"), QStringLiteral("")},
 			{QStringLiteral("publicHost"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("port"), 45451},
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},

@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QCryptographicHash>
+#include <QMessageAuthenticationCode>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -43,6 +45,16 @@ QJsonObject reply(const QString& type, const QJsonObject& request, const QJsonOb
 	return response;
 }
 
+bool constantTimeEqual(const QByteArray& left, const QByteArray& right)
+{
+	if (left.size() != right.size())
+		return false;
+	uchar difference = 0;
+	for (qsizetype index = 0; index < left.size(); ++index)
+		difference |= static_cast<uchar>(left.at(index) ^ right.at(index));
+	return difference == 0;
+}
+
 void writeConsoleStatus(const QString& status)
 {
 #if defined(Q_OS_WIN)
@@ -74,7 +86,8 @@ void writeConsoleStatus(const QString& status)
 
 GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 					   quint16 masterPort, QString serverSecret, QString sessionSecret,
-					   QString dictionaryPath, int intermissionSeconds, QObject* parent)
+					   QString dictionaryPath, int intermissionSeconds, QObject* parent,
+					   QByteArray roomPasskeySalt, QByteArray roomPasskeyHash)
 	: QObject(parent),
 	  room_(std::move(room)),
 	  serverId_(std::move(serverId)),
@@ -83,6 +96,8 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	  masterPort_(masterPort),
 	  serverSecret_(std::move(serverSecret)),
 	  sessionSecret_(std::move(sessionSecret)),
+	  roomPasskeySalt_(std::move(roomPasskeySalt)),
+	  roomPasskeyHash_(std::move(roomPasskeyHash)),
 	  dictionaryPath_(dictionaryPath.trimmed().isEmpty()
 		? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("dictionary"))
 		: std::move(dictionaryPath)),
@@ -93,6 +108,7 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	room_.roomName = room_.roomName.trimmed();
 	room_.roundSeconds = clampRoundSeconds(room_.roundSeconds);
 	room_.maxPlayers = qBound(2, room_.maxPlayers, 32);
+	room_.privateRoom = !roomPasskeyHash_.isEmpty() && roomPasskeySalt_.size() >= 16;
 	resetCanvas();
 	actionRateLimitClock_.start();
 
@@ -348,6 +364,11 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 		const QString text = message.value(QStringLiteral("text")).toString().trimmed();
 		if (player == players_.cend() || !isValidSingleLineText(text, 300))
 			return;
+		if (containsProfanity(text)) {
+			sendMessage(socket, reply(QStringLiteral("Error"), message,
+				{{QStringLiteral("message"), QStringLiteral("Your message was blocked by the profanity filter")}}));
+			return;
+		}
 		const QJsonObject chatMessage = makeMessage(QStringLiteral("ChatMessage"),
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
 			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}});
@@ -437,6 +458,42 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
 			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Join request is already pending")}}));
 		return;
+	}
+	if (!roomPasskeyHash_.isEmpty()) {
+		const QString requestId = message.value(QStringLiteral("requestId")).toString();
+		const QString proofText = message.value(QStringLiteral("passkeyProof")).toString();
+		if (proofText.isEmpty()) {
+			QByteArray nonce(32, Qt::Uninitialized);
+			for (qsizetype index = 0; index < nonce.size(); index += 8) {
+				const quint64 random = QRandomGenerator::system()->generate64();
+				for (qsizetype offset = 0; offset < 8; ++offset)
+					nonce[index + offset] = static_cast<char>((random >> (offset * 8)) & 0xff);
+			}
+			roomPasskeyChallenges_.insert(socket,
+				RoomPasskeyChallenge{requestId, nonce, QDateTime::currentMSecsSinceEpoch() + 30000});
+			sendMessage(socket, reply(QStringLiteral("RoomPasskeyChallenge"), message,
+				{{QStringLiteral("passkeySalt"), QString::fromLatin1(roomPasskeySalt_.toBase64())},
+				 {QStringLiteral("passkeyChallenge"), QString::fromLatin1(nonce.toBase64())}}));
+			return;
+		}
+		const auto challenge = roomPasskeyChallenges_.find(socket);
+		const QByteArray suppliedProof = QByteArray::fromBase64(proofText.toLatin1());
+		if (challenge == roomPasskeyChallenges_.end() || challenge->requestId != requestId
+			|| challenge->expiresAtMs < QDateTime::currentMSecsSinceEpoch()
+			|| suppliedProof.toBase64() != proofText.toLatin1()) {
+			roomPasskeyChallenges_.remove(socket);
+			sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Room passkey challenge expired or invalid")}}));
+			return;
+		}
+		const QByteArray expectedProof = QMessageAuthenticationCode::hash(challenge->nonce,
+			roomPasskeyHash_, QCryptographicHash::Sha256);
+		roomPasskeyChallenges_.remove(socket);
+		if (!constantTimeEqual(suppliedProof, expectedProof)) {
+			sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Room passkey is incorrect")}}));
+			return;
+		}
 	}
 	if (!masterRegistered_ || masterSocket_.state() != QAbstractSocket::ConnectedState) {
 		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
@@ -1476,6 +1533,12 @@ void GameServer::sendGuess(const QString& username, const QString& rawText)
 	const QString text = rawText.trimmed();
 	if (!isValidSingleLineText(text, 100))
 		return;
+	if (containsProfanity(text)) {
+		if (const auto player = players_.constFind(username); player != players_.cend())
+			sendMessage(player->socket, makeMessage(QStringLiteral("Error"),
+				{{QStringLiteral("message"), QStringLiteral("Your guess was blocked by the profanity filter")}}));
+		return;
+	}
 	if (text.compare(currentWord_, Qt::CaseInsensitive) != 0) {
 		broadcast(makeMessage(QStringLiteral("ChatMessage"),
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), guesser->displayName},

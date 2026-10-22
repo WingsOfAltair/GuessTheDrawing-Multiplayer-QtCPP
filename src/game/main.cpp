@@ -1,9 +1,13 @@
 #include "game/game_server.h"
 #include "shared/app_config.h"
 #include "shared/game_rules.h"
+#include "shared/protocol.h"
 
 #include <QCommandLineParser>
+#include <QCryptographicHash>
 #include <QCoreApplication>
+#include <QPasswordDigestor>
+#include <QRandomGenerator>
 #include <QTextStream>
 
 int main(int argc, char* argv[])
@@ -61,6 +65,8 @@ int main(int argc, char* argv[])
 		? parser.value(QStringLiteral("server-secret")) : qEnvironmentVariable("GTD_SERVER_SECRET", config.stringValue(QStringLiteral("security"), QStringLiteral("serverSecret")));
 	const QString sessionSecret = parser.isSet(QStringLiteral("session-secret"))
 		? parser.value(QStringLiteral("session-secret")) : qEnvironmentVariable("GTD_SESSION_SECRET", config.stringValue(QStringLiteral("security"), QStringLiteral("sessionSecret")));
+	const QString roomPasskey = qEnvironmentVariable("GTD_ROOM_PASSKEY",
+		config.stringValue(QStringLiteral("gameServer"), QStringLiteral("roomPasskey")));
 
 	bool portOk = false;
 	bool masterPortOk = false;
@@ -77,7 +83,9 @@ int main(int argc, char* argv[])
 	const bool intermissionOk = intermissionDuration >= 0 && intermissionDuration <= 120;
 	maxPlayersOk = maxPlayers >= 2 && maxPlayers <= 32;
 	if (!portOk || roomPort > 65535 || !masterPortOk || masterPort == 0 || masterPort > 65535
-		|| !durationOk || !intermissionOk || !maxPlayersOk || serverSecret.size() < 32 || sessionSecret.size() < 32) {
+		|| !durationOk || !intermissionOk || !maxPlayersOk || serverSecret.size() < 32 || sessionSecret.size() < 32
+		|| roomPasskey.size() > gtd::MaximumRoomPasskeyLength
+		|| (!roomPasskey.isEmpty() && roomPasskey.size() < 8)) {
 		QTextStream(stderr) << "Invalid port/settings or security secrets shorter than 32 characters.\n";
 		return 2;
 	}
@@ -89,13 +97,25 @@ int main(int argc, char* argv[])
 	room.port = static_cast<quint16>(roomPort);
 	room.maxPlayers = qBound(2, maxPlayers, 32);
 	room.roundSeconds = gtd::clampRoundSeconds(duration);
+	QByteArray roomPasskeySalt;
+	QByteArray roomPasskeyHash;
+	if (!roomPasskey.isEmpty()) {
+		roomPasskeySalt.resize(32);
+		for (qsizetype index = 0; index < roomPasskeySalt.size(); index += 8) {
+			const quint64 random = QRandomGenerator::system()->generate64();
+			for (qsizetype offset = 0; offset < 8; ++offset)
+				roomPasskeySalt[index + offset] = static_cast<char>((random >> (offset * 8)) & 0xff);
+		}
+		roomPasskeyHash = QPasswordDigestor::deriveKeyPbkdf2(QCryptographicHash::Sha256,
+			roomPasskey.toUtf8(), roomPasskeySalt, 210000, 32);
+	}
 
 	gtd::GameServer server(room, serverId,
 						   publicHost,
 						   masterAddress,
 						   static_cast<quint16>(masterPort), serverSecret, sessionSecret,
 						   config.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
-						   intermissionDuration);
+						   intermissionDuration, nullptr, roomPasskeySalt, roomPasskeyHash);
 	if (!server.start(&error)) {
 		QTextStream(stderr) << "Unable to start game server: " << error << '\n';
 		return 1;

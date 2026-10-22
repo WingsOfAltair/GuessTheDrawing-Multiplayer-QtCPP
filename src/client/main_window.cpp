@@ -15,6 +15,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -36,6 +37,7 @@
 #include <QPushButton>
 #include <QPainter>
 #include <QPalette>
+#include <QPasswordDigestor>
 #include <QSpinBox>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
@@ -47,6 +49,7 @@
 #include <QVBoxLayout>
 #include <QVector>
 #include <QHash>
+#include <QMessageAuthenticationCode>
 
 #include <QtEndian>
 
@@ -59,7 +62,6 @@
 namespace gtd {
 
 namespace {
-// Dummy patch touch: no functional changes.
 
 QIcon countryFlagIcon(const QString& countryCode)
 {
@@ -1414,6 +1416,22 @@ QWidget* MainWindow::createLobbyPage()
 			setLocalizedFormattedText(settingsStatusLabel_, QStringLiteral("Could not save language setting: %1"), {error}, languageCode_);
 			return;
 		}
+	pendingRoomPasskey_.clear();
+	if (joiningRoom_.privateRoom) {
+		bool accepted = false;
+		pendingRoomPasskey_ = QInputDialog::getText(this,
+			localizedText(QStringLiteral("Private room"), languageCode_),
+			localizedText(QStringLiteral("Enter room passkey"), languageCode_), QLineEdit::Password,
+			{}, &accepted);
+		if (!accepted)
+			return;
+		if (pendingRoomPasskey_.size() < 8 || pendingRoomPasskey_.size() > MaximumRoomPasskeyLength) {
+			pendingRoomPasskey_.clear();
+			QMessageBox::warning(this, localizedText(QStringLiteral("Private room"), languageCode_),
+				localizedText(QStringLiteral("Passkeys must be 8-128 characters."), languageCode_));
+			return;
+		}
+	}
 		settingsStatusLabel_->clear();
 		applyLanguage(languageCode);
 	});
@@ -2331,6 +2349,11 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		if (message.value(QStringLiteral("action")).toString() == QStringLiteral("FriendRequestSend"))
 			QMessageBox::information(this, localizedText(QStringLiteral("Friend request"), languageCode_),
 				localizedText(QStringLiteral("Friend request sent."), languageCode_));
+	} else if (type == QStringLiteral("PlayerReportResult")) {
+		QMessageBox::information(this, localizedText(QStringLiteral("Report player"), languageCode_),
+			message.value(QStringLiteral("automaticBanApplied")).toBool()
+				? localizedText(QStringLiteral("Report received; automatic enforcement was applied."), languageCode_)
+				: localizedText(QStringLiteral("Report received for moderator review."), languageCode_));
 	} else if (type == QStringLiteral("SocialChanged")) {
 		requestSocialList();
 		requestInboxList();
@@ -2756,6 +2779,29 @@ void MainWindow::saveProfile()
 void MainWindow::handleGameMessage(const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (type == QStringLiteral("RoomPasskeyChallenge")) {
+		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_
+			|| pendingRoomPasskey_.isEmpty())
+			return;
+		const QByteArray salt = QByteArray::fromBase64(
+			message.value(QStringLiteral("passkeySalt")).toString().toLatin1());
+		const QByteArray nonce = QByteArray::fromBase64(
+			message.value(QStringLiteral("passkeyChallenge")).toString().toLatin1());
+		if (salt.size() < 16 || nonce.size() != 32) {
+			gameSocket_.abort();
+			pendingRoomPasskey_.clear();
+			return;
+		}
+		const QByteArray verifier = QPasswordDigestor::deriveKeyPbkdf2(QCryptographicHash::Sha256,
+			pendingRoomPasskey_.toUtf8(), salt, 210000, 32);
+		const QByteArray proof = QMessageAuthenticationCode::hash(nonce, verifier, QCryptographicHash::Sha256);
+		pendingRoomPasskey_.clear();
+		sendGameMessage(makeMessage(QStringLiteral("JoinRoom"),
+			{{QStringLiteral("requestId"), pendingJoinRequestId_}, {QStringLiteral("roomId"), pendingRoomId_},
+			 {QStringLiteral("authToken"), authToken_}, {QStringLiteral("spectator"), pendingJoinAsSpectator_},
+			 {QStringLiteral("passkeyProof"), QString::fromLatin1(proof.toBase64())}}));
+		return;
+	}
 	if (type == QStringLiteral("Pong")) {
 		if (message.value(QStringLiteral("requestId")).toString() == pendingActivePingRequestId_) {
 			activePingMs_ = static_cast<int>(activePingElapsed_.elapsed());
@@ -3025,7 +3071,10 @@ void MainWindow::populateRooms(const QJsonArray& rooms)
 		const int row = roomsTable_->rowCount();
 		roomsTable_->insertRow(row);
 		roomsById_.insert(room.roomId, room);
-		auto* roomNameItem = new QTableWidgetItem(room.roomName);
+		const QString roomName = room.privateRoom
+			? QStringLiteral("%1 · %2").arg(room.roomName,
+				localizedText(QStringLiteral("Private"), languageCode_)) : room.roomName;
+		auto* roomNameItem = new QTableWidgetItem(roomName);
 		roomNameItem->setData(Qt::UserRole, room.roomId);
 		roomsTable_->setItem(row, 0, roomNameItem);
 		auto* occupancyItem = new QTableWidgetItem;
@@ -4168,11 +4217,13 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 	}
 	QAction* muteText = nullptr;
 	QAction* muteVoice = nullptr;
+	QAction* report = nullptr;
 	QAction* kick = nullptr;
 	QAction* ban = nullptr;
 	QAction* mute = nullptr;
 	const bool protectedStaff = profile.masterSuperAdmin || profile.serverRole != QStringLiteral("player");
 	if (target != username_ && !protectedStaff) {
+		report = addRosterAction(QStringLiteral("Report player"));
 		muteText = addRosterAction(mutedTextUsers_.contains(target)
 			? QStringLiteral("Unmute text") : QStringLiteral("Mute text"));
 		muteVoice = addRosterAction(mutedVoiceUsers_.contains(target)
@@ -4197,6 +4248,17 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 		sendSocialAction(QStringLiteral("FriendRequestSend"), target);
 	else if (selected == blockUser)
 		sendSocialAction(QStringLiteral("BlockSet"), target, 0, true);
+	else if (selected == report) {
+		bool accepted = false;
+		const QString reason = QInputDialog::getText(this,
+			localizedText(QStringLiteral("Report player"), languageCode_),
+			localizedText(QStringLiteral("Reason"), languageCode_), QLineEdit::Normal, {}, &accepted).trimmed();
+		if (accepted && !reason.isEmpty())
+			sendMessage(&masterSocket_, makeMessage(QStringLiteral("PlayerReport"),
+				{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
+				 {QStringLiteral("serverId"), joiningRoom_.serverId},
+				 {QStringLiteral("targetUsername"), target}, {QStringLiteral("reason"), reason}}));
+	}
 	else if (selected == muteText || selected == muteVoice) {
 		const bool text = selected == muteText ? !mutedTextUsers_.contains(target) : mutedTextUsers_.contains(target);
 		const bool voice = selected == muteVoice ? !mutedVoiceUsers_.contains(target) : mutedVoiceUsers_.contains(target);

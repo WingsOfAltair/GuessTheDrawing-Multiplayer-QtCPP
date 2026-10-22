@@ -248,6 +248,7 @@ private:
 	QString pendingRoleChangeRequestId_;
 	QString pendingActivePingRequestId_;
 	QString pendingRoomId_;
+	QString pendingRoomPasskey_;
 	RoomInfo joiningRoom_;
 	QHash<QString, RoomInfo> roomsById_;
 	quint64 requestCounter_ = 1;

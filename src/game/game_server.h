@@ -3,6 +3,7 @@
 #include "shared/models.h"
 
 #include <QDateTime>
+#include <QByteArray>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
@@ -18,7 +19,8 @@ class GameServer final : public QObject {
 public:
 	GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 			   quint16 masterPort, QString serverSecret, QString sessionSecret,
-			   QString dictionaryPath = {}, int intermissionSeconds = 15, QObject* parent = nullptr);
+			   QString dictionaryPath = {}, int intermissionSeconds = 15, QObject* parent = nullptr,
+			   QByteArray roomPasskeySalt = {}, QByteArray roomPasskeyHash = {});
 	~GameServer() override;
 	bool start(QString* error = nullptr);
 	quint16 port() const;
@@ -52,6 +54,11 @@ private:
 		qint64 serverMuteExpiresAt = 0;
 		QSet<QString> mutedTextUsers;
 		QSet<QString> mutedVoiceUsers;
+	};
+	struct RoomPasskeyChallenge {
+		QString requestId;
+		QByteArray nonce;
+		qint64 expiresAtMs = 0;
 	};
 	struct PendingJoinRequest {
 		QTcpSocket* socket = nullptr;
@@ -123,6 +130,8 @@ private:
 	quint16 masterPort_ = 0;
 	QString serverSecret_;
 	QString sessionSecret_;
+	QByteArray roomPasskeySalt_;
+	QByteArray roomPasskeyHash_;
 	QString dictionaryPath_;
 	int intermissionSeconds_ = 15;
 	QStringList words_;
@@ -141,6 +150,7 @@ private:
 	QHash<QString, Player> players_;
 	QHash<QString, PendingJoinRequest> pendingJoinRequests_;
 	QHash<QTcpSocket*, QString> pendingJoinBySocket_;
+	QHash<QTcpSocket*, RoomPasskeyChallenge> roomPasskeyChallenges_;
 	QHash<QString, QString> pendingProfiles_;
 	QStringList playerOrder_;
 	QStringList playerQueue_;
