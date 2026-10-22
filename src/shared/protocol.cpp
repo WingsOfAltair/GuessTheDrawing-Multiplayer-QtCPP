@@ -1,5 +1,7 @@
 #include "shared/protocol.h"
 
+#include "shared/app_version.h"
+
 #include <QJsonDocument>
 #include <QTcpSocket>
 
@@ -9,6 +11,7 @@ QByteArray encodeMessage(const QJsonObject& message)
 {
 	QJsonObject framed = message;
 	framed.insert(QStringLiteral("version"), ProtocolVersion);
+	framed.insert(QStringLiteral("appVersion"), ApplicationVersion);
 	return QJsonDocument(framed).toJson(QJsonDocument::Compact) + '\n';
 }
 
@@ -16,6 +19,7 @@ QJsonObject makeMessage(const QString& type, const QJsonObject& fields)
 {
 	QJsonObject message = fields;
 	message.insert(QStringLiteral("version"), ProtocolVersion);
+	message.insert(QStringLiteral("appVersion"), ApplicationVersion);
 	message.insert(QStringLiteral("type"), type);
 	return message;
 }
@@ -52,6 +56,7 @@ bool parseMessage(const QByteArray& frame, QJsonObject* message, QString* error)
 		return value.isUndefined() || (value.isString() && value.toString().size() <= maximumLength);
 	};
 	if (!validStringField(QStringLiteral("requestId"), 128)
+		|| !validStringField(QStringLiteral("appVersion"), 32)
 		|| !validStringField(QStringLiteral("username"), 24)
 		|| !validStringField(QStringLiteral("password"), 128)
 		|| !validStringField(QStringLiteral("currentPassword"), 128)

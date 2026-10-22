@@ -1,4 +1,5 @@
 #include "master/master_server.h"
+#include "shared/app_version.h"
 #include "shared/app_config.h"
 #include "storage/account_store.h"
 
@@ -11,6 +12,7 @@ int main(int argc, char* argv[])
 {
 	QCoreApplication application(argc, argv);
 	QCoreApplication::setApplicationName(QStringLiteral("gtd_master"));
+	QCoreApplication::setApplicationVersion(gtd::ApplicationVersion);
 	QCommandLineParser parser;
 	parser.setApplicationDescription(QStringLiteral("Guess The Drawing master service"));
 	parser.addHelpOption();

@@ -1,6 +1,7 @@
 #include "master/master_server.h"
 
 #include "shared/auth_token.h"
+#include "shared/app_version.h"
 #include "shared/app_config.h"
 #include "shared/protocol.h"
 
@@ -22,6 +23,36 @@ class MasterServerTests final : public QObject {
 	Q_OBJECT
 
 private slots:
+	void rejectsClientWithWrongApplicationVersion()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		gtd::AccountStore accountStore(directory.filePath(QStringLiteral("versions.sqlite")));
+		QString error;
+		QVERIFY2(accountStore.initialize(&error), qPrintable(error));
+		gtd::MasterServer master(&accountStore, QStringLiteral("version-server-secret-long"),
+			QStringLiteral("version-session-secret-long"));
+		QVERIFY(master.start(QHostAddress::LocalHost, 0));
+		QTcpSocket client;
+		QByteArray responseBuffer;
+		QList<QJsonObject> responses;
+		connect(&client, &QTcpSocket::readyRead, this, [&] {
+			responses.append(gtd::takeMessages(&responseBuffer, client.readAll()));
+		});
+		client.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(client.state(), QAbstractSocket::ConnectedState);
+		const QByteArray oldClientFrame = QJsonDocument(QJsonObject{
+			{QStringLiteral("version"), gtd::ProtocolVersion}, {QStringLiteral("appVersion"), QStringLiteral("0.0.0")},
+			{QStringLiteral("type"), QStringLiteral("Login")}, {QStringLiteral("requestId"), QStringLiteral("old-client")},
+			{QStringLiteral("username"), QStringLiteral("legacy")},
+			{QStringLiteral("password"), QStringLiteral("password123")}}).toJson(QJsonDocument::Compact) + '\n';
+		QCOMPARE(client.write(oldClientFrame), qint64(oldClientFrame.size()));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("VersionMismatch")
+				&& response.value(QStringLiteral("requiredVersion")).toString() == gtd::ApplicationVersion;
+		}));
+	}
+
 	void automaticReportBanUsesConfiguredCalendarDuration()
 	{
 		QTemporaryDir directory;

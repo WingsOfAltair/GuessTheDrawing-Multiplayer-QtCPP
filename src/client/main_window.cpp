@@ -2,6 +2,7 @@
 
 #include "client/drawing_canvas.h"
 #include "shared/protocol.h"
+#include "shared/update_manager.h"
 
 #include <QAudioDevice>
 #include <QAudioFormat>
@@ -979,6 +980,31 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	refreshAgeTimer_.setInterval(1000);
 	connect(&refreshAgeTimer_, &QTimer::timeout, this, [this] { updateRoomsRefreshStatus(); });
 	refreshAgeTimer_.start();
+	updateManager_ = new UpdateManager(this);
+	connect(updateManager_, &UpdateManager::updateAvailable, this,
+		[this](const QString& version, const QString& archivePath) {
+			pendingUpdateVersion_ = version;
+			pendingUpdateArchive_ = archivePath;
+			if (inRoom_) {
+				auto* notice = new QMessageBox(QMessageBox::Information,
+					localizedText(QStringLiteral("Update ready"), languageCode_),
+					localizedText(QStringLiteral("Version %1 is downloaded and will install after you leave this room."),
+						languageCode_).arg(version), QMessageBox::Ok, this);
+				notice->setAttribute(Qt::WA_DeleteOnClose);
+				notice->setWindowModality(Qt::NonModal);
+				notice->show();
+				notice->raise();
+			} else {
+				installPendingUpdate();
+			}
+		});
+	connect(updateManager_, &UpdateManager::checkFailed, this, [](const QString& error) {
+			qWarning().noquote() << QStringLiteral("Update check failed: %1").arg(error);
+		});
+	updateCheckTimer_.setInterval(15 * 60 * 1000);
+	connect(&updateCheckTimer_, &QTimer::timeout, updateManager_, &UpdateManager::checkForUpdates);
+	updateCheckTimer_.start();
+	QTimer::singleShot(0, updateManager_, &UpdateManager::checkForUpdates);
 	connectMaster();
 }
 
@@ -2334,6 +2360,20 @@ void MainWindow::submitAuthentication()
 void MainWindow::handleMasterMessage(const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (type == QStringLiteral("VersionMismatch")) {
+		pendingAuthRequestId_.clear();
+		loginProgressBar_->hide();
+		usernameEdit_->setEnabled(true);
+		passwordEdit_->setEnabled(true);
+		displayNameEdit_->setEnabled(true);
+		createAccountCheck_->setEnabled(true);
+		const QString error = message.value(QStringLiteral("error")).toString(
+			localizedText(QStringLiteral("A game update is required before you can connect."), languageCode_));
+		loginStatusLabel_->setText(error);
+		QMessageBox::critical(this, localizedText(QStringLiteral("Update required"), languageCode_), error);
+		updateManager_->checkForUpdates();
+		return;
+	}
 	if (type == QStringLiteral("SessionReplaced")) {
 		authToken_.clear();
 		masterSuperAdmin_ = false;
@@ -2386,6 +2426,7 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		requestSocialList();
 		requestInboxList();
 		requestLeaderboards();
+		updateManager_->checkForUpdates();
 		return;
 	}
 	if (type == QStringLiteral("RoomList")) {
@@ -2999,6 +3040,42 @@ void MainWindow::saveProfile()
 void MainWindow::handleGameMessage(const QJsonObject& message)
 {
 	const QString type = message.value(QStringLiteral("type")).toString();
+	if (type == QStringLiteral("VersionMismatch")) {
+		const QString requiredVersion = message.value(QStringLiteral("requiredVersion")).toString();
+		const QString error = localizedText(QStringLiteral("This server requires game version %1. Checking for the update now."),
+			languageCode_).arg(requiredVersion);
+		connectionStatusLabel_->setText(error);
+		appendGameMessage(error);
+		stopGameReconnect();
+		reconnectingGameServer_ = false;
+		gameSocket_.abort();
+		updateManager_->checkForUpdates();
+		return;
+	}
+	if (type == QStringLiteral("ServerUpdateScheduled") || type == QStringLiteral("ServerUpdateCountdown")) {
+		const int secondsRemaining = qMax(0, message.value(QStringLiteral("secondsRemaining")).toInt());
+		const QString notice = localizedText(
+			QStringLiteral("This game server is updating to version %1 and will restart in %2 seconds. Finish your current round and reconnect afterward."),
+			languageCode_).arg(message.value(QStringLiteral("version")).toString()).arg(secondsRemaining);
+		if (chatList_)
+			appendGameMessage(notice);
+		if (type == QStringLiteral("ServerUpdateScheduled")) {
+			auto* noticeDialog = new QMessageBox(QMessageBox::Information,
+				localizedText(QStringLiteral("Server update scheduled"), languageCode_), notice,
+				QMessageBox::Ok, this);
+			noticeDialog->setAttribute(Qt::WA_DeleteOnClose);
+			noticeDialog->setWindowModality(Qt::NonModal);
+			noticeDialog->show();
+		}
+		return;
+	}
+	if (type == QStringLiteral("ServerRestarting")) {
+		appendGameMessage(localizedText(QStringLiteral("The server is restarting to install an update. Reconnect after it is available."), languageCode_));
+		leaveRoom();
+		stopGameReconnect();
+		reconnectingGameServer_ = false;
+		return;
+	}
 	if (type == QStringLiteral("RoomPasskeyChallenge")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_
 			|| pendingRoomPasskey_.isEmpty())
@@ -3572,11 +3649,25 @@ void MainWindow::leaveRoom()
 	roundStarting_ = false;
 	pages_->setCurrentWidget(lobbyPage_);
 	requestRooms();
+	installPendingUpdate();
 }
 
 void MainWindow::sendGameMessage(const QJsonObject& message)
 {
 	sendMessage(&gameSocket_, message);
+}
+
+void MainWindow::installPendingUpdate()
+{
+	if (pendingUpdateArchive_.isEmpty() || inRoom_ || updateRestartLaunched_ || !updateManager_)
+		return;
+	QString error;
+	if (!updateManager_->installAndRestart(pendingUpdateArchive_, &error)) {
+		QMessageBox::warning(this, localizedText(QStringLiteral("Update installation failed"), languageCode_), error);
+		return;
+	}
+	updateRestartLaunched_ = true;
+	QApplication::quit();
 }
 
 void MainWindow::flushPendingCanvasOperations()

@@ -1,4 +1,5 @@
 #include "game/game_server.h"
+#include "shared/app_version.h"
 #include "shared/app_config.h"
 #include "shared/game_rules.h"
 #include "shared/protocol.h"
@@ -14,6 +15,7 @@ int main(int argc, char* argv[])
 {
 	QCoreApplication application(argc, argv);
 	QCoreApplication::setApplicationName(QStringLiteral("gtd_game_server"));
+	QCoreApplication::setApplicationVersion(gtd::ApplicationVersion);
 	QCommandLineParser parser;
 	parser.setApplicationDescription(QStringLiteral("Guess The Drawing dedicated room server"));
 	parser.addHelpOption();

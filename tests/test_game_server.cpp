@@ -1,6 +1,7 @@
 #include "game/game_server.h"
 
 #include "shared/auth_token.h"
+#include "shared/app_version.h"
 #include "shared/protocol.h"
 
 #include <QJsonArray>
@@ -53,6 +54,53 @@ class GameServerTests final : public QObject {
 	Q_OBJECT
 
 private slots:
+	void rejectsClientWithWrongApplicationVersion()
+	{
+		QTcpServer master;
+		QVERIFY(master.listen(QHostAddress::LocalHost, 0));
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("version-room");
+		room.roomName = QStringLiteral("Version room");
+		gtd::GameServer server(room, QStringLiteral("version-server"), QStringLiteral("127.0.0.1"),
+			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
+			QStringLiteral("session-secret"));
+		QString error;
+		QVERIFY2(server.start(&error), qPrintable(error));
+		QTRY_VERIFY(master.hasPendingConnections());
+		QTcpSocket* masterSocket = master.nextPendingConnection();
+		QVERIFY(masterSocket);
+		connect(masterSocket, &QTcpSocket::readyRead, this, [masterSocket] {
+			const auto messages = gtd::takeMessages(nullptr, masterSocket->readAll());
+			for (const QJsonObject& message : messages) {
+				if (message.value(QStringLiteral("type")).toString() == QStringLiteral("ServerRegister"))
+					gtd::sendMessage(masterSocket, gtd::makeMessage(QStringLiteral("ServerRegisterAck"),
+						{{QStringLiteral("ok"), true}}));
+			}
+		});
+		QTcpSocket client;
+		client.connectToHost(QHostAddress::LocalHost, server.port());
+		QTRY_COMPARE(client.state(), QAbstractSocket::ConnectedState);
+		QByteArray responseBuffer;
+		QList<QJsonObject> responses;
+		connect(&client, &QTcpSocket::readyRead, this, [&] {
+			responses.append(gtd::takeMessages(&responseBuffer, client.readAll()));
+		});
+		gtd::PlayerProfile profile;
+		profile.username = QStringLiteral("versionuser");
+		const QString token = gtd::createSessionToken(profile.username, QStringLiteral("Version User"),
+			QStringLiteral("session-secret"), QDateTime::currentSecsSinceEpoch() + 60);
+		const QByteArray oldClientFrame = QJsonDocument(QJsonObject{
+			{QStringLiteral("version"), gtd::ProtocolVersion}, {QStringLiteral("appVersion"), QStringLiteral("0.0.0")},
+			{QStringLiteral("type"), QStringLiteral("JoinRoom")}, {QStringLiteral("requestId"), QStringLiteral("old-client")},
+			{QStringLiteral("roomId"), room.roomId}, {QStringLiteral("authToken"), token}})
+			.toJson(QJsonDocument::Compact) + '\n';
+		QCOMPARE(client.write(oldClientFrame), qint64(oldClientFrame.size()));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("VersionMismatch")
+				&& response.value(QStringLiteral("requiredVersion")).toString() == gtd::ApplicationVersion;
+		}));
+	}
+
 	void privateRoomRequiresPasskeyProof()
 	{
 		QTcpServer master;

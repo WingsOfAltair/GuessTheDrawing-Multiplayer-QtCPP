@@ -1,4 +1,5 @@
 #include "client/main_window.h"
+#include "shared/app_version.h"
 #include "shared/app_config.h"
 
 #include <QApplication>
@@ -9,7 +10,7 @@ int main(int argc, char* argv[])
 {
 	QApplication application(argc, argv);
 	QCoreApplication::setApplicationName(QStringLiteral("gtd_client"));
-	QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+	QCoreApplication::setApplicationVersion(gtd::ApplicationVersion);
 
 	QCommandLineParser parser;
 	parser.setApplicationDescription(QStringLiteral("Guess The Drawing desktop client"));

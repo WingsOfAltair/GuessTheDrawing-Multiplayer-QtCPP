@@ -39,6 +39,7 @@ namespace gtd {
 
 class DrawingCanvas;
 class LatencyIndicator;
+class UpdateManager;
 
 class MainWindow final : public QMainWindow {
 	Q_OBJECT
@@ -105,6 +106,7 @@ private:
 	void reconnectGameServer();
 	void stopGameReconnect();
 	void requestLeaderboards();
+	void installPendingUpdate();
 	void populateLeaderboard(QTableWidget* table, const QJsonArray& players, bool drawingPoints);
 	void saveProfile();
 	void applyLanguage(const QString& languageCode);
@@ -135,6 +137,11 @@ private:
 	QHash<QString, QAudioFormat> voiceOutputFormats_;
 	QHash<QString, QByteArray> voiceOutputPending_;
 	QTimer voiceOutputFlushTimer_;
+	QTimer updateCheckTimer_;
+	UpdateManager* updateManager_ = nullptr;
+	QString pendingUpdateArchive_;
+	QString pendingUpdateVersion_;
+	bool updateRestartLaunched_ = false;
 	QByteArray voiceCaptureBuffer_;
 	QByteArray voiceInputBuffer_;
 	QAudioFormat voiceInputFormat_;

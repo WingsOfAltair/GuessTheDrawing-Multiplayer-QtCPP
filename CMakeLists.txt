@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(GuessTheDrawing VERSION 1.0.0 LANGUAGES CXX)
+project(GuessTheDrawing VERSION 1.1.0 LANGUAGES CXX)
+
+if(NOT WIN32)
+	message(STATUS "Automatic update installation is currently supported for Windows ZIP releases; version checks remain enabled everywhere.")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,8 +16,11 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Core Multimedia Network Sql Widgets)
 add_library(gtd_shared
 	src/shared/app_config.cpp
 	src/shared/app_config.h
+	src/shared/app_version.h
 	src/shared/auth_token.cpp
 	src/shared/auth_token.h
+	src/shared/update_manager.cpp
+	src/shared/update_manager.h
 	src/shared/models.cpp
 	src/shared/protocol.cpp
 	src/shared/protocol.h
@@ -22,6 +29,7 @@ add_library(gtd_shared
 	src/shared/game_rules.h
 )
 target_include_directories(gtd_shared PUBLIC src)
+target_compile_definitions(gtd_shared PUBLIC GTD_APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(gtd_shared PUBLIC Qt6::Core Qt6::Network)
 
 add_library(gtd_storage

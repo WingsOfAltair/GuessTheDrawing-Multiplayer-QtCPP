@@ -1,5 +1,6 @@
 #include "master/master_server.h"
 
+#include "shared/app_version.h"
 #include "shared/auth_token.h"
 #include "shared/app_config.h"
 #include "shared/models.h"
@@ -277,6 +278,16 @@ void MasterServer::readSocket(QTcpSocket* socket)
 
 void MasterServer::handleMessage(QTcpSocket* socket, const QJsonObject& message)
 {
+	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
+		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
+			{{QStringLiteral("requiredVersion"), ApplicationVersion},
+			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
+			 {QStringLiteral("error"), QStringLiteral("Game update required before connecting to the master service")}});
+		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
+		sendMessage(socket, mismatch);
+		socket->disconnectFromHost();
+		return;
+	}
 	if (serverIdsBySocket_.contains(socket)) {
 		handleServerMessage(socket, message);
 		return;
@@ -293,6 +304,15 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	const QString type = message.value(QStringLiteral("type")).toString();
 	const QString username = message.value(QStringLiteral("username")).toString();
 	QString error;
+	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
+		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
+			{{QStringLiteral("requiredVersion"), ApplicationVersion},
+			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
+			 {QStringLiteral("error"), QStringLiteral("Client update required. Install the current game version and reconnect.")}});
+		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
+		sendMessage(socket, mismatch);
+		return;
+	}
 	if (type == QStringLiteral("UserSearchRequest") || type == QStringLiteral("UserProfileRequest")) {
 		QString viewer;
 		if (!verifyClientSession(message, &viewer, &error)) {
@@ -1229,6 +1249,16 @@ void MasterServer::sendRoomList(QTcpSocket* socket, const QJsonObject& request)
 
 void MasterServer::handleServerRegistration(QTcpSocket* socket, const QJsonObject& message)
 {
+	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
+		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
+			{{QStringLiteral("requiredVersion"), ApplicationVersion},
+			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
+			 {QStringLiteral("error"), QStringLiteral("Game server update required")}});
+		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
+		sendMessage(socket, mismatch);
+		socket->disconnectFromHost();
+		return;
+	}
 	const QByteArray suppliedSecret = message.value(QStringLiteral("secret")).toString().toUtf8();
 	if (serverSecret_.isEmpty() || !constantTimeEqual(suppliedSecret, serverSecret_.toUtf8())) {
 		sendError(socket, message, QStringLiteral("Game server registration rejected"));

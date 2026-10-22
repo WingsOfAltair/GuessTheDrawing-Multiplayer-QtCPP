@@ -128,6 +128,8 @@ private:
 	QString selectWord() const;
 	bool loadDictionary(QString* error);
 	void refreshRuntimeConfiguration();
+	void scheduleUpdateRestart(const QString& version, const QString& archivePath);
+	void maybeRestartForUpdate();
 
 	RoomInfo room_;
 	QString serverId_;
@@ -154,6 +156,9 @@ private:
 	QTimer countdownTimer_;
 	QTimer configurationRefreshTimer_;
 	QTimer reconnectGraceTimer_;
+	QTimer updateCheckTimer_;
+	QTimer updateRestartTimer_;
+	QTimer updateRestartCountdownTimer_;
 	QElapsedTimer actionRateLimitClock_;
 	QHash<QTcpSocket*, QByteArray> playerBuffers_;
 	QHash<QTcpSocket*, SocketRateLimit> socketRateLimits_;
@@ -175,8 +180,11 @@ private:
 	QString roundWinnerUsername_;
 	QString lastDrawer_;
 	QString currentWord_;
+	QString pendingUpdateArchive_;
+	QString pendingUpdateVersion_;
 	QDateTime roundDeadline_;
 	QDateTime intermissionDeadline_;
+	QDateTime updateRestartDeadline_;
 	int roundNumber_ = 0;
 	int correctGuesses_ = 0;
 	quint64 roundResultSequence_ = 1;
@@ -189,6 +197,7 @@ private:
 	bool roundStarting_ = false;
 	bool masterRegistered_ = false;
 	bool reconnectPaused_ = false;
+	bool updateRestartPending_ = false;
 	int reconnectGraceSeconds_ = 30;
 	int pausedRoundRemainingMs_ = 0;
 };

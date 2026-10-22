@@ -1,4 +1,5 @@
 #include "shared/auth_token.h"
+#include "shared/app_version.h"
 #include "shared/protocol.h"
 
 #include <QJsonDocument>
@@ -18,6 +19,7 @@ private slots:
 		QVERIFY2(gtd::parseMessage(frame.trimmed(), &message, &error), qPrintable(error));
 		QCOMPARE(message.value(QStringLiteral("type")).toString(), QStringLiteral("Ping"));
 		QCOMPARE(message.value(QStringLiteral("version")).toInt(), gtd::ProtocolVersion);
+		QCOMPARE(message.value(QStringLiteral("appVersion")).toString(), gtd::ApplicationVersion);
 		QCOMPARE(message.value(QStringLiteral("nonce")).toInt(), 42);
 	}
 
