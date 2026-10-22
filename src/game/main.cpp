@@ -115,7 +115,11 @@ int main(int argc, char* argv[])
 						   masterAddress,
 						   static_cast<quint16>(masterPort), serverSecret, sessionSecret,
 						   config.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
-						   intermissionDuration, nullptr, roomPasskeySalt, roomPasskeyHash);
+						   intermissionDuration, nullptr, roomPasskeySalt, roomPasskeyHash,
+						   config.resolvedPath(QStringLiteral("gameServer"), QStringLiteral("profanityDictionaryPath")),
+						   config.filePath(), config.intValue(QStringLiteral("gameServer"),
+							QStringLiteral("configRefreshSeconds")), config.intValue(QStringLiteral("gameServer"),
+							QStringLiteral("reconnectGraceSeconds")));
 	if (!server.start(&error)) {
 		QTextStream(stderr) << "Unable to start game server: " << error << '\n';
 		return 1;

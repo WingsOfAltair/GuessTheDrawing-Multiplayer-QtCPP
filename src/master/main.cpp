@@ -63,7 +63,8 @@ int main(int argc, char* argv[])
 
 	const int superAdminRefreshSeconds = config.intValue(QStringLiteral("master"),
 		QStringLiteral("superAdminRefreshSeconds"));
-	gtd::MasterServer server(&accountStore, serverSecret, sessionSecret, superAdminRefreshSeconds);
+	gtd::MasterServer server(&accountStore, serverSecret, sessionSecret, superAdminRefreshSeconds, nullptr,
+		config.filePath());
 	const QHostAddress address(addressValue);
 	if (address.isNull() || !server.start(address, static_cast<quint16>(portValue))) {
 		QTextStream(stderr) << "Unable to start master on " << address.toString()

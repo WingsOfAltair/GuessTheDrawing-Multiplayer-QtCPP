@@ -16,7 +16,8 @@ namespace gtd {
 class MasterServer final : public QObject {
 public:
 	explicit MasterServer(AccountStore* accountStore, QString serverSecret, QString sessionSecret,
-						  int superAdminRefreshSeconds = 1, QObject* parent = nullptr);
+						  int superAdminRefreshSeconds = 1, QObject* parent = nullptr,
+						  QString configFilePath = {});
 	~MasterServer() override;
 	bool start(const QHostAddress& address, quint16 port);
 	QHostAddress serverAddress() const;
@@ -40,6 +41,7 @@ private:
 	void removeSocket(QTcpSocket* socket, bool logDisconnect = true);
 	void expireServers();
 	void refreshMasterSuperAdmins();
+	void refreshRuntimeConfiguration();
 	void sendRoomList(QTcpSocket* socket, const QJsonObject& request);
 	void sendAuthResult(QTcpSocket* socket, const QJsonObject& request,
 						const std::optional<PlayerProfile>& profile, const QString& error,
@@ -57,6 +59,11 @@ private:
 	AccountStore* accountStore_;
 	QString serverSecret_;
 	QString sessionSecret_;
+	QString configFilePath_;
+	int automaticBanDistinctReports_ = 3;
+	int automaticBanDurationValue_ = 1;
+	QString automaticBanDurationUnit_ = QStringLiteral("hours");
+	QTimer configurationRefreshTimer_;
 	QHash<QTcpSocket*, QByteArray> pendingData_;
 	QHash<QTcpSocket*, QString> serverIdsBySocket_;
 	QHash<QTcpSocket*, QString> authenticatedClients_;

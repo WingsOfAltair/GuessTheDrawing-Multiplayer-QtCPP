@@ -46,6 +46,14 @@ foreach(dictionary_target IN ITEMS gtd_game_server gtd_client)
 		VERBATIM
 	)
 endforeach()
+foreach(profanity_target IN ITEMS gtd_game_server gtd_master)
+	add_custom_command(TARGET ${profanity_target} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_SOURCE_DIR}/profanity-dictionary.txt"
+			"$<TARGET_FILE_DIR:${profanity_target}>/profanity-dictionary.txt"
+		VERBATIM
+	)
+endforeach()
 file(GLOB COUNTRY_FLAG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/country-flags/*.png")
 qt_add_resources(gtd_client country_flags
 	PREFIX "/country-flags"
@@ -79,6 +87,12 @@ if(BUILD_TESTING)
 	target_link_libraries(gtd_game_server_tests PRIVATE gtd_shared Qt6::Test)
 	add_custom_command(TARGET gtd_game_server_tests POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_SOURCE_DIR}/profanity-dictionary.txt"
+			"$<TARGET_FILE_DIR:gtd_game_server_tests>/profanity-dictionary.txt"
+		VERBATIM
+	)
+	add_custom_command(TARGET gtd_game_server_tests POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
 			"${CMAKE_CURRENT_SOURCE_DIR}/dictionary"
 			"$<TARGET_FILE_DIR:gtd_game_server_tests>/dictionary"
 		VERBATIM
@@ -86,6 +100,12 @@ if(BUILD_TESTING)
 	add_test(NAME gtd_game_server_tests COMMAND gtd_game_server_tests)
 	add_executable(gtd_master_tests tests/test_master_server.cpp src/master/master_server.cpp src/master/master_server.h)
 	target_link_libraries(gtd_master_tests PRIVATE gtd_storage gtd_shared Qt6::Test)
+	add_custom_command(TARGET gtd_master_tests POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			"${CMAKE_CURRENT_SOURCE_DIR}/profanity-dictionary.txt"
+			"$<TARGET_FILE_DIR:gtd_master_tests>/profanity-dictionary.txt"
+		VERBATIM
+	)
 	add_test(NAME gtd_master_tests COMMAND gtd_master_tests)
 	add_executable(gtd_app_config_tests tests/test_app_config.cpp)
 	target_link_libraries(gtd_app_config_tests PRIVATE gtd_shared Qt6::Test)

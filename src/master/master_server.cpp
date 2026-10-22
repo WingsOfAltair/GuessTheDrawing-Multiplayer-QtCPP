@@ -1,6 +1,7 @@
 #include "master/master_server.h"
 
 #include "shared/auth_token.h"
+#include "shared/app_config.h"
 #include "shared/models.h"
 #include "shared/protocol.h"
 
@@ -33,8 +34,6 @@ namespace {
 constexpr qint64 ServerTimeoutSeconds = 15;
 constexpr qint64 SessionLifetimeSeconds = 24 * 60 * 60;
 constexpr qsizetype MaximumRoomsPerServer = 128;
-constexpr int AutomaticBanReportThreshold = 3;
-
 bool validServerId(const QString& serverId)
 {
 	static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
@@ -122,11 +121,12 @@ void writePopulationStatus(const QString& status)
 }
 
 MasterServer::MasterServer(AccountStore* accountStore, QString serverSecret, QString sessionSecret,
-						   int superAdminRefreshSeconds, QObject* parent)
+						   int superAdminRefreshSeconds, QObject* parent, QString configFilePath)
 	: QObject(parent),
 	  accountStore_(accountStore),
 	  serverSecret_(std::move(serverSecret)),
-	  sessionSecret_(std::move(sessionSecret))
+	  sessionSecret_(std::move(sessionSecret)),
+	  configFilePath_(std::move(configFilePath))
 {
 	connect(&listener_, &QTcpServer::newConnection, this, [this] { acceptConnections(); });
 	expiryTimer_.setInterval(5000);
@@ -134,16 +134,56 @@ MasterServer::MasterServer(AccountStore* accountStore, QString serverSecret, QSt
 	expiryTimer_.start();
 	superAdminRefreshTimer_.setInterval(qBound(1, superAdminRefreshSeconds, 3600) * 1000);
 	connect(&superAdminRefreshTimer_, &QTimer::timeout, this, [this] { refreshMasterSuperAdmins(); });
+	if (!configFilePath_.isEmpty()) {
+		configurationRefreshTimer_.setInterval(5000);
+		connect(&configurationRefreshTimer_, &QTimer::timeout, this,
+			[this] { refreshRuntimeConfiguration(); });
+		refreshRuntimeConfiguration();
+		configurationRefreshTimer_.start();
+	}
 }
 
 MasterServer::~MasterServer()
 {
+	configurationRefreshTimer_.stop();
 	listener_.close();
 	const auto sockets = listener_.findChildren<QTcpSocket*>();
 	for (QTcpSocket* socket : sockets) {
 		disconnect(socket, nullptr, this, nullptr);
 		socket->abort();
 	}
+}
+
+void MasterServer::refreshRuntimeConfiguration()
+{
+	if (configFilePath_.isEmpty())
+		return;
+	AppConfig config;
+	QString error;
+	if (!config.loadOrCreate(configFilePath_, &error)) {
+		qWarning().noquote() << QStringLiteral("Runtime configuration reload skipped: %1").arg(error);
+		return;
+	}
+	const int distinctReports = config.intValue(QStringLiteral("master"),
+		QStringLiteral("automaticBanDistinctReports"));
+	const int banDurationValue = config.intValue(QStringLiteral("master"), QStringLiteral("automaticBanDurationValue"));
+	const QString banDurationUnit = config.stringValue(QStringLiteral("master"),
+		QStringLiteral("automaticBanDurationUnit"));
+	if (distinctReports < 2 || distinctReports > 100 || banDurationValue < 1 || banDurationValue > 720
+		|| !QSet<QString>{QStringLiteral("seconds"), QStringLiteral("minutes"), QStringLiteral("hours"),
+			QStringLiteral("days"), QStringLiteral("weeks"), QStringLiteral("months"),
+			QStringLiteral("years")}.contains(banDurationUnit))
+		return;
+	automaticBanDistinctReports_ = distinctReports;
+	automaticBanDurationValue_ = banDurationValue;
+	automaticBanDurationUnit_ = banDurationUnit;
+	QSet<QString> profanityWords;
+	if (!loadProfanityWords(config.resolvedPath(QStringLiteral("gameServer"),
+		QStringLiteral("profanityDictionaryPath")), &profanityWords, &error)) {
+		qWarning().noquote() << QStringLiteral("Profanity dictionary reload skipped: %1").arg(error);
+		return;
+	}
+	setConfiguredProfanityWords(profanityWords);
 }
 
 bool MasterServer::start(const QHostAddress& address, quint16 port)
@@ -305,6 +345,8 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 		const QList<QString> friendNames = accountStore_->friends(actor, &error);
 		const QList<FriendRequest> requests = accountStore_->friendRequests(actor, &error);
 		const QList<QString> blocked = accountStore_->blockedUsers(actor, &error);
+		const QList<UserNotification> notifications = accountStore_->notifications(actor, &error);
+		const int notificationCount = accountStore_->unreadNotificationCount(actor, &error);
 		if (!error.isEmpty()) {
 			sendError(socket, message, error);
 			return;
@@ -312,6 +354,7 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 		QJsonArray friendsJson;
 		QJsonArray requestsJson;
 		QJsonArray blockedJson;
+		QJsonArray notificationsJson;
 		for (const QString& friendName : friendNames) {
 			const auto profile = accountStore_->profile(friendName, &error);
 			if (!profile)
@@ -322,18 +365,22 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 			requestsJson.append(request.toJson());
 		for (const QString& blockedName : blocked)
 			blockedJson.append(blockedName);
+		for (const UserNotification& notification : notifications)
+			notificationsJson.append(notification.toJson());
 		if (!error.isEmpty()) {
 			sendError(socket, message, error);
 			return;
 		}
 		sendMessage(socket, withRequestId(QStringLiteral("SocialListResult"), message,
 			{{QStringLiteral("friends"), friendsJson}, {QStringLiteral("requests"), requestsJson},
-			 {QStringLiteral("blocked"), blockedJson}}));
+			 {QStringLiteral("blocked"), blockedJson}, {QStringLiteral("notifications"), notificationsJson},
+			 {QStringLiteral("notificationCount"), notificationCount}}));
 		return;
 	}
 	const QStringList socialActions{QStringLiteral("FriendRequestSend"), QStringLiteral("FriendRequestAccept"),
 		QStringLiteral("FriendRequestDeny"), QStringLiteral("FriendRequestClear"),
-		QStringLiteral("FriendRemove"), QStringLiteral("BlockSet")};
+		QStringLiteral("FriendRemove"), QStringLiteral("BlockSet"), QStringLiteral("NotificationClear"),
+		QStringLiteral("NotificationClearAll"), QStringLiteral("FriendRequestNotificationClear")};
 	if (socialActions.contains(type)) {
 		QString actor;
 		if (!verifyClientSession(message, &actor, &error)) {
@@ -366,6 +413,13 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 			succeeded = accountStore_->denyFriendRequest(actor, requestId, &error);
 		} else if (type == QStringLiteral("FriendRequestClear")) {
 			succeeded = accountStore_->clearDeniedFriendRequest(actor, requestId, &error);
+		} else if (type == QStringLiteral("NotificationClear")) {
+			succeeded = accountStore_->clearNotification(actor,
+				message.value(QStringLiteral("notificationId")).toVariant().toLongLong(), &error);
+		} else if (type == QStringLiteral("NotificationClearAll")) {
+			succeeded = accountStore_->clearNotifications(actor, &error);
+		} else if (type == QStringLiteral("FriendRequestNotificationClear")) {
+			succeeded = accountStore_->clearFriendRequestNotifications(actor, target, &error);
 		} else if (type == QStringLiteral("FriendRemove")) {
 			succeeded = accountStore_->removeFriend(actor, target, &error);
 		} else {
@@ -378,6 +432,20 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 		QJsonObject fields{{QStringLiteral("ok"), true}, {QStringLiteral("action"), type}};
 		if (type == QStringLiteral("FriendRequestSend"))
 			fields.insert(QStringLiteral("targetUsername"), target);
+		if (type == QStringLiteral("FriendRequestAccept") || type == QStringLiteral("FriendRequestDeny")) {
+			const QString decision = type == QStringLiteral("FriendRequestAccept")
+				? QStringLiteral("accepted") : QStringLiteral("denied");
+			if (!relatedUser.isEmpty()
+				&& !accountStore_->addFriendRequestDecisionNotification(relatedUser, actor, decision, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+			if (type == QStringLiteral("FriendRequestAccept")
+				&& !accountStore_->addFriendAcceptedNotification(actor, relatedUser, &error)) {
+				sendError(socket, message, error);
+				return;
+			}
+		}
 		if (requestId > 0)
 			fields.insert(QStringLiteral("friendRequestId"), static_cast<double>(requestId));
 		sendMessage(socket, withRequestId(QStringLiteral("SocialActionResult"), message, fields));
@@ -393,6 +461,25 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 						{{QStringLiteral("username"), actor}}));
 			}
 		}
+		return;
+	}
+	if (type == QStringLiteral("NotificationListRequest")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		const QList<UserNotification> notifications = accountStore_->notifications(actor, &error);
+		const int count = accountStore_->unreadNotificationCount(actor, &error);
+		if (!error.isEmpty()) {
+			sendError(socket, message, error);
+			return;
+		}
+		QJsonArray items;
+		for (const UserNotification& notification : notifications)
+			items.append(notification.toJson());
+		sendMessage(socket, withRequestId(QStringLiteral("NotificationListResult"), message,
+			{{QStringLiteral("notifications"), items}, {QStringLiteral("notificationCount"), count}}));
 		return;
 	}
 	if (type == QStringLiteral("InboxListRequest")) {
@@ -584,7 +671,7 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 				!= QStringLiteral("player")
 			|| !isValidSingleLineText(reason, 500)) {
 			sendError(socket, message, error.isEmpty()
-				? QStringLiteral("Reports require a valid reason and both players in the same room") : error);
+				? QStringLiteral("Reports require a valid reason and both accounts in the same room") : error);
 			return;
 		}
 		const QString serverId = reporterPresence->value(QStringLiteral("serverId")).toString();
@@ -594,15 +681,30 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 			return;
 		}
 		bool automaticBanApplied = false;
-		if (recentReportCount == AutomaticBanReportThreshold) {
+		if (recentReportCount == automaticBanDistinctReports_) {
 			ServerSanction sanction;
 			sanction.serverId = serverId;
 			sanction.targetUsername = target;
 			sanction.kind = QStringLiteral("ban");
 			sanction.reason = QStringLiteral("Automatic temporary ban after multiple player reports");
 			sanction.issuedBy = reporter;
-			sanction.expiresAt = QDateTime::currentSecsSinceEpoch() + 60 * 60;
-			if (!accountStore_->addServerSanction(sanction, nullptr, &error)) {
+			QDateTime expiresAt = QDateTime::currentDateTimeUtc();
+			if (automaticBanDurationUnit_ == QStringLiteral("seconds"))
+				expiresAt = expiresAt.addSecs(automaticBanDurationValue_);
+			else if (automaticBanDurationUnit_ == QStringLiteral("minutes"))
+				expiresAt = expiresAt.addSecs(static_cast<qint64>(automaticBanDurationValue_) * 60);
+			else if (automaticBanDurationUnit_ == QStringLiteral("hours"))
+				expiresAt = expiresAt.addSecs(static_cast<qint64>(automaticBanDurationValue_) * 60 * 60);
+			else if (automaticBanDurationUnit_ == QStringLiteral("days"))
+				expiresAt = expiresAt.addDays(automaticBanDurationValue_);
+			else if (automaticBanDurationUnit_ == QStringLiteral("weeks"))
+				expiresAt = expiresAt.addDays(static_cast<qint64>(automaticBanDurationValue_) * 7);
+			else if (automaticBanDurationUnit_ == QStringLiteral("months"))
+				expiresAt = expiresAt.addMonths(automaticBanDurationValue_);
+			else
+				expiresAt = expiresAt.addYears(automaticBanDurationValue_);
+			sanction.expiresAt = expiresAt.toSecsSinceEpoch();
+			if (!accountStore_->addServerSanction(sanction, nullptr, &error, true)) {
 				sendError(socket, message, error);
 				return;
 			}

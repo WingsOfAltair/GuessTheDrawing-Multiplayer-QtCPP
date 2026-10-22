@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
 #include <QString>
 
 namespace gtd {
@@ -78,6 +79,15 @@ struct DirectMessage {
 
 	QJsonObject toJson() const;
 	static DirectMessage fromJson(const QJsonObject& object);
+};
+
+struct UserNotification {
+	qint64 id = 0;
+	QString relatedUsername;
+	QString kind;
+	qint64 createdAt = 0;
+
+	QJsonObject toJson() const;
 };
 
 struct ServerRoleAssignment {
@@ -167,6 +177,10 @@ struct CanvasObject {
 bool isValidCanvasLayer(const CanvasLayer& layer, QString* error = nullptr);
 bool isValidCanvasObject(const CanvasObject& object, QString* error = nullptr);
 bool isValidSingleLineText(const QString& text, qsizetype maximumLength);
+QSet<QString> defaultProfanityWords();
+bool loadProfanityWords(const QString& path, QSet<QString>* words, QString* error = nullptr);
+void setConfiguredProfanityWords(const QSet<QString>& words);
+bool containsProfanity(const QString& text, const QSet<QString>& blockedWords);
 bool containsProfanity(const QString& text);
 
 }

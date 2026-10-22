@@ -7,6 +7,7 @@
 #include <QtTest>
 
 #include <initializer_list>
+#include <utility>
 
 class AppConfigTests : public QObject {
 	Q_OBJECT
@@ -16,6 +17,8 @@ private slots:
 	void mergesMissingValues();
 	void rejectsMalformedFileWithoutChangingIt();
 	void rejectsInvalidSuperAdminRefreshIntervals();
+	void migratesLegacyAutomaticBanHours();
+	void validatesAutomaticBanDuration();
 };
 
 void AppConfigTests::createsAndPersistsConfiguration()
@@ -39,6 +42,13 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	QCOMPARE(first.stringValue(QStringLiteral("client"), QStringLiteral("dictionaryPath")),
 		gtd::AppConfig::defaultDictionaryPath());
 	QCOMPARE(first.intValue(QStringLiteral("gameServer"), QStringLiteral("intermissionSeconds")), 15);
+	QCOMPARE(first.intValue(QStringLiteral("gameServer"), QStringLiteral("configRefreshSeconds")), 5);
+	QCOMPARE(first.intValue(QStringLiteral("master"), QStringLiteral("automaticBanDistinctReports")), 3);
+	QCOMPARE(first.intValue(QStringLiteral("master"), QStringLiteral("automaticBanDurationValue")), 1);
+	QCOMPARE(first.stringValue(QStringLiteral("master"), QStringLiteral("automaticBanDurationUnit")),
+		QStringLiteral("hours"));
+	QVERIFY(first.stringValue(QStringLiteral("gameServer"), QStringLiteral("profanityDictionaryPath"))
+		.endsWith(QStringLiteral("profanity-dictionary.txt")));
 	QCOMPARE(first.intValue(QStringLiteral("master"), QStringLiteral("superAdminRefreshSeconds")), 1);
 
 	gtd::AppConfig second;
@@ -76,6 +86,67 @@ void AppConfigTests::createsAndPersistsConfiguration()
 	gtd::AppConfig configured;
 	QVERIFY2(configured.loadOrCreate(path, &error), qPrintable(error));
 	QCOMPARE(configured.intValue(QStringLiteral("master"), QStringLiteral("superAdminRefreshSeconds")), 7);
+}
+
+void AppConfigTests::migratesLegacyAutomaticBanHours()
+{
+	QTemporaryDir directory;
+	QVERIFY(directory.isValid());
+	const QString path = directory.filePath(QStringLiteral("legacy.json"));
+	QFile file(path);
+	QVERIFY(file.open(QIODevice::WriteOnly));
+	file.write(QJsonDocument(QJsonObject{
+		{QStringLiteral("version"), 1},
+		{QStringLiteral("master"), QJsonObject{{QStringLiteral("automaticBanHours"), 12}}}
+	}).toJson());
+	file.close();
+
+	gtd::AppConfig config;
+	QString error;
+	QVERIFY2(config.loadOrCreate(path, &error), qPrintable(error));
+	QCOMPARE(config.intValue(QStringLiteral("master"), QStringLiteral("automaticBanDurationValue")), 12);
+	QCOMPARE(config.stringValue(QStringLiteral("master"), QStringLiteral("automaticBanDurationUnit")),
+		QStringLiteral("hours"));
+}
+
+void AppConfigTests::validatesAutomaticBanDuration()
+{
+	for (const auto& [value, unit] : {std::pair{1, QStringLiteral("seconds")},
+		std::pair{5, QStringLiteral("minutes")}, std::pair{24, QStringLiteral("hours")},
+		std::pair{30, QStringLiteral("days")}, std::pair{4, QStringLiteral("weeks")},
+		std::pair{1, QStringLiteral("months")}, std::pair{1, QStringLiteral("years")}}) {
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		const QString path = directory.filePath(QStringLiteral("duration.json"));
+		QFile file(path);
+		QVERIFY(file.open(QIODevice::WriteOnly));
+		file.write(QJsonDocument(QJsonObject{
+			{QStringLiteral("version"), 1},
+			{QStringLiteral("master"), QJsonObject{
+				{QStringLiteral("automaticBanDurationValue"), value},
+				{QStringLiteral("automaticBanDurationUnit"), unit}}}
+		}).toJson());
+		file.close();
+		gtd::AppConfig config;
+		QString error;
+		QVERIFY2(config.loadOrCreate(path, &error), qPrintable(error));
+	}
+	QTemporaryDir directory;
+	QVERIFY(directory.isValid());
+	const QString path = directory.filePath(QStringLiteral("invalid-duration.json"));
+	QFile file(path);
+	QVERIFY(file.open(QIODevice::WriteOnly));
+	file.write(QJsonDocument(QJsonObject{
+		{QStringLiteral("version"), 1},
+		{QStringLiteral("master"), QJsonObject{
+			{QStringLiteral("automaticBanDurationValue"), 1},
+			{QStringLiteral("automaticBanDurationUnit"), QStringLiteral("fortnights")}}}
+	}).toJson());
+	file.close();
+	gtd::AppConfig config;
+	QString error;
+	QVERIFY(!config.loadOrCreate(path, &error));
+	QVERIFY(error.contains(QStringLiteral("automaticBanDuration")));
 }
 
 void AppConfigTests::mergesMissingValues()

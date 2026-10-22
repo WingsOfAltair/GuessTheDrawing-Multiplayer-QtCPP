@@ -1,12 +1,15 @@
 #include "shared/models.h"
 
 #include <QByteArray>
+#include <QFile>
 #include <QRegularExpression>
 #include <QtEndian>
 #include <cmath>
 
 namespace gtd {
 namespace {
+
+QSet<QString> configuredProfanityWords;
 
 void setValidationError(QString* error, const QString& message)
 {
@@ -64,6 +67,11 @@ bool validCanvasImageData(const QString& imageData)
 		&& height <= MaximumCanvasImageDimension;
 }
 
+}
+
+void setConfiguredProfanityWords(const QSet<QString>& words)
+{
+	configuredProfanityWords = words;
 }
 
 QJsonObject RoomInfo::toJson() const
@@ -190,6 +198,14 @@ QJsonObject DirectMessage::toJson() const
 		{QStringLiteral("senderUsername"), senderUsername},
 		{QStringLiteral("recipientUsername"), recipientUsername},
 		{QStringLiteral("body"), body},
+		{QStringLiteral("createdAt"), static_cast<double>(createdAt)}};
+}
+
+QJsonObject UserNotification::toJson() const
+{
+	return {{QStringLiteral("id"), static_cast<double>(id)},
+		{QStringLiteral("relatedUsername"), relatedUsername},
+		{QStringLiteral("kind"), kind},
 		{QStringLiteral("createdAt"), static_cast<double>(createdAt)}};
 }
 
@@ -342,16 +358,61 @@ bool isValidSingleLineText(const QString& text, qsizetype maximumLength)
 
 bool containsProfanity(const QString& text)
 {
-	static const QStringList blockedWords{
-		QStringLiteral("asshole"), QStringLiteral("bastard"), QStringLiteral("bitch"),
+	static const QSet<QString> defaults = defaultProfanityWords();
+	return containsProfanity(text, configuredProfanityWords.isEmpty() ? defaults : configuredProfanityWords);
+}
+
+QSet<QString> defaultProfanityWords()
+{
+	return {QStringLiteral("asshole"), QStringLiteral("bastard"), QStringLiteral("bitch"),
 		QStringLiteral("damn"), QStringLiteral("fuck"), QStringLiteral("motherfucker"),
 		QStringLiteral("shit")};
+}
+
+bool loadProfanityWords(const QString& path, QSet<QString>* words, QString* error)
+{
+	if (error)
+		error->clear();
+	if (!words) {
+		if (error)
+			*error = QStringLiteral("Profanity dictionary output is missing");
+		return false;
+	}
+	QFile file(path);
+	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		if (error)
+			*error = QStringLiteral("Unable to open profanity dictionary '%1': %2").arg(path, file.errorString());
+		return false;
+	}
+	QSet<QString> loaded;
+	while (!file.atEnd()) {
+		const QString line = QString::fromUtf8(file.readLine()).trimmed().toLower();
+		if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+			continue;
+		if (line.size() > 64 || line.contains(QRegularExpression(QStringLiteral("[\\r\\n]")))) {
+			if (error)
+				*error = QStringLiteral("Profanity dictionary contains an invalid entry");
+			return false;
+		}
+		loaded.insert(line);
+	}
+	if (loaded.isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Profanity dictionary contains no usable entries");
+		return false;
+	}
+	*words = std::move(loaded);
+	return true;
+}
+
+bool containsProfanity(const QString& text, const QSet<QString>& blockedWords)
+{
 	static const QRegularExpression wordCharacters(QStringLiteral("[a-z0-9]+"),
 		QRegularExpression::CaseInsensitiveOption);
 	auto matches = wordCharacters.globalMatch(text.toLower());
 	while (matches.hasNext()) {
 		const QString word = matches.next().captured();
-		if (std::find(blockedWords.cbegin(), blockedWords.cend(), word) != blockedWords.cend())
+		if (blockedWords.contains(word))
 			return true;
 	}
 	return false;

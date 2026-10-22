@@ -895,6 +895,14 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	});
 	connect(&masterSocket_, &QTcpSocket::readyRead, this, [this] { readMaster(); });
 	connect(&masterSocket_, &QTcpSocket::disconnected, this, [this] {
+		if (!pendingAuthRequestId_.isEmpty()) {
+			pendingAuthRequestId_.clear();
+			loginProgressBar_->hide();
+			usernameEdit_->setEnabled(true);
+			passwordEdit_->setEnabled(true);
+			displayNameEdit_->setEnabled(true);
+			createAccountCheck_->setEnabled(true);
+		}
 		setLocalizedText(connectionStatusLabel_, QStringLiteral("Master disconnected; reconnecting…"), languageCode_);
 		setLocalizedText(loginConnectionStatusLabel_, QStringLiteral("Master disconnected; reconnecting…"), languageCode_);
 		QTimer::singleShot(2000, this, [this] { connectMaster(); });
@@ -905,6 +913,7 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 		setLocalizedFormattedText(loginConnectionStatusLabel_, QStringLiteral("Cannot reach master at %1:%2"), arguments, languageCode_);
 	});
 	connect(&gameSocket_, &QTcpSocket::connected, this, [this] {
+		gameReconnectTimer_.stop();
 		pendingJoinRequestId_ = nextRequestId();
 		sendGameMessage(makeMessage(QStringLiteral("JoinRoom"),
 			{{QStringLiteral("requestId"), pendingJoinRequestId_},
@@ -925,19 +934,36 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 		if (activeLatencyIndicator_)
 			activeLatencyIndicator_->setPing(-1);
 		if (inRoom_ && !leavingRoom_) {
+			reconnectingGameServer_ = true;
+			setLocalizedText(connectionStatusLabel_, QStringLiteral("Connection lost; reconnecting to room…"), languageCode_);
+			scheduleGameReconnect();
+		} else if (!leavingRoom_ && reconnectingGameServer_) {
+			scheduleGameReconnect();
+		} else if (!inRoom_ && !leavingRoom_) {
 			inRoom_ = false;
 			pages_->setCurrentWidget(lobbyPage_);
 			setLocalizedText(connectionStatusLabel_, QStringLiteral("Disconnected from the game server"), languageCode_);
 			requestRooms();
 		}
-		leavingRoom_ = false;
+		if (leavingRoom_) {
+			stopGameReconnect();
+			leavingRoom_ = false;
+		}
 	});
 	connect(&gameSocket_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
+		if (!inRoom_) {
+			lobbyProgressBar_->hide();
+			joinRoomButton_->setEnabled(roomsTable_->currentRow() >= 0);
+			joinRoleCombo_->setEnabled(true);
+		}
 		if (!inRoom_)
 			setLocalizedText(connectionStatusLabel_, QStringLiteral("Could not connect to the selected room"), languageCode_);
 	});
 	activePingTimer_.setInterval(2000);
 	connect(&activePingTimer_, &QTimer::timeout, this, [this] { sendActivePing(); });
+	gameReconnectTimer_.setSingleShot(true);
+	gameReconnectTimer_.setInterval(2000);
+	connect(&gameReconnectTimer_, &QTimer::timeout, this, [this] { reconnectGameServer(); });
 	canvasOperationFlushTimer_.setSingleShot(true);
 	canvasOperationFlushTimer_.setInterval(25);
 	connect(&canvasOperationFlushTimer_, &QTimer::timeout, this,
@@ -947,7 +973,7 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 
 	roomRefreshTimer_.setInterval(5000);
 	connect(&roomRefreshTimer_, &QTimer::timeout, this, [this] {
-		if (pages_->currentWidget() == lobbyPage_)
+		if (pages_->currentWidget() == lobbyPage_ && pendingJoinRequestId_.isEmpty())
 			requestRooms();
 	});
 	refreshAgeTimer_.setInterval(1000);
@@ -1034,6 +1060,7 @@ void MainWindow::applyLanguage(const QString& languageCode)
 			}
 		}
 	}
+	updateSocialTabTitle();
 	if (inRoom_)
 		updateRoundControls();
 	if (countryCombo_ && countryCombo_->count() > 0)
@@ -1096,7 +1123,15 @@ QWidget* MainWindow::createLoginPage()
 	outer->addWidget(continueButton);
 	loginStatusLabel_ = new QLabel(page);
 	loginStatusLabel_->setWordWrap(true);
-	outer->addWidget(loginStatusLabel_);
+	loginProgressBar_ = new QProgressBar(page);
+	loginProgressBar_->setRange(0, 0);
+	loginProgressBar_->setTextVisible(false);
+	loginProgressBar_->setFixedWidth(36);
+	loginProgressBar_->hide();
+	auto* loginStatusRow = new QHBoxLayout;
+	loginStatusRow->addWidget(loginProgressBar_);
+	loginStatusRow->addWidget(loginStatusLabel_, 1);
+	outer->addLayout(loginStatusRow);
 	loginConnectionStatusLabel_ = new QLabel(QStringLiteral("Connecting to master…"), page);
 	setLocalizedText(loginConnectionStatusLabel_, QStringLiteral("Connecting to master…"), languageCode_);
 	loginConnectionStatusLabel_->setAlignment(Qt::AlignCenter);
@@ -1126,7 +1161,13 @@ QWidget* MainWindow::createLobbyPage()
 	connectionStatusLabel_ = new QLabel(QStringLiteral("Connecting to master…"), page);
 	setLocalizedText(connectionStatusLabel_, QStringLiteral("Connecting to master…"), languageCode_);
 	connectionStatusLabel_->setObjectName(QStringLiteral("lobbyStatusLabel"));
-	topRow->addWidget(connectionStatusLabel_, 0, 1);
+	lobbyProgressBar_ = new QProgressBar(page);
+	lobbyProgressBar_->setRange(0, 0);
+	lobbyProgressBar_->setTextVisible(false);
+	lobbyProgressBar_->setFixedWidth(36);
+	lobbyProgressBar_->hide();
+	topRow->addWidget(lobbyProgressBar_, 0, 1);
+	topRow->addWidget(connectionStatusLabel_, 0, 2);
 	countryCombo_ = new QComboBox(page);
 	countryCombo_->setObjectName(QStringLiteral("countryCombo"));
 	countryCombo_->setIconSize(QSize(24, 16));
@@ -1144,9 +1185,10 @@ QWidget* MainWindow::createLobbyPage()
 		countryCombo_->addItem(countryFlagIcon(countryCode), countryCode, countryCode);
 	auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), page);
 	setLocalizedText(refreshButton, QStringLiteral("Refresh"), languageCode_);
-	topRow->addWidget(refreshButton, 0, 2);
+	topRow->addWidget(refreshButton, 0, 4);
 	layout->addLayout(topRow);
 	auto* tabs = new QTabWidget(page);
+	lobbyTabs_ = tabs;
 	auto* roomsPage = new QWidget(tabs);
 	auto* roomsLayout = new QVBoxLayout(roomsPage);
 	roomsTable_ = new QTableWidget(0, 5, page);
@@ -1200,17 +1242,19 @@ QWidget* MainWindow::createLobbyPage()
 	connect(userSearchEdit_, &QLineEdit::returnPressed, this, [this] { searchUsers(); });
 	connect(userSearchResults_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
 		if (item)
-			showPlayerProfile(item->data(Qt::UserRole).toString());
+			showUserDirectoryEntry(UserDirectoryEntry::fromJson(item->data(Qt::UserRole + 1).toJsonObject()));
 	});
 	tabs->addTab(peoplePage, QStringLiteral("People"));
 	peoplePage->setProperty("gtdTabSourceText", QStringLiteral("People"));
 	auto* socialPage = new QWidget(tabs);
+	socialPage_ = socialPage;
 	auto* socialLayout = new QVBoxLayout(socialPage);
 	auto* socialButtons = new QHBoxLayout;
 	auto* refreshSocialButton = new QPushButton(QStringLiteral("Refresh friends and requests"), socialPage);
 	setLocalizedText(refreshSocialButton, QStringLiteral("Refresh friends and requests"), languageCode_);
 	socialButtons->addWidget(refreshSocialButton);
-	inboxUnreadLabel_ = new QLabel(localizedText(QStringLiteral("Unread messages: 0"), languageCode_), socialPage);
+	inboxUnreadLabel_ = new QLabel(localizedText(
+		QStringLiteral("Unread messages: 0 · Friend requests: 0 · Notifications: 0"), languageCode_), socialPage);
 	socialButtons->addWidget(inboxUnreadLabel_);
 	socialLayout->addLayout(socialButtons);
 	inboxContactsList_ = new QListWidget(socialPage);
@@ -1219,6 +1263,19 @@ QWidget* MainWindow::createLobbyPage()
 	socialLayout->addWidget(inboxContactsList_);
 	friendsList_ = new QListWidget(socialPage);
 	socialLayout->addWidget(friendsList_);
+	auto* notificationsLabel = new QLabel(localizedText(QStringLiteral("Notifications (select to clear)"), languageCode_), socialPage);
+	socialLayout->addWidget(notificationsLabel);
+	notificationsList_ = new QListWidget(socialPage);
+	notificationsList_->setMaximumHeight(120);
+	socialLayout->addWidget(notificationsList_);
+	connect(notificationsList_, &QListWidget::itemClicked, this,
+		[this](QListWidgetItem* item) { clearNotification(item); });
+	auto* clearNotificationsButton = new QPushButton(QStringLiteral("Clear all notifications"), socialPage);
+	setLocalizedText(clearNotificationsButton, QStringLiteral("Clear all notifications"), languageCode_);
+	socialLayout->addWidget(clearNotificationsButton);
+	connect(clearNotificationsButton, &QPushButton::clicked, this, [this] {
+		sendSocialAction(QStringLiteral("NotificationClearAll"));
+	});
 	connect(refreshSocialButton, &QPushButton::clicked, this, [this] { requestSocialList(); });
 	connect(inboxContactsList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
 		if (item)
@@ -1261,6 +1318,7 @@ QWidget* MainWindow::createLobbyPage()
 	});
 	tabs->addTab(socialPage, QStringLiteral("Friends & Inbox"));
 	socialPage->setProperty("gtdTabSourceText", QStringLiteral("Friends & Inbox"));
+	updateSocialTabTitle();
 	auto* leaderboardPage = new QWidget(tabs);
 	auto* leaderboardLayout = new QVBoxLayout(leaderboardPage);
 	auto* leaderboardTabs = new QTabWidget(leaderboardPage);
@@ -1317,8 +1375,14 @@ QWidget* MainWindow::createLobbyPage()
 	setLocalizedText(saveProfileButton, QStringLiteral("Save profile"), languageCode_);
 	profileStatusLabel_ = new QLabel(profilePage);
 	profileStatusLabel_->setWordWrap(true);
+	profileProgressBar_ = new QProgressBar(profilePage);
+	profileProgressBar_->setRange(0, 0);
+	profileProgressBar_->setTextVisible(false);
+	profileProgressBar_->setFixedWidth(36);
+	profileProgressBar_->hide();
 	auto* profileActions = new QHBoxLayout;
 	profileActions->addWidget(saveProfileButton);
+	profileActions->addWidget(profileProgressBar_);
 	profileActions->addWidget(profileStatusLabel_, 1);
 	profileLayout->addRow(profileActions);
 	profilePage->setProperty("gtdTabSourceText", QStringLiteral("Profile settings"));
@@ -1778,6 +1842,9 @@ QWidget* MainWindow::createGamePage()
 	roomInboxButton_ = new QPushButton(localizedText(QStringLiteral("Inbox"), languageCode_), page);
 	roomInboxButton_->setVisible(false);
 	rosterHeader->addWidget(roomInboxButton_);
+	roomNotificationsButton_ = new QPushButton(localizedText(QStringLiteral("Notifications (0)"), languageCode_), page);
+	roomNotificationsButton_->setVisible(false);
+	rosterHeader->addWidget(roomNotificationsButton_);
 	sidePanel->addLayout(rosterHeader);
 	rosterList_ = new QListWidget(page);
 	rosterList_->setIconSize(QSize(24, 16));
@@ -1838,6 +1905,34 @@ QWidget* MainWindow::createGamePage()
 		sendGameMessage(makeMessage(QStringLiteral("CanvasOperation"),
 			{{QStringLiteral("operation"), operation}}));
 	});
+	connect(roomNotificationsButton_, &QPushButton::clicked, this, [this] {
+		if (roomNotificationsDialog_) {
+			roomNotificationsDialog_->raise();
+			roomNotificationsDialog_->activateWindow();
+		} else {
+			auto* dialog = new QDialog(this);
+			dialog->setAttribute(Qt::WA_DeleteOnClose);
+			dialog->setWindowTitle(localizedText(QStringLiteral("Notifications (select to clear)"), languageCode_));
+			dialog->resize(420, 300);
+			auto* layout = new QVBoxLayout(dialog);
+			roomNotificationsList_ = new QListWidget(dialog);
+			layout->addWidget(roomNotificationsList_);
+			QPushButton* clearAll = new QPushButton(
+				localizedText(QStringLiteral("Clear all notifications"), languageCode_), dialog);
+			layout->addWidget(clearAll);
+			connect(clearAll, &QPushButton::clicked, this, [this] {
+				sendSocialAction(QStringLiteral("NotificationClearAll"));
+			});
+			auto* close = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+			connect(close, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+			layout->addWidget(close);
+			connect(roomNotificationsList_, &QListWidget::itemClicked, this,
+				[this](QListWidgetItem* item) { clearNotification(item); });
+			roomNotificationsDialog_ = dialog;
+			requestSocialList();
+			dialog->show();
+		}
+	});
 	connect(moderationButton_, &QPushButton::clicked, this, [this] { showModerationScreen(); });
 	connect(rosterList_, &QListWidget::customContextMenuRequested, this,
 		[this](const QPoint& position) { showRosterContextMenu(position); });
@@ -1868,6 +1963,18 @@ QWidget* MainWindow::createGamePage()
 					sendSocialAction(QStringLiteral("FriendRequestAccept"), {}, item->data(Qt::UserRole).toLongLong());
 				else if (choice == QMessageBox::No)
 					sendSocialAction(QStringLiteral("FriendRequestDeny"), {}, item->data(Qt::UserRole).toLongLong());
+			});
+			connect(roomFriendRequestsList_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+				if (!item)
+					return;
+				const QString itemKind = item->data(Qt::UserRole + 1).toString();
+				if (itemKind == QStringLiteral("accepted_notification")) {
+					clearNotification(item);
+				} else if (itemKind == QStringLiteral("denied")) {
+					sendSocialAction(QStringLiteral("FriendRequestClear"), {}, item->data(Qt::UserRole).toLongLong());
+					sendSocialAction(QStringLiteral("FriendRequestNotificationClear"),
+						item->data(Qt::UserRole + 2).toString());
+				}
 			});
 			roomFriendRequestsDialog_ = dialog;
 			requestSocialList();
@@ -2201,6 +2308,8 @@ void MainWindow::submitAuthentication()
 		loginStatusLabel_->setText(localizedText(QStringLiteral("Enter a username and password."), languageCode_));
 		return;
 	}
+	if (!pendingAuthRequestId_.isEmpty())
+		return;
 	const bool create = createAccountCheck_->isChecked();
 	if (create && displayNameEdit_->text().trimmed().isEmpty()) {
 		loginStatusLabel_->setText(localizedText(QStringLiteral("Enter a display name for your new account."), languageCode_));
@@ -2213,6 +2322,11 @@ void MainWindow::submitAuthentication()
 	if (create)
 		fields.insert(QStringLiteral("displayName"), displayNameEdit_->text().trimmed());
 	pendingAuthRequestId_ = fields.value(QStringLiteral("requestId")).toString();
+	loginProgressBar_->show();
+	usernameEdit_->setEnabled(false);
+	passwordEdit_->setEnabled(false);
+	displayNameEdit_->setEnabled(false);
+	createAccountCheck_->setEnabled(false);
 	loginStatusLabel_->setText(localizedText(QStringLiteral("Contacting master…"), languageCode_));
 	sendMessage(&masterSocket_, makeMessage(type, fields));
 }
@@ -2240,11 +2354,19 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 	if (type == QStringLiteral("AuthResult")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingAuthRequestId_)
 			return;
+		pendingAuthRequestId_.clear();
+		loginProgressBar_->hide();
+		usernameEdit_->setEnabled(true);
+		passwordEdit_->setEnabled(true);
+		displayNameEdit_->setEnabled(true);
+		createAccountCheck_->setEnabled(true);
 		if (!message.value(QStringLiteral("ok")).toBool()) {
 			loginStatusLabel_->setText(message.value(QStringLiteral("error")).toString());
 			return;
 		}
 		authToken_ = message.value(QStringLiteral("authToken")).toString();
+		knownNotificationIds_.clear();
+		notificationListInitialized_ = false;
 		const PlayerProfile profile = PlayerProfile::fromJson(message.value(QStringLiteral("profile")).toObject());
 		username_ = profile.username;
 		masterSuperAdmin_ = profile.masterSuperAdmin;
@@ -2267,6 +2389,10 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		return;
 	}
 	if (type == QStringLiteral("RoomList")) {
+		if (message.value(QStringLiteral("requestId")).toString() != pendingRoomsRequestId_)
+			return;
+		pendingRoomsRequestId_.clear();
+		lobbyProgressBar_->hide();
 		populateRooms(message.value(QStringLiteral("rooms")).toArray());
 	} else if (type == QStringLiteral("UserSearchResult")) {
 		userSearchResults_->clear();
@@ -2287,7 +2413,12 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		friendsList_->clear();
 		if (roomFriendRequestsList_)
 			roomFriendRequestsList_->clear();
+		if (notificationsList_)
+			notificationsList_->clear();
+		if (roomNotificationsList_)
+			roomNotificationsList_->clear();
 		int pendingRequestCount = 0;
+		int roomFriendRequestCount = 0;
 		for (const QJsonValue& value : message.value(QStringLiteral("friends")).toArray()) {
 			const UserDirectoryEntry entry = UserDirectoryEntry::fromJson(value.toObject());
 			auto* item = new QListWidgetItem(countryFlagIcon(entry.profile.countryCode),
@@ -2306,6 +2437,9 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 				: QStringLiteral("incoming");
 			if (requestKind == QStringLiteral("incoming") && request.status == QStringLiteral("pending"))
 				++pendingRequestCount;
+			if ((requestKind == QStringLiteral("incoming") && request.status == QStringLiteral("pending"))
+				|| (requestKind == QStringLiteral("denied") && request.status == QStringLiteral("denied")))
+				++roomFriendRequestCount;
 			const QString requestLabel = QStringLiteral("%1 · %2 · %3")
 				.arg(outgoing ? QStringLiteral("To @%1").arg(relatedUser) : QStringLiteral("From @%1").arg(relatedUser),
 					request.status,
@@ -2330,9 +2464,75 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 				roomItem->setData(Qt::UserRole + 2, relatedUser);
 			}
 		}
+		friendRequestCount_ = pendingRequestCount;
+		notificationCount_ = message.value(QStringLiteral("notificationCount")).toInt();
+		QSet<qint64> currentNotificationIds;
+		for (const QJsonValue& value : message.value(QStringLiteral("notifications")).toArray()) {
+			const UserNotification notification = UserNotification{
+				static_cast<qint64>(value.toObject().value(QStringLiteral("id")).toDouble()),
+				value.toObject().value(QStringLiteral("relatedUsername")).toString(),
+				value.toObject().value(QStringLiteral("kind")).toString(),
+				static_cast<qint64>(value.toObject().value(QStringLiteral("createdAt")).toDouble())};
+			const QString outcome = notification.kind == QStringLiteral("friend_request_accepted")
+				? localizedText(QStringLiteral("accepted your friend request"), languageCode_)
+				: notification.kind == QStringLiteral("friends_now")
+					? localizedText(QStringLiteral("You are now friends"), languageCode_)
+					: localizedText(QStringLiteral("rejected your friend request"), languageCode_);
+		const QString label = notification.kind == QStringLiteral("friends_now")
+			? localizedText(QStringLiteral("You and @%1 are now friends"), languageCode_)
+				.arg(notification.relatedUsername)
+			: QStringLiteral("@%1 %2").arg(notification.relatedUsername, outcome);
+			if (notification.kind == QStringLiteral("friend_request_accepted")) {
+				++roomFriendRequestCount;
+				if (roomFriendRequestsList_) {
+					auto* item = new QListWidgetItem(QStringLiteral("%1 · %2")
+						.arg(label, localizedText(QStringLiteral("Select to clear"), languageCode_)),
+						roomFriendRequestsList_);
+					item->setData(Qt::UserRole, notification.id);
+					item->setData(Qt::UserRole + 1, QStringLiteral("accepted_notification"));
+				}
+			}
+			const bool isNewNotification = notificationListInitialized_
+				&& !knownNotificationIds_.contains(notification.id);
+			currentNotificationIds.insert(notification.id);
+			if (notificationsList_) {
+				auto* item = new QListWidgetItem(QStringLiteral("%1 · %2")
+					.arg(label, localizedText(QStringLiteral("Select to clear"), languageCode_)), notificationsList_);
+				item->setData(Qt::UserRole, notification.id);
+			}
+			if (roomNotificationsList_) {
+				auto* item = new QListWidgetItem(QStringLiteral("%1 · %2")
+					.arg(label, localizedText(QStringLiteral("Select to clear"), languageCode_)), roomNotificationsList_);
+				item->setData(Qt::UserRole, notification.id);
+			}
+			if (isNewNotification && inRoom_) {
+				auto* notice = new QMessageBox(QMessageBox::Information,
+					localizedText(QStringLiteral("Notification"), languageCode_), label,
+					QMessageBox::Ok, this);
+				notice->setAttribute(Qt::WA_DeleteOnClose);
+				notice->setWindowModality(Qt::NonModal);
+				notice->show();
+				notice->raise();
+				notice->activateWindow();
+			}
+		}
+		knownNotificationIds_ = currentNotificationIds;
+		notificationListInitialized_ = true;
 		if (roomFriendRequestsButton_)
 			setLocalizedFormattedText(roomFriendRequestsButton_, QStringLiteral("Friend requests (%1)"),
-				{QString::number(pendingRequestCount)}, languageCode_);
+				{QString::number(roomFriendRequestCount)}, languageCode_);
+		if (roomNotificationsButton_)
+			setLocalizedFormattedText(roomNotificationsButton_, QStringLiteral("Notifications (%1)"),
+			{QString::number(notificationCount_)}, languageCode_);
+		int totalUnreadMessages = 0;
+		for (int unread : std::as_const(inboxUnreadCounts_))
+			totalUnreadMessages += unread;
+		if (inboxUnreadLabel_)
+			setLocalizedFormattedText(inboxUnreadLabel_,
+				QStringLiteral("Unread messages: %1 · Friend requests: %2 · Notifications: %3"),
+				{QString::number(totalUnreadMessages), QString::number(friendRequestCount_),
+				 QString::number(notificationCount_)}, languageCode_);
+		updateSocialTabTitle();
 		friendsList_->addItem(localizedText(QStringLiteral("Blocked users"), languageCode_));
 		for (const QJsonValue& value : message.value(QStringLiteral("blocked")).toArray()) {
 			const QString blockedUsername = value.toString();
@@ -2422,8 +2622,11 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 				}
 			}
 		}
-		setLocalizedFormattedText(inboxUnreadLabel_, QStringLiteral("Unread messages: %1"),
-			{QString::number(totalUnread)}, languageCode_);
+		setLocalizedFormattedText(inboxUnreadLabel_,
+			QStringLiteral("Unread messages: %1 · Friend requests: %2 · Notifications: %3"),
+			{QString::number(totalUnread), QString::number(friendRequestCount_),
+			 QString::number(notificationCount_)}, languageCode_);
+		updateSocialTabTitle();
 		if (roomInboxButton_)
 			setLocalizedFormattedText(roomInboxButton_, QStringLiteral("Inbox (%1)"),
 				{QString::number(unreadConversationCount)}, languageCode_);
@@ -2466,8 +2669,11 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		int totalUnread = 0;
 		for (int count : std::as_const(inboxUnreadCounts_))
 			totalUnread += count;
-		setLocalizedFormattedText(inboxUnreadLabel_, QStringLiteral("Unread messages: %1"),
-			{QString::number(totalUnread)}, languageCode_);
+		setLocalizedFormattedText(inboxUnreadLabel_,
+			QStringLiteral("Unread messages: %1 · Friend requests: %2 · Notifications: %3"),
+			{QString::number(totalUnread), QString::number(friendRequestCount_),
+			 QString::number(notificationCount_)}, languageCode_);
+		updateSocialTabTitle();
 	} else if (type == QStringLiteral("RoomInviteReceived")) {
 		const QString inviter = message.value(QStringLiteral("fromUsername")).toString();
 		const RoomInfo room = RoomInfo::fromJson(message.value(QStringLiteral("room")).toObject());
@@ -2544,6 +2750,7 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		populateLeaderboard(drawingPoints ? drawingLeaderboardTable_ : guessingLeaderboardTable_,
 			message.value(QStringLiteral("players")).toArray(), drawingPoints);
 	} else if (type == QStringLiteral("ProfileUpdated")) {
+		profileProgressBar_->hide();
 		const PlayerProfile profile = PlayerProfile::fromJson(message.value(QStringLiteral("profile")).toObject());
 		if (countryCombo_) {
 			const int countryIndex = countryCombo_->findData(profile.countryCode);
@@ -2717,12 +2924,25 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 			QMessageBox::warning(this, localizedText(QStringLiteral("Request failed"), languageCode_), text);
 		if (moderationStatusLabel_)
 			moderationStatusLabel_->setText(text);
-		if (pages_->currentWidget() == loginPage_)
+		if (pages_->currentWidget() == loginPage_) {
+			if (requestId == pendingAuthRequestId_) {
+				pendingAuthRequestId_.clear();
+				loginProgressBar_->hide();
+				usernameEdit_->setEnabled(true);
+				passwordEdit_->setEnabled(true);
+				displayNameEdit_->setEnabled(true);
+				createAccountCheck_->setEnabled(true);
+			}
+		if (!pendingRoomsRequestId_.isEmpty()) {
+			pendingRoomsRequestId_.clear();
+			lobbyProgressBar_->hide();
+		}
 			loginStatusLabel_->setText(text);
-		else
+		} else
 			connectionStatusLabel_->setText(text);
 		if (profileStatusLabel_)
 			profileStatusLabel_->setText(text);
+		profileProgressBar_->hide();
 	}
 }
 
@@ -2817,24 +3037,45 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 	if (type == QStringLiteral("JoinResult")) {
 		if (message.value(QStringLiteral("requestId")).toString() != pendingJoinRequestId_)
 			return;
+		pendingJoinRequestId_.clear();
+		lobbyProgressBar_->hide();
 		if (!message.value(QStringLiteral("ok")).toBool()) {
+			joinRoomButton_->setEnabled(roomsTable_->currentRow() >= 0);
+			joinRoleCombo_->setEnabled(true);
 			QString error = message.value(QStringLiteral("error")).toString();
 			const QJsonObject ban = message.value(QStringLiteral("ban")).toObject();
+			QString banNotice;
 			if (!ban.isEmpty()) {
 				const qint64 expiresAt = ban.value(QStringLiteral("expiresAt")).toVariant().toLongLong();
 				const QString expiry = expiresAt == 0
 					? localizedText(QStringLiteral("Permanent"), languageCode_)
 					: QLocale().toString(QDateTime::fromSecsSinceEpoch(expiresAt).toLocalTime(), QLocale::ShortFormat);
-				error = localizedText(QStringLiteral("Banned: %1 · Expires: %2"), languageCode_)
+				banNotice = localizedText(QStringLiteral("You are banned from this room. Reason: %1 · Expires: %2"), languageCode_)
 					.arg(ban.value(QStringLiteral("reason")).toString(), expiry);
+				error = banNotice;
 			}
-			connectionStatusLabel_->setText(error);
-			gameSocket_.disconnectFromHost();
+			if (reconnectingGameServer_) {
+				setLocalizedFormattedText(connectionStatusLabel_, QStringLiteral("Reconnect failed: %1"),
+					{error}, languageCode_);
+				gameSocket_.abort();
+				scheduleGameReconnect();
+			} else {
+				connectionStatusLabel_->setText(error);
+				stopGameReconnect();
+				gameSocket_.disconnectFromHost();
+				roomRefreshTimer_.start();
+			}
+			if (!banNotice.isEmpty())
+				QMessageBox::warning(this, localizedText(QStringLiteral("Room access denied"), languageCode_), banNotice);
 			return;
 		}
 		stopVoiceInput();
 		clearVoiceOutputs();
+		joinRoleCombo_->setEnabled(true);
+		const bool wasReconnecting = reconnectingGameServer_;
 		inRoom_ = true;
+		reconnectingGameServer_ = false;
+		gameReconnectTimer_.stop();
 		leavingRoom_ = false;
 		activePingMs_ = -1;
 		pendingActivePingRequestId_.clear();
@@ -2842,6 +3083,8 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		activePingTimer_.start();
 		sendActivePing();
 		isSpectator_ = message.value(QStringLiteral("spectator")).toBool(false);
+		currentServerRole_ = message.value(QStringLiteral("serverRole")).toString(QStringLiteral("player"));
+		masterSuperAdmin_ = message.value(QStringLiteral("masterSuperAdmin")).toBool(false);
 		queuedForPlayer_ = message.value(QStringLiteral("queuedForPlayer")).toBool(false);
 		currentDrawer_.clear();
 		const QJsonObject room = message.value(QStringLiteral("room")).toObject();
@@ -2862,7 +3105,8 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 				 {QStringLiteral("serverId"), joiningRoom_.serverId}}));
 		updateQueueStatus(message.value(QStringLiteral("queue")).toObject());
 		setLocalizedText(roundStatusLabel_, QStringLiteral("Waiting for players"), languageCode_);
-		appendGameMessage(localizedText(QStringLiteral("Joined %1 as %2"), languageCode_)
+		appendGameMessage(wasReconnecting ? localizedText(QStringLiteral("Reconnected to %1"), languageCode_)
+			.arg(joiningRoom_.roomName) : localizedText(QStringLiteral("Joined %1 as %2"), languageCode_)
 			.arg(joiningRoom_.roomName, localizedText(isSpectator_ ? QStringLiteral("spectator")
 				: QStringLiteral("player"), languageCode_)));
 		if (message.value(QStringLiteral("roundActive")).toBool()) {
@@ -2967,6 +3211,17 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		updateRoster(roomRoster_, {});
 		roundStatusLabel_->setText(localizedText(message.value(QStringLiteral("message")).toString(), languageCode_));
 		updateRoundControls();
+	} else if (type == QStringLiteral("RoundResumed")) {
+		roundActive_ = true;
+		roundStarting_ = false;
+		secondsRemaining_ = message.value(QStringLiteral("secondsRemaining")).toInt();
+		setLocalizedFormattedText(roundStatusLabel_, QStringLiteral("Round resumed · drawing: %1"),
+			{currentDrawer_}, languageCode_);
+		updateRoundControls();
+	} else if (type == QStringLiteral("PlayerConnectionChanged")) {
+		const QString state = message.value(QStringLiteral("connected")).toBool()
+			? QStringLiteral("reconnected") : QStringLiteral("disconnected; waiting to reconnect");
+		appendGameMessage(QStringLiteral("%1 %2").arg(message.value(QStringLiteral("username")).toString(), state));
 	} else if (type == QStringLiteral("GuessCorrect")) {
 		appendGameMessage(localizedText(QStringLiteral("%1 guessed correctly in place %2 (+%3 points)"), languageCode_)
 			.arg(message.value(QStringLiteral("displayName")).toString())
@@ -3009,6 +3264,8 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 void MainWindow::showModerationNotice(const QJsonObject& message)
 {
 	const QString action = message.value(QStringLiteral("action")).toString();
+	if (action == QStringLiteral("kick") || action == QStringLiteral("ban"))
+		leaveRoom();
 	if (action == QStringLiteral("unban") || action == QStringLiteral("unmute")) {
 		const QString verb = action == QStringLiteral("unban") ? QStringLiteral("unbanned")
 			: QStringLiteral("unmuted");
@@ -3052,8 +3309,10 @@ void MainWindow::requestRooms()
 		connectMaster();
 		return;
 	}
+	pendingRoomsRequestId_ = nextRequestId();
+	lobbyProgressBar_->show();
 	sendMessage(&masterSocket_, makeMessage(QStringLiteral("ListRooms"),
-												 {{QStringLiteral("requestId"), nextRequestId()},
+												 {{QStringLiteral("requestId"), pendingRoomsRequestId_},
 												  {QStringLiteral("authToken"), authToken_}}));
 }
 
@@ -3200,6 +3459,7 @@ void MainWindow::sendActivePing()
 void MainWindow::updateRoomsRefreshStatus()
 {
 	if (!roomsRefreshElapsed_.isValid() || !connectionStatusLabel_
+		|| (lobbyProgressBar_ && lobbyProgressBar_->isVisible())
 		|| connectionStatusLabel_->property("gtdSourceText").toString()
 			!= QStringLiteral("%1 room(s) listed"))
 		return;
@@ -3219,8 +3479,33 @@ void MainWindow::joinSelectedRoom()
 	joinRoom(roomsById_.value(roomId), joinRoleCombo_->currentData().toBool());
 }
 
+void MainWindow::scheduleGameReconnect()
+{
+	if (!reconnectingGameServer_ || leavingRoom_ || gameReconnectTimer_.isActive())
+		return;
+	gameReconnectTimer_.start();
+}
+
+void MainWindow::reconnectGameServer()
+{
+	if (!reconnectingGameServer_ || leavingRoom_
+		|| gameSocket_.state() != QAbstractSocket::UnconnectedState)
+		return;
+	gameBuffer_.clear();
+	gameSocket_.connectToHost(joiningRoom_.host, joiningRoom_.port);
+}
+
+void MainWindow::stopGameReconnect()
+{
+	gameReconnectTimer_.stop();
+}
+
 void MainWindow::joinRoom(const RoomInfo& room, bool spectator)
 {
+	if (!pendingJoinRequestId_.isEmpty() && gameSocket_.state() != QAbstractSocket::UnconnectedState)
+		return;
+	stopGameReconnect();
+	reconnectingGameServer_ = false;
 	joiningRoom_ = room;
 	if (joiningRoom_.roomId.isEmpty() || joiningRoom_.host.isEmpty() || joiningRoom_.port == 0) {
 		setLocalizedText(connectionStatusLabel_, QStringLiteral("Selected room has an invalid server address"), languageCode_);
@@ -3229,6 +3514,7 @@ void MainWindow::joinRoom(const RoomInfo& room, bool spectator)
 	pendingRoomId_ = joiningRoom_.roomId;
 	pendingJoinAsSpectator_ = spectator;
 	pendingJoinRequestId_.clear();
+	roomRefreshTimer_.stop();
 	pendingRoleChangeRequestId_.clear();
 	gameBuffer_.clear();
 	inRoom_ = false;
@@ -3246,6 +3532,9 @@ void MainWindow::joinRoom(const RoomInfo& room, bool spectator)
 	leavingRoom_ = false;
 	setLocalizedFormattedText(connectionStatusLabel_, QStringLiteral("Connecting to %1…"),
 		{joiningRoom_.roomName}, languageCode_);
+	lobbyProgressBar_->show();
+	joinRoomButton_->setEnabled(false);
+	joinRoleCombo_->setEnabled(false);
 	flushPendingCanvasOperations();
 	gameSocket_.abort();
 	gameSocket_.connectToHost(joiningRoom_.host, joiningRoom_.port);
@@ -3253,6 +3542,8 @@ void MainWindow::joinRoom(const RoomInfo& room, bool spectator)
 
 void MainWindow::leaveRoom()
 {
+	stopGameReconnect();
+	reconnectingGameServer_ = false;
 	if (spectatorsDialog_)
 		spectatorsDialog_->close();
 	if (gameSocket_.state() == QAbstractSocket::ConnectedState) {
@@ -3652,6 +3943,8 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		roomFriendRequestsButton_->setVisible(inRoom_);
 	if (roomInboxButton_)
 		roomInboxButton_->setVisible(inRoom_);
+	if (roomNotificationsButton_)
+		roomNotificationsButton_->setVisible(inRoom_);
 	updateSpectatorsList();
 	refreshModerationPermissions();
 	updateRoundControls();
@@ -3711,18 +4004,7 @@ void MainWindow::showSpectatorsScreen()
 	});
 	connect(spectatorsList_, &QListWidget::customContextMenuRequested, this,
 		[this](const QPoint& position) {
-			if (!spectatorsList_)
-				return;
-			QListWidgetItem* item = spectatorsList_->itemAt(position);
-			if (!item)
-				return;
-			const QString username = item->data(Qt::UserRole).toString();
-			if (username.isEmpty())
-				return;
-			QMenu menu(this);
-			QAction* viewProfile = menu.addAction(localizedText(QStringLiteral("View profile"), languageCode_));
-			if (menu.exec(spectatorsList_->mapToGlobal(position)) == viewProfile)
-				showPlayerProfile(username);
+			showRosterContextMenu(position, spectatorsList_);
 		});
 	spectatorsDialog_ = dialog;
 	updateSpectatorsList();
@@ -3748,7 +4030,9 @@ void MainWindow::requestServerAdminData()
 
 void MainWindow::showModerationScreen()
 {
-	if (!inRoom_ || (!masterSuperAdmin_ && currentServerRole_ == QStringLiteral("player")))
+	const bool canManage = masterSuperAdmin_ || currentServerRole_ == QStringLiteral("admin")
+		|| currentServerRole_ == QStringLiteral("moderator");
+	if (!inRoom_ || !canManage)
 		return;
 	if (!moderationDialog_) {
 		moderationDialog_ = new QDialog(this);
@@ -3890,13 +4174,39 @@ void MainWindow::sendSocialAction(const QString& action, const QString& targetUs
 		return;
 	QJsonObject fields{{QStringLiteral("requestId"), nextRequestId()},
 		{QStringLiteral("authToken"), authToken_}};
-	if (!targetUsername.isEmpty())
+	if (!targetUsername.isEmpty() && action != QStringLiteral("FriendRequestNotificationClear"))
 		fields.insert(QStringLiteral("targetUsername"), targetUsername);
-	if (requestId > 0)
+	if (action == QStringLiteral("FriendRequestNotificationClear"))
+		fields.insert(QStringLiteral("targetUsername"), targetUsername);
+	else if (requestId > 0 && action == QStringLiteral("NotificationClear"))
+		fields.insert(QStringLiteral("notificationId"), static_cast<double>(requestId));
+	else if (requestId > 0)
 		fields.insert(QStringLiteral("friendRequestId"), static_cast<double>(requestId));
 	if (action == QStringLiteral("BlockSet"))
 		fields.insert(QStringLiteral("blocked"), blocked);
 	sendMessage(&masterSocket_, makeMessage(action, fields));
+}
+
+void MainWindow::updateSocialTabTitle()
+{
+	if (!lobbyTabs_ || !socialPage_)
+		return;
+	const int tabIndex = lobbyTabs_->indexOf(socialPage_);
+	if (tabIndex < 0)
+		return;
+	int totalUnreadMessages = 0;
+	for (int unread : std::as_const(inboxUnreadCounts_))
+		totalUnreadMessages += unread;
+	const int totalNotifications = totalUnreadMessages + friendRequestCount_ + notificationCount_;
+	const QString title = localizedText(QStringLiteral("Friends & Inbox"), languageCode_);
+	lobbyTabs_->setTabText(tabIndex, totalNotifications > 0
+		? QStringLiteral("%1 (%2)").arg(title).arg(totalNotifications) : title);
+}
+
+void MainWindow::clearNotification(QListWidgetItem* item)
+{
+	if (item)
+		sendSocialAction(QStringLiteral("NotificationClear"), {}, item->data(Qt::UserRole).toLongLong());
 }
 
 void MainWindow::openInbox(const QString& targetUsername)
@@ -4051,6 +4361,7 @@ void MainWindow::showUserDirectoryEntry(const UserDirectoryEntry& entry)
 		} else if (entry.relationship == QStringLiteral("denied")) {
 			sendSocialAction(QStringLiteral("FriendRequestClear"), {},
 				static_cast<qint64>(entry.relationshipId));
+			sendSocialAction(QStringLiteral("FriendRequestNotificationClear"), profile.username);
 		} else {
 			sendSocialAction(QStringLiteral("FriendRequestSend"), profile.username);
 		}
@@ -4182,9 +4493,11 @@ void MainWindow::sendModerationAction(const QString& targetUsername, const QStri
 	sendMessage(&masterSocket_, makeMessage(QStringLiteral("ModerationRequest"), fields));
 }
 
-void MainWindow::showRosterContextMenu(const QPoint& position)
+void MainWindow::showRosterContextMenu(const QPoint& position, QListWidget* sourceList)
 {
-	QListWidgetItem* item = rosterList_->itemAt(position);
+	if (!sourceList)
+		sourceList = rosterList_;
+	QListWidgetItem* item = sourceList->itemAt(position);
 	if (!item)
 		return;
 	const QString target = item->data(Qt::UserRole).toString();
@@ -4239,7 +4552,7 @@ void MainWindow::showRosterContextMenu(const QPoint& position)
 		ban = addRosterAction(QStringLiteral("Ban…"));
 		mute = addRosterAction(QStringLiteral("Server mute…"));
 	}
-	QAction* selected = menu.exec(rosterList_->mapToGlobal(position));
+	QAction* selected = menu.exec(sourceList->mapToGlobal(position));
 	if (!selected)
 		return;
 	if (selected == viewProfile)

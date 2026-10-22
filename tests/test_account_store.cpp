@@ -28,11 +28,33 @@ private slots:
 		QCOMPARE(store.friendRequests(QStringLiteral("bob"), &error).size(), 1);
 		QVERIFY2(store.denyFriendRequest(QStringLiteral("bob"), requestId, &error), qPrintable(error));
 		QCOMPARE(store.friendRequests(QStringLiteral("alice"), &error).first().status, QStringLiteral("denied"));
+		QVERIFY2(store.addFriendRequestDecisionNotification(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("denied"), &error), qPrintable(error));
+		QCOMPARE(store.unreadNotificationCount(QStringLiteral("alice"), &error), 1);
+		QCOMPARE(store.notifications(QStringLiteral("alice"), &error).first().kind,
+			QStringLiteral("friend_request_denied"));
+		QVERIFY2(store.clearNotification(QStringLiteral("alice"),
+			store.notifications(QStringLiteral("alice"), &error).first().id, &error), qPrintable(error));
+		QCOMPARE(store.unreadNotificationCount(QStringLiteral("alice"), &error), 0);
 		QVERIFY(store.friendRequests(QStringLiteral("bob"), &error).isEmpty());
 		QVERIFY2(store.clearDeniedFriendRequest(QStringLiteral("alice"), requestId, &error), qPrintable(error));
 
 		QVERIFY2(store.sendFriendRequest(QStringLiteral("alice"), QStringLiteral("bob"), &requestId, &error), qPrintable(error));
 		QVERIFY2(store.acceptFriendRequest(QStringLiteral("bob"), requestId, &error), qPrintable(error));
+		QVERIFY2(store.addFriendRequestDecisionNotification(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("accepted"), &error), qPrintable(error));
+		QCOMPARE(store.notifications(QStringLiteral("alice"), &error).first().kind,
+			QStringLiteral("friend_request_accepted"));
+		QVERIFY2(store.addFriendAcceptedNotification(QStringLiteral("bob"), QStringLiteral("alice"), &error),
+			qPrintable(error));
+		QCOMPARE(store.notifications(QStringLiteral("bob"), &error).first().kind, QStringLiteral("friends_now"));
+		QVERIFY2(store.addFriendRequestDecisionNotification(QStringLiteral("alice"), QStringLiteral("bob"),
+			QStringLiteral("denied"), &error), qPrintable(error));
+		QVERIFY2(store.clearFriendRequestNotifications(QStringLiteral("alice"), QStringLiteral("bob"), &error),
+			qPrintable(error));
+		QCOMPARE(store.notifications(QStringLiteral("alice"), &error).size(), 1);
+		QVERIFY2(store.clearNotifications(QStringLiteral("bob"), &error), qPrintable(error));
+		QCOMPARE(store.unreadNotificationCount(QStringLiteral("bob"), &error), 0);
 		QVERIFY(store.areFriends(QStringLiteral("alice"), QStringLiteral("bob"), &error));
 		QVERIFY2(store.sendDirectMessage(QStringLiteral("alice"), QStringLiteral("bob"),
 			QStringLiteral("Hello"), nullptr, &error), qPrintable(error));

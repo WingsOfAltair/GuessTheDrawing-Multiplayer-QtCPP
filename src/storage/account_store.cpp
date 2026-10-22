@@ -238,6 +238,13 @@ bool AccountStore::initialize(QString* error)
 			"CHECK(sender_username <> recipient_username), UNIQUE(sender_username, recipient_username))"),
 		QStringLiteral("CREATE INDEX IF NOT EXISTS friend_requests_by_recipient "
 			"ON friend_requests(recipient_username, status, created_at)"),
+		QStringLiteral("CREATE TABLE IF NOT EXISTS user_notifications ("
+			"id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"related_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+			"kind TEXT NOT NULL CHECK(kind IN ('friend_request_accepted', 'friend_request_denied', 'friends_now')), "
+			"created_at INTEGER NOT NULL)"),
+		QStringLiteral("CREATE INDEX IF NOT EXISTS user_notifications_inbox "
+			"ON user_notifications(username, id)"),
 		QStringLiteral("CREATE TABLE IF NOT EXISTS user_blocks ("
 			"blocker_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
 			"target_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
@@ -272,6 +279,183 @@ bool AccountStore::initialize(QString* error)
 			setError(error, query.lastError().text());
 			return false;
 		}
+	}
+	if (!query.exec(QStringLiteral(
+			"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_notifications'"))
+		|| !query.next()) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Could not inspect user_notifications table") : query.lastError().text());
+		return false;
+	}
+	if (!query.value(0).toString().contains(QStringLiteral("friends_now"))) {
+		if (!query.exec(QStringLiteral("ALTER TABLE user_notifications RENAME TO user_notifications_legacy"))
+			|| !query.exec(QStringLiteral(
+				"CREATE TABLE user_notifications ("
+				"id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+				"related_username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE, "
+				"kind TEXT NOT NULL CHECK(kind IN ('friend_request_accepted', 'friend_request_denied', 'friends_now')), "
+				"created_at INTEGER NOT NULL)"))
+			|| !query.exec(QStringLiteral(
+				"INSERT INTO user_notifications(id, username, related_username, kind, created_at) "
+				"SELECT id, username, related_username, kind, created_at FROM user_notifications_legacy"))
+			|| !query.exec(QStringLiteral("DROP TABLE user_notifications_legacy"))
+			|| !query.exec(QStringLiteral(
+				"CREATE INDEX IF NOT EXISTS user_notifications_inbox ON user_notifications(username, id)"))) {
+			setError(error, query.lastError().text());
+			return false;
+		}
+	}
+	return true;
+}
+
+bool AccountStore::addFriendAcceptedNotification(const QString& recipientUsername,
+	const QString& friendUsername, QString* error)
+{
+	const QString recipient = normalizedUsername(recipientUsername);
+	const QString friendName = normalizedUsername(friendUsername);
+	if (!validModerationIdentity(recipient) || !validModerationIdentity(friendName) || recipient == friendName) {
+		setError(error, QStringLiteral("Invalid friend notification"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"INSERT INTO user_notifications(username, related_username, kind, created_at) "
+		"VALUES(:username, :related, 'friends_now', :created)"));
+	query.bindValue(QStringLiteral(":username"), recipient);
+	query.bindValue(QStringLiteral(":related"), friendName);
+	query.bindValue(QStringLiteral(":created"), QDateTime::currentSecsSinceEpoch());
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::clearNotifications(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("DELETE FROM user_notifications WHERE username = :user"));
+	query.bindValue(QStringLiteral(":user"), user);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::clearFriendRequestNotifications(const QString& username,
+	const QString& relatedUsername, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	const QString related = normalizedUsername(relatedUsername);
+	if (!validModerationIdentity(user) || !validModerationIdentity(related)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"DELETE FROM user_notifications WHERE username = :user AND related_username = :related "
+		"AND kind = 'friend_request_denied'"));
+	query.bindValue(QStringLiteral(":user"), user);
+	query.bindValue(QStringLiteral(":related"), related);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+QList<UserNotification> AccountStore::notifications(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return {};
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"SELECT id, related_username, kind, created_at FROM user_notifications "
+		"WHERE username = :user ORDER BY id DESC LIMIT 100"));
+	query.bindValue(QStringLiteral(":user"), user);
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return {};
+	}
+	QList<UserNotification> result;
+	while (query.next()) {
+		UserNotification notification;
+		notification.id = query.value(0).toLongLong();
+		notification.relatedUsername = query.value(1).toString();
+		notification.kind = query.value(2).toString();
+		notification.createdAt = query.value(3).toLongLong();
+		result.append(notification);
+	}
+	return result;
+}
+
+int AccountStore::unreadNotificationCount(const QString& username, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user)) {
+		setError(error, QStringLiteral("Invalid account username"));
+		return 0;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("SELECT COUNT(*) FROM user_notifications WHERE username = :user"));
+	query.bindValue(QStringLiteral(":user"), user);
+	if (!query.exec() || !query.next()) {
+		setError(error, query.lastError().text());
+		return 0;
+	}
+	return query.value(0).toInt();
+}
+
+bool AccountStore::clearNotification(const QString& username, qint64 notificationId, QString* error)
+{
+	const QString user = normalizedUsername(username);
+	if (!validModerationIdentity(user) || notificationId <= 0) {
+		setError(error, QStringLiteral("Invalid notification"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral("DELETE FROM user_notifications WHERE id = :id AND username = :user"));
+	query.bindValue(QStringLiteral(":id"), notificationId);
+	query.bindValue(QStringLiteral(":user"), user);
+	if (!query.exec() || query.numRowsAffected() != 1) {
+		setError(error, query.lastError().text().isEmpty()
+			? QStringLiteral("Notification is no longer available") : query.lastError().text());
+		return false;
+	}
+	return true;
+}
+
+bool AccountStore::addFriendRequestDecisionNotification(const QString& recipientUsername,
+	const QString& senderUsername, const QString& decision, QString* error)
+{
+	const QString recipient = normalizedUsername(recipientUsername);
+	const QString sender = normalizedUsername(senderUsername);
+	if (!validModerationIdentity(recipient) || !validModerationIdentity(sender) || recipient == sender
+		|| (decision != QStringLiteral("accepted") && decision != QStringLiteral("denied"))) {
+		setError(error, QStringLiteral("Invalid friend request notification"));
+		return false;
+	}
+	QSqlQuery query(database_);
+	query.prepare(QStringLiteral(
+		"INSERT INTO user_notifications(username, related_username, kind, created_at) "
+		"VALUES(:username, :related, :kind, :created)"));
+	query.bindValue(QStringLiteral(":username"), recipient);
+	query.bindValue(QStringLiteral(":related"), sender);
+	query.bindValue(QStringLiteral(":kind"), decision == QStringLiteral("accepted")
+		? QStringLiteral("friend_request_accepted") : QStringLiteral("friend_request_denied"));
+	query.bindValue(QStringLiteral(":created"), QDateTime::currentSecsSinceEpoch());
+	if (!query.exec()) {
+		setError(error, query.lastError().text());
+		return false;
 	}
 	return true;
 }
@@ -1423,7 +1607,8 @@ bool AccountStore::setServerRole(const QString& serverId, const QString& usernam
 	return true;
 }
 
-bool AccountStore::addServerSanction(const ServerSanction& sanction, qint64* sanctionId, QString* error)
+bool AccountStore::addServerSanction(const ServerSanction& sanction, qint64* sanctionId, QString* error,
+	bool resetRecentReports)
 {
 	const QString target = normalizedUsername(sanction.targetUsername);
 	const QString actor = normalizedUsername(sanction.issuedBy);
@@ -1467,9 +1652,21 @@ bool AccountStore::addServerSanction(const ServerSanction& sanction, qint64* san
 		insert.bindValue(QStringLiteral(":expires"), QVariant());
 	else
 		insert.bindValue(QStringLiteral(":expires"), sanction.expiresAt);
-	if (!revoke.exec() || !insert.exec() || !database_.commit()) {
+	QSqlQuery resetReports(database_);
+	if (resetRecentReports) {
+		resetReports.prepare(QStringLiteral(
+			"DELETE FROM player_reports WHERE server_id = :server AND target_username = :target"));
+		resetReports.bindValue(QStringLiteral(":server"), sanction.serverId);
+		resetReports.bindValue(QStringLiteral(":target"), target);
+	}
+	const bool revoked = revoke.exec();
+	const bool inserted = revoked && insert.exec();
+	const bool reportsReset = inserted && (!resetRecentReports || resetReports.exec());
+	if (!revoked || !inserted || !reportsReset || !database_.commit()) {
 		const QString message = !revoke.lastError().text().isEmpty() ? revoke.lastError().text()
-			: (!insert.lastError().text().isEmpty() ? insert.lastError().text() : database_.lastError().text());
+			: (!insert.lastError().text().isEmpty() ? insert.lastError().text()
+				: (resetRecentReports && !resetReports.lastError().text().isEmpty()
+					? resetReports.lastError().text() : database_.lastError().text()));
 		database_.rollback();
 		setError(error, message);
 		return false;

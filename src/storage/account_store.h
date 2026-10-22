@@ -27,6 +27,12 @@ public:
 	QList<ServerSanction> activeBansForUser(const QString& username, QString* error = nullptr);
 	QList<QString> friends(const QString& username, QString* error = nullptr);
 	QList<FriendRequest> friendRequests(const QString& username, QString* error = nullptr);
+	QList<UserNotification> notifications(const QString& username, QString* error = nullptr);
+	int unreadNotificationCount(const QString& username, QString* error = nullptr);
+	bool clearNotification(const QString& username, qint64 notificationId, QString* error = nullptr);
+	bool clearNotifications(const QString& username, QString* error = nullptr);
+	bool clearFriendRequestNotifications(const QString& username, const QString& relatedUsername,
+		QString* error = nullptr);
 	QList<QString> blockedUsers(const QString& username, QString* error = nullptr);
 	QList<QString> inboxContacts(const QString& username, QString* error = nullptr);
 	bool deleteInboxConversation(const QString& username, const QString& otherUsername, QString* error = nullptr);
@@ -38,6 +44,10 @@ public:
 	bool sendFriendRequest(const QString& senderUsername, const QString& recipientUsername,
 		qint64* requestId = nullptr, QString* error = nullptr);
 	bool acceptFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error = nullptr);
+	bool addFriendRequestDecisionNotification(const QString& recipientUsername, const QString& senderUsername,
+		const QString& decision, QString* error = nullptr);
+	bool addFriendAcceptedNotification(const QString& recipientUsername, const QString& friendUsername,
+		QString* error = nullptr);
 	bool denyFriendRequest(const QString& recipientUsername, qint64 requestId, QString* error = nullptr);
 	bool clearDeniedFriendRequest(const QString& senderUsername, qint64 requestId, QString* error = nullptr);
 	bool removeFriend(const QString& username, const QString& friendUsername, QString* error = nullptr);
@@ -62,7 +72,7 @@ public:
 	bool setServerRole(const QString& serverId, const QString& username, const QString& role,
 		const QString& assignedBy, QString* error = nullptr);
 	bool addServerSanction(const ServerSanction& sanction, qint64* sanctionId = nullptr,
-		QString* error = nullptr);
+		QString* error = nullptr, bool resetRecentReports = false);
 	QList<ServerSanction> activeServerSanctions(const QString& serverId,
 		const QString& targetUsername = {}, qint64 now = -1, QString* error = nullptr);
 	bool revokeServerSanction(const QString& serverId, qint64 sanctionId,

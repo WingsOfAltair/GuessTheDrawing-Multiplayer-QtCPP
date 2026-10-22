@@ -726,6 +726,9 @@ private slots:
 		banned.disconnectFromHost();
 
 		join(&target, QStringLiteral("mute-target"));
+		const QJsonObject targetJoin = findMessage(&target, QStringLiteral("JoinResult"));
+		QCOMPARE(targetJoin.value(QStringLiteral("serverRole")).toString(), QStringLiteral("player"));
+		QVERIFY(!targetJoin.value(QStringLiteral("masterSuperAdmin")).toBool());
 		const QJsonObject activeMuteNotice = findMessage(&target, QStringLiteral("ModerationNotice"));
 		QCOMPARE(activeMuteNotice.value(QStringLiteral("reason")).toString(), QStringLiteral("testing"));
 		QVERIFY(activeMuteNotice.value(QStringLiteral("expiresAt")).toVariant().toLongLong() > 0);
@@ -755,6 +758,14 @@ private slots:
 					return message.value(QStringLiteral("type")).toString() == QStringLiteral("ChatMessage")
 						&& message.value(QStringLiteral("text")).toString() == text;
 				});
+		};
+		auto rosterContains = [](const QJsonObject& message, const QString& username) {
+			for (const QJsonValue& value : message.value(QStringLiteral("players")).toArray()) {
+				if (value.toObject().value(QStringLiteral("profile")).toObject()
+					.value(QStringLiteral("username")).toString() == username)
+					return true;
+			}
+			return false;
 		};
 		QVERIFY(!receivedText(&viewer, QStringLiteral("filtered text")));
 		QVERIFY(receivedText(&target, QStringLiteral("filtered text")));
@@ -819,6 +830,9 @@ private slots:
 		QCOMPARE(kickNotice.value(QStringLiteral("reason")).toString(), QStringLiteral("Repeated disruption"));
 		QVERIFY(findMessage(&target, QStringLiteral("ModerationAnnouncement")).isEmpty());
 		QVERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		const QJsonObject postKickRoster = findMessage(&viewer, QStringLiteral("RoomRoster"));
+		QVERIFY(!postKickRoster.isEmpty());
+		QVERIFY(!rosterContains(postKickRoster, QStringLiteral("mute-target")));
 
 		received[&other].clear();
 		received[&viewer].clear();
@@ -828,6 +842,9 @@ private slots:
 		QVERIFY(!findMessage(&other, QStringLiteral("ModerationNotice")).isEmpty());
 		QVERIFY(findMessage(&other, QStringLiteral("ModerationAnnouncement")).isEmpty());
 		QVERIFY(!findMessage(&viewer, QStringLiteral("ModerationAnnouncement")).isEmpty());
+		const QJsonObject postBanRoster = findMessage(&viewer, QStringLiteral("RoomRoster"));
+		QVERIFY(!postBanRoster.isEmpty());
+		QVERIFY(!rosterContains(postBanRoster, QStringLiteral("mute-other")));
 		received[&viewer].clear();
 		QVERIFY(sendModerationApplied(QStringLiteral("unban"), QStringLiteral("mute-other"),
 			QStringLiteral("Ban lifted")));
@@ -1230,6 +1247,20 @@ private slots:
 
 		gtd::sendMessage(&secondPlayer, gtd::makeMessage(QStringLiteral("LeaveRoom")));
 		QTRY_COMPARE(secondPlayer.state(), QAbstractSocket::UnconnectedState);
+		QTcpSocket rejoinedPlayer;
+		join(&rejoinedPlayer, QStringLiteral("second-player"), true, QStringLiteral("rejoin-as-spectator"));
+		QVERIFY(findMessage(&rejoinedPlayer, QStringLiteral("JoinResult"),
+			QStringLiteral("rejoin-as-spectator")).value(QStringLiteral("spectator")).toBool());
+		gtd::sendMessage(&rejoinedPlayer, gtd::makeMessage(QStringLiteral("LeaveRoom")));
+		QTRY_COMPARE(rejoinedPlayer.state(), QAbstractSocket::UnconnectedState);
+		QTcpSocket rejoinedAsPlayer;
+		join(&rejoinedAsPlayer, QStringLiteral("second-player"), false, QStringLiteral("rejoin-as-player"));
+		const QJsonObject playerJoin = findMessage(&rejoinedAsPlayer, QStringLiteral("JoinResult"),
+			QStringLiteral("rejoin-as-player"));
+		QVERIFY(playerJoin.value(QStringLiteral("ok")).toBool());
+		QVERIFY(!playerJoin.value(QStringLiteral("spectator")).toBool());
+		gtd::sendMessage(&rejoinedAsPlayer, gtd::makeMessage(QStringLiteral("LeaveRoom")));
+		QTRY_COMPARE(rejoinedAsPlayer.state(), QAbstractSocket::UnconnectedState);
 		gtd::sendMessage(&spectator, gtd::makeMessage(QStringLiteral("LeaveRoom")));
 		QTRY_COMPARE(spectator.state(), QAbstractSocket::UnconnectedState);
 		gtd::sendMessage(&waitingPlayer, gtd::makeMessage(QStringLiteral("LeaveRoom")));

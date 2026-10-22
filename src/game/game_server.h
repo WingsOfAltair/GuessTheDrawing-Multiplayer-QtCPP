@@ -20,7 +20,9 @@ public:
 	GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 			   quint16 masterPort, QString serverSecret, QString sessionSecret,
 			   QString dictionaryPath = {}, int intermissionSeconds = 15, QObject* parent = nullptr,
-			   QByteArray roomPasskeySalt = {}, QByteArray roomPasskeyHash = {});
+			   QByteArray roomPasskeySalt = {}, QByteArray roomPasskeyHash = {},
+			   QString profanityDictionaryPath = {}, QString configFilePath = {}, int configRefreshSeconds = 5,
+			   int reconnectGraceSeconds = 30);
 	~GameServer() override;
 	bool start(QString* error = nullptr);
 	quint16 port() const;
@@ -34,6 +36,7 @@ private:
 		QString countryCode;
 		QString serverRole = QStringLiteral("player");
 		QString authToken;
+		qint64 disconnectedAtMs = 0;
 		int roomScore = 0;
 		int guessingScore = 0;
 		int drawingScore = 0;
@@ -90,6 +93,8 @@ private:
 	void processPlayerQueue();
 	QJsonObject queueStatus(const QString& username) const;
 	void removePlayer(QTcpSocket* socket);
+	void expireDisconnectedPlayers();
+	void updateReconnectPauseState();
 	int activePlayerCount() const;
 	int spectatorCount() const;
 	RoomInfo currentRoomInfo() const;
@@ -122,6 +127,7 @@ private:
 	bool validStroke(const QJsonObject& object, DrawingStroke* stroke) const;
 	QString selectWord() const;
 	bool loadDictionary(QString* error);
+	void refreshRuntimeConfiguration();
 
 	RoomInfo room_;
 	QString serverId_;
@@ -133,8 +139,11 @@ private:
 	QByteArray roomPasskeySalt_;
 	QByteArray roomPasskeyHash_;
 	QString dictionaryPath_;
+	QString profanityDictionaryPath_;
+	QString configFilePath_;
 	int intermissionSeconds_ = 15;
 	QStringList words_;
+	QSet<QString> profanityWords_;
 	QTcpServer listener_;
 	QTcpSocket masterSocket_;
 	QByteArray masterBuffer_;
@@ -143,10 +152,13 @@ private:
 	QTimer roundTimer_;
 	QTimer intermissionTimer_;
 	QTimer countdownTimer_;
+	QTimer configurationRefreshTimer_;
+	QTimer reconnectGraceTimer_;
 	QElapsedTimer actionRateLimitClock_;
 	QHash<QTcpSocket*, QByteArray> playerBuffers_;
 	QHash<QTcpSocket*, SocketRateLimit> socketRateLimits_;
 	QHash<QTcpSocket*, QString> playersBySocket_;
+	QHash<QString, QTcpSocket*> disconnectedSocketsByUsername_;
 	QHash<QString, Player> players_;
 	QHash<QString, PendingJoinRequest> pendingJoinRequests_;
 	QHash<QTcpSocket*, QString> pendingJoinBySocket_;
@@ -176,6 +188,9 @@ private:
 	bool roundActive_ = false;
 	bool roundStarting_ = false;
 	bool masterRegistered_ = false;
+	bool reconnectPaused_ = false;
+	int reconnectGraceSeconds_ = 30;
+	int pausedRoundRemainingMs_ = 0;
 };
 
 }

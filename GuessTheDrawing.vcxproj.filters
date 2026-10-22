@@ -16,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
+    <Text Include="profanity-dictionary.txt" />
   </ItemGroup>
   <ItemGroup>
     <None Include=".github\copilot-instructions.md" />

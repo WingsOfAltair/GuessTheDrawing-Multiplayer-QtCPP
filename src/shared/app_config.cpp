@@ -8,6 +8,7 @@
 #include <QJsonParseError>
 #include <QRandomGenerator>
 #include <QSaveFile>
+#include <QSet>
 
 namespace gtd {
 namespace {
@@ -70,7 +71,10 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("address"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("port"), 45450},
 			{QStringLiteral("database"), QStringLiteral("gtd.sqlite")},
-			{QStringLiteral("superAdminRefreshSeconds"), 1}}},
+			{QStringLiteral("superAdminRefreshSeconds"), 1},
+			{QStringLiteral("automaticBanDistinctReports"), 3},
+			{QStringLiteral("automaticBanDurationValue"), 1},
+			{QStringLiteral("automaticBanDurationUnit"), QStringLiteral("hours")}}},
 		{QStringLiteral("gameServer"), QJsonObject{
 			{QStringLiteral("serverId"), QStringLiteral("local-room-1")},
 			{QStringLiteral("roomId"), QStringLiteral("room-1")},
@@ -82,7 +86,10 @@ QJsonObject AppConfig::defaults()
 			{QStringLiteral("masterPort"), 45450},
 			{QStringLiteral("roundSeconds"), 60},
 			{QStringLiteral("intermissionSeconds"), 15},
-			{QStringLiteral("maxPlayers"), 8}}},
+			{QStringLiteral("maxPlayers"), 8},
+			{QStringLiteral("configRefreshSeconds"), 5},
+			{QStringLiteral("reconnectGraceSeconds"), 30},
+			{QStringLiteral("profanityDictionaryPath"), QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("profanity-dictionary.txt"))}}},
 		{QStringLiteral("client"), QJsonObject{
 			{QStringLiteral("masterAddress"), QStringLiteral("127.0.0.1")},
 			{QStringLiteral("masterPort"), 45450},
@@ -143,6 +150,18 @@ bool AppConfig::loadOrCreate(const QString& filePath, QString* error)
 			return false;
 		}
 	}
+	QJsonObject master = existing.value(QStringLiteral("master")).toObject();
+	if (!master.contains(QStringLiteral("automaticBanDurationValue"))
+		&& !master.contains(QStringLiteral("automaticBanDurationUnit"))) {
+		const QJsonValue legacyHours = master.value(QStringLiteral("automaticBanHours"));
+		if (legacyHours.isDouble()) {
+			master.insert(QStringLiteral("automaticBanDurationValue"), legacyHours);
+			master.insert(QStringLiteral("automaticBanDurationUnit"), QStringLiteral("hours"));
+		}
+	}
+	master.remove(QStringLiteral("automaticBanHours"));
+	if (!master.isEmpty() || existing.contains(QStringLiteral("master")))
+		existing.insert(QStringLiteral("master"), master);
 
 	values_ = mergeDefaults(defaults(), existing);
 	QJsonObject security = values_.value(QStringLiteral("security")).toObject();
@@ -178,6 +197,7 @@ bool AppConfig::validate(QString* error) const
 	if (!requireString(master, QStringLiteral("address"), error)
 		|| !requireString(master, QStringLiteral("database"), error)
 		|| !requirePort(master, QStringLiteral("port"), false, error)
+		|| !requireString(game, QStringLiteral("profanityDictionaryPath"), error)
 		|| !requireString(game, QStringLiteral("serverId"), error)
 		|| !requireString(game, QStringLiteral("roomId"), error)
 		|| !requireString(game, QStringLiteral("roomName"), error)
@@ -195,9 +215,30 @@ bool AppConfig::validate(QString* error) const
 	const int intermissionSeconds = game.value(QStringLiteral("intermissionSeconds")).toInt(-1);
 	const int maxPlayers = game.value(QStringLiteral("maxPlayers")).toInt(-1);
 	const int superAdminRefreshSeconds = master.value(QStringLiteral("superAdminRefreshSeconds")).toInt(-1);
+	const int configRefreshSeconds = game.value(QStringLiteral("configRefreshSeconds")).toInt(-1);
+	const int reconnectGraceSeconds = game.value(QStringLiteral("reconnectGraceSeconds")).toInt(-1);
+	const int automaticBanDistinctReports = master.value(QStringLiteral("automaticBanDistinctReports")).toInt(-1);
+	const int automaticBanDurationValue = master.value(QStringLiteral("automaticBanDurationValue")).toInt(-1);
+	const QString automaticBanDurationUnit = master.value(QStringLiteral("automaticBanDurationUnit")).toString();
 	if (roundSeconds < 10 || roundSeconds > 600 || intermissionSeconds < 0
 		|| intermissionSeconds > 120 || maxPlayers < 2 || maxPlayers > 32) {
 		setError(error, QStringLiteral("Game roundSeconds must be 10-600, intermissionSeconds 0-120, and maxPlayers 2-32"));
+		return false;
+	}
+	if (reconnectGraceSeconds < 5 || reconnectGraceSeconds > 300) {
+		setError(error, QStringLiteral("Game server reconnectGraceSeconds must be 5-300"));
+		return false;
+	}
+	if (configRefreshSeconds < 1 || configRefreshSeconds > 3600) {
+		setError(error, QStringLiteral("Game server configRefreshSeconds must be 1-3600"));
+		return false;
+	}
+	if (automaticBanDistinctReports < 2 || automaticBanDistinctReports > 100
+		|| automaticBanDurationValue < 1 || automaticBanDurationValue > 720
+		|| !QSet<QString>{QStringLiteral("seconds"), QStringLiteral("minutes"), QStringLiteral("hours"),
+			QStringLiteral("days"), QStringLiteral("weeks"), QStringLiteral("months"),
+			QStringLiteral("years")}.contains(automaticBanDurationUnit)) {
+		setError(error, QStringLiteral("Master automaticBanDistinctReports must be 2-100 and automaticBanDurationValue 1-720 with unit seconds, minutes, hours, days, weeks, months, or years"));
 		return false;
 	}
 	if (superAdminRefreshSeconds < 1 || superAdminRefreshSeconds > 3600) {

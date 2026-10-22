@@ -1,6 +1,7 @@
 #include "game/game_server.h"
 
 #include "shared/auth_token.h"
+#include "shared/app_config.h"
 #include "shared/game_rules.h"
 #include "shared/protocol.h"
 
@@ -87,7 +88,9 @@ void writeConsoleStatus(const QString& status)
 GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
 					   quint16 masterPort, QString serverSecret, QString sessionSecret,
 					   QString dictionaryPath, int intermissionSeconds, QObject* parent,
-					   QByteArray roomPasskeySalt, QByteArray roomPasskeyHash)
+						   QByteArray roomPasskeySalt, QByteArray roomPasskeyHash,
+						   QString profanityDictionaryPath, QString configFilePath, int configRefreshSeconds,
+						   int reconnectGraceSeconds)
 	: QObject(parent),
 	  room_(std::move(room)),
 	  serverId_(std::move(serverId)),
@@ -101,7 +104,12 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	  dictionaryPath_(dictionaryPath.trimmed().isEmpty()
 		? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("dictionary"))
 		: std::move(dictionaryPath)),
-	  intermissionSeconds_(qBound(0, intermissionSeconds, 120))
+	  profanityDictionaryPath_(profanityDictionaryPath.trimmed().isEmpty()
+		? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("profanity-dictionary.txt"))
+		: std::move(profanityDictionaryPath)),
+	  configFilePath_(std::move(configFilePath)),
+	  intermissionSeconds_(qBound(0, intermissionSeconds, 120)),
+	  reconnectGraceSeconds_(qBound(5, reconnectGraceSeconds, 300))
 {
 	room_.serverId = serverId_;
 	room_.roomId = room_.roomId.trimmed();
@@ -168,7 +176,7 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 				{{QStringLiteral("secondsRemaining"), remaining}}));
 			return;
 		}
-		if (!roundActive_)
+		if (!roundActive_ || reconnectPaused_)
 			return;
 		const int remaining = qMax(0, static_cast<int>(QDateTime::currentSecsSinceEpoch()
 			- roundDeadline_.toSecsSinceEpoch()) * -1);
@@ -185,6 +193,11 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 		countdownTimer_.stop();
 		startRoundNow();
 	});
+	configurationRefreshTimer_.setInterval(qBound(1, configRefreshSeconds, 3600) * 1000);
+	connect(&configurationRefreshTimer_, &QTimer::timeout, this,
+		[this] { refreshRuntimeConfiguration(); });
+	reconnectGraceTimer_.setInterval(250);
+	connect(&reconnectGraceTimer_, &QTimer::timeout, this, [this] { expireDisconnectedPlayers(); });
 }
 
 GameServer::~GameServer()
@@ -197,6 +210,8 @@ GameServer::~GameServer()
 	roundTimer_.stop();
 	intermissionTimer_.stop();
 	countdownTimer_.stop();
+	configurationRefreshTimer_.stop();
+	reconnectGraceTimer_.stop();
 	disconnect(&masterSocket_, nullptr, this, nullptr);
 	masterSocket_.abort();
 }
@@ -211,12 +226,18 @@ bool GameServer::start(QString* error)
 	}
 	if (!loadDictionary(error))
 		return false;
+	if (!loadProfanityWords(profanityDictionaryPath_, &profanityWords_, error))
+		return false;
+	setConfiguredProfanityWords(profanityWords_);
 	if (!listener_.listen(QHostAddress::AnyIPv4, room_.port)) {
 		if (error)
 			*error = listener_.errorString();
 		return false;
 	}
 	room_.port = listener_.serverPort();
+	if (!configFilePath_.isEmpty())
+		configurationRefreshTimer_.start();
+	reconnectGraceTimer_.start();
 	QTimer::singleShot(0, this, [this] { updateConsoleStatus(); });
 	connectToMaster();
 	return true;
@@ -236,8 +257,27 @@ void GameServer::acceptConnections()
 		socketRateLimits_.insert(socket, {});
 		connect(socket, &QTcpSocket::readyRead, this, [this, socket] { readPlayer(socket); });
 		connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
+		if (playersBySocket_.contains(socket)) {
+			const QString username = playersBySocket_.value(socket);
+			auto player = players_.find(username);
+			if (player != players_.end()) {
+				player->socket = nullptr;
+				player->disconnectedAtMs = QDateTime::currentMSecsSinceEpoch();
+				disconnectedSocketsByUsername_.insert(username, socket);
+				playersBySocket_.remove(socket);
+				playerBuffers_.remove(socket);
+				socketRateLimits_.remove(socket);
+				broadcast(makeMessage(QStringLiteral("PlayerConnectionChanged"),
+					{{QStringLiteral("username"), username}, {QStringLiteral("connected"), false}}));
+				updateReconnectPauseState();
+				broadcastRoster();
+				updateMasterRoom();
+			}
+		}
+		if (!disconnectedSocketsByUsername_.values().contains(socket)) {
 			removePlayer(socket);
 			socket->deleteLater();
+		}
 		});
 	}
 }
@@ -337,6 +377,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 	const QString username = playersBySocket_.value(socket);
 	if (type == QStringLiteral("LeaveRoom")) {
 		sendMessage(socket, reply(QStringLiteral("LeaveAck"), message));
+		removePlayer(socket);
 		socket->disconnectFromHost();
 	} else if (type == QStringLiteral("PromoteToPlayer") || type == QStringLiteral("ChangeRole")) {
 		changePlayerRole(socket, message);
@@ -364,7 +405,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 		const QString text = message.value(QStringLiteral("text")).toString().trimmed();
 		if (player == players_.cend() || !isValidSingleLineText(text, 300))
 			return;
-		if (containsProfanity(text)) {
+		if (containsProfanity(text, profanityWords_)) {
 			sendMessage(socket, reply(QStringLiteral("Error"), message,
 				{{QStringLiteral("message"), QStringLiteral("Your message was blocked by the profanity filter")}}));
 			return;
@@ -373,7 +414,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
 			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}});
 		for (const Player& recipient : players_) {
-			if (!recipient.mutedTextUsers.contains(username))
+			if (recipient.socket && !recipient.mutedTextUsers.contains(username))
 				sendMessage(recipient.socket, chatMessage);
 		}
 	} else if (type == QStringLiteral("VoiceFrame")) {
@@ -395,7 +436,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			 {QStringLiteral("sampleRate"), sampleRate},
 			 {QStringLiteral("audio"), QString::fromLatin1(encodedAudio)}});
 		for (const Player& recipient : players_) {
-			if (recipient.username != username && !recipient.mutedVoiceUsers.contains(username))
+			if (recipient.socket && recipient.username != username && !recipient.mutedVoiceUsers.contains(username))
 				sendMessage(recipient.socket, frame);
 		}
 	} else if (type == QStringLiteral("DrawStroke")) {
@@ -413,7 +454,7 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 		QJsonObject event = makeMessage(QStringLiteral("DrawStroke"),
 			{{QStringLiteral("username"), username}, {QStringLiteral("stroke"), stroke.toJson()}});
 		for (const Player& player : players_) {
-			if (player.username != username)
+			if (player.socket && player.username != username)
 				sendMessage(player.socket, event);
 		}
 	} else if (type == QStringLiteral("ClearCanvas")) {
@@ -448,7 +489,12 @@ void GameServer::joinRoom(QTcpSocket* socket, const QJsonObject& message)
 		return;
 	}
 	username = username.toLower();
-	if (players_.contains(username)) {
+	const auto existingPlayer = players_.constFind(username);
+	if (existingPlayer != players_.cend()
+		&& (existingPlayer->socket || existingPlayer->disconnectedAtMs <= 0
+			|| existingPlayer->authToken != message.value(QStringLiteral("authToken")).toString()
+			|| QDateTime::currentMSecsSinceEpoch() - existingPlayer->disconnectedAtMs
+				> static_cast<qint64>(reconnectGraceSeconds_) * 1000)) {
 		sendMessage(socket, reply(QStringLiteral("JoinResult"), message,
 								  {{QStringLiteral("ok"), false},
 								   {QStringLiteral("error"), QStringLiteral("That account is already in this room")}}));
@@ -534,12 +580,69 @@ void GameServer::completeJoinRoom(const PendingJoinRequest& pending, const QJson
 		return;
 	}
 	const PlayerProfile profile = PlayerProfile::fromJson(authorization.value(QStringLiteral("profile")).toObject());
-	if (profile.username != pending.username || players_.contains(pending.username)) {
+	if (profile.username != pending.username) {
 		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
 			{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Master authorization did not match this account")}}));
 		return;
 	}
 	const QString username = pending.username;
+	const auto existingPlayer = players_.find(username);
+	if (existingPlayer != players_.end() && existingPlayer->socket == nullptr
+		&& existingPlayer->disconnectedAtMs > 0
+		&& QDateTime::currentMSecsSinceEpoch() - existingPlayer->disconnectedAtMs
+			<= static_cast<qint64>(reconnectGraceSeconds_) * 1000
+		&& existingPlayer->authToken == pending.request.value(QStringLiteral("authToken")).toString()) {
+		const bool wasPaused = reconnectPaused_;
+		QTcpSocket* staleSocket = disconnectedSocketsByUsername_.take(username);
+		if (staleSocket)
+			staleSocket->deleteLater();
+		existingPlayer->socket = socket;
+		existingPlayer->disconnectedAtMs = 0;
+		playersBySocket_.insert(socket, username);
+		updateReconnectPauseState();
+		sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
+			{{QStringLiteral("ok"), true}, {QStringLiteral("room"), currentRoomInfo().toJson()},
+			 {QStringLiteral("players"), roster()}, {QStringLiteral("roundActive"), roundActive_},
+			 {QStringLiteral("spectator"), existingPlayer->spectator},
+				 {QStringLiteral("serverRole"), existingPlayer->serverRole},
+				 {QStringLiteral("masterSuperAdmin"), existingPlayer->masterSuperAdmin},
+			 {QStringLiteral("queuedForPlayer"), existingPlayer->queuedForPlayer},
+			 {QStringLiteral("roundStarting"), roundStarting_}, {QStringLiteral("queue"), queueStatus(username)},
+			 {QStringLiteral("drawerUsername"), currentDrawer_}, {QStringLiteral("layers"), canvasLayersJson()},
+			 {QStringLiteral("objects"), canvasObjectsJson()},
+				 {QStringLiteral("secondsRemaining"), roundActive_
+					? qMax(0, (wasPaused ? pausedRoundRemainingMs_ : roundTimer_.remainingTime()) / 1000)
+					: 0}}));
+		if (reconnectPaused_)
+			sendMessage(socket, makeMessage(QStringLiteral("RoundPaused"),
+				{{QStringLiteral("message"), QStringLiteral("Waiting for players to reconnect")},
+				 {QStringLiteral("secondsRemaining"), pausedRoundRemainingMs_ / 1000}}));
+		broadcast(makeMessage(QStringLiteral("PlayerConnectionChanged"),
+			{{QStringLiteral("username"), username}, {QStringLiteral("connected"), true}}));
+		broadcastRoster();
+		updateMasterRoom();
+		if (username == currentDrawer_ && roundActive_)
+			sendMessage(socket, makeMessage(QStringLiteral("WordAssigned"), {{QStringLiteral("word"), currentWord_}}));
+		if (wasPaused && !reconnectPaused_ && roundActive_)
+			broadcast(makeMessage(QStringLiteral("RoundResumed"),
+				{{QStringLiteral("secondsRemaining"), qMax(0, pausedRoundRemainingMs_ / 1000)}}));
+		return;
+	}
+	if (existingPlayer != players_.end()) {
+		if (existingPlayer->disconnectedAtMs > 0
+			&& QDateTime::currentMSecsSinceEpoch() - existingPlayer->disconnectedAtMs
+				> static_cast<qint64>(reconnectGraceSeconds_) * 1000) {
+			QTcpSocket* staleSocket = disconnectedSocketsByUsername_.take(username);
+			if (staleSocket)
+				staleSocket->deleteLater();
+			players_.erase(existingPlayer);
+			playerOrder_.removeAll(username);
+		} else {
+			sendMessage(socket, reply(QStringLiteral("JoinResult"), pending.request,
+				{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("That account is already in this room")}}));
+			return;
+		}
+	}
 	const QString displayName = pending.displayName;
 	const bool requestedSpectator = request.value(QStringLiteral("spectator")).toBool(false);
 	const bool queuedForPlayer = !requestedSpectator
@@ -599,6 +702,8 @@ void GameServer::completeJoinRoom(const PendingJoinRequest& pending, const QJson
 	sendMessage(socket, reply(QStringLiteral("JoinResult"), request,
 		{{QStringLiteral("ok"), true}, {QStringLiteral("room"), currentRoomInfo().toJson()},
 		 {QStringLiteral("players"), roster()}, {QStringLiteral("roundActive"), roundActive_},
+		 {QStringLiteral("serverRole"), player.serverRole},
+		 {QStringLiteral("masterSuperAdmin"), player.masterSuperAdmin},
 			 {QStringLiteral("spectator"), spectator},
 			 {QStringLiteral("queuedForPlayer"), queuedForPlayer},
 		 {QStringLiteral("roundStarting"), roundStarting_},
@@ -704,8 +809,12 @@ void GameServer::removePlayer(QTcpSocket* socket)
 	if (!pendingRequestId.isEmpty())
 		pendingJoinRequests_.remove(pendingRequestId);
 	const QString username = playersBySocket_.take(socket);
-	if (username.isEmpty())
+	if (username.isEmpty()) {
+		if (!disconnectedSocketsByUsername_.values().contains(socket))
+			socket->deleteLater();
 		return;
+	}
+	disconnectedSocketsByUsername_.remove(username);
 	const auto departing = players_.constFind(username);
 	const bool wasSpectator = departing != players_.cend() && departing->spectator;
 	if (departing != players_.cend()) {
@@ -730,15 +839,71 @@ void GameServer::removePlayer(QTcpSocket* socket)
 		endRound(QStringLiteral("drawer_left"));
 	else if (roundActive_ && activePlayerCount() <= correctGuesses_ + 1)
 		endRound(QStringLiteral("all_guessed"));
-	else if (activePlayerCount() < 2 && roundActive_) {
-		roundActive_ = false;
-		roundTimer_.stop();
-		countdownTimer_.stop();
-		broadcast(makeMessage(QStringLiteral("RoundPaused"),
-							  {{QStringLiteral("message"), QStringLiteral("Waiting for another player")}}));
-	}
+	else
+		updateReconnectPauseState();
 	cancelIntermissionIfInsufficientPlayers();
 	processPlayerQueue();
+}
+
+void GameServer::expireDisconnectedPlayers()
+{
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	QStringList expired;
+	for (auto player = players_.cbegin(); player != players_.cend(); ++player) {
+		if (!player->socket && player->disconnectedAtMs > 0
+			&& now - player->disconnectedAtMs >= static_cast<qint64>(reconnectGraceSeconds_) * 1000)
+			expired.append(player.key());
+	}
+	for (const QString& username : expired) {
+		QTcpSocket* staleSocket = disconnectedSocketsByUsername_.take(username);
+		players_.remove(username);
+		playerOrder_.removeAll(username);
+		removeFromPlayerQueue(username);
+		markRoundAbandoned(username);
+		const bool wasDrawer = username == currentDrawer_;
+		broadcast(makeMessage(QStringLiteral("PlayerLeft"), {{QStringLiteral("username"), username}}));
+		if (staleSocket)
+			staleSocket->deleteLater();
+		if (wasDrawer && roundActive_)
+			endRound(QStringLiteral("drawer_left"));
+		else if (roundActive_ && activePlayerCount() <= correctGuesses_ + 1)
+			endRound(QStringLiteral("all_guessed"));
+	}
+	if (!expired.isEmpty()) {
+		broadcastRoster();
+		broadcastQueueStatus();
+		updateMasterRoom();
+		updateConsoleStatus();
+		cancelIntermissionIfInsufficientPlayers();
+		processPlayerQueue();
+		updateReconnectPauseState();
+	}
+}
+
+void GameServer::updateReconnectPauseState()
+{
+	if (!activePlayerCount()) {
+		if (roundActive_)
+			endRound(QStringLiteral("no_connected_players"));
+		return;
+	}
+	if (activePlayerCount() < 2 && roundActive_ && !reconnectPaused_) {
+		pausedRoundRemainingMs_ = qMax(0, static_cast<int>(roundDeadline_.toMSecsSinceEpoch()
+			- QDateTime::currentMSecsSinceEpoch()));
+		roundTimer_.stop();
+		countdownTimer_.stop();
+		reconnectPaused_ = true;
+		broadcast(makeMessage(QStringLiteral("RoundPaused"),
+			{{QStringLiteral("message"), QStringLiteral("Waiting for players to reconnect")},
+			 {QStringLiteral("secondsRemaining"), pausedRoundRemainingMs_ / 1000}}));
+	} else if (activePlayerCount() >= 2 && reconnectPaused_) {
+		reconnectPaused_ = false;
+		roundDeadline_ = QDateTime::currentDateTime().addMSecs(pausedRoundRemainingMs_);
+		roundTimer_.start(pausedRoundRemainingMs_);
+		countdownTimer_.start();
+		broadcast(makeMessage(QStringLiteral("RoundResumed"),
+			{{QStringLiteral("secondsRemaining"), pausedRoundRemainingMs_ / 1000}}));
+	}
 }
 
 RoomInfo GameServer::currentRoomInfo() const
@@ -753,7 +918,7 @@ int GameServer::activePlayerCount() const
 {
 	int count = 0;
 	for (const Player& player : players_) {
-		if (!player.spectator)
+		if (!player.spectator && player.socket)
 			++count;
 	}
 	return count;
@@ -852,7 +1017,7 @@ int GameServer::spectatorCount() const
 {
 	int count = 0;
 	for (const Player& player : players_) {
-		if (player.spectator)
+		if (player.spectator && player.socket)
 			++count;
 	}
 	return count;
@@ -866,6 +1031,8 @@ QJsonArray GameServer::roster() const
 		if (iterator == players_.cend())
 			continue;
 		const Player& player = iterator.value();
+		if (!player.socket)
+			continue;
 		PlayerProfile profile;
 		profile.username = player.username;
 		profile.displayName = player.displayName;
@@ -903,7 +1070,8 @@ void GameServer::sendRoomSnapshot(QTcpSocket* socket)
 void GameServer::broadcast(const QJsonObject& message)
 {
 	for (const Player& player : players_)
-		sendMessage(player.socket, message);
+		if (player.socket)
+			sendMessage(player.socket, message);
 }
 
 void GameServer::broadcastRoster()
@@ -943,7 +1111,8 @@ void GameServer::readMaster()
 			if (masterRegistered_) {
 				sendMasterRegistration(false);
 				for (const Player& player : players_)
-					requestProfile(player);
+					if (player.socket)
+						requestProfile(player);
 			}
 		} else if (type == QStringLiteral("ProfileResult")) {
 			const QString requestId = message.value(QStringLiteral("requestId")).toString();
@@ -1022,13 +1191,13 @@ void GameServer::readMaster()
 			const QString reason = message.value(QStringLiteral("reason")).toString();
 			const auto announceToRoom = [this, &target](const QJsonObject& announcement) {
 				for (const Player& recipient : players_) {
-					if (recipient.username != target)
+					if (recipient.socket && recipient.username != target)
 						sendMessage(recipient.socket, announcement);
 				}
 			};
 			if (action == QStringLiteral("kick") || action == QStringLiteral("ban")
 				|| action == QStringLiteral("mute")) {
-				if (player == players_.end())
+				if (player == players_.end() || !player->socket)
 					continue;
 				ServerSanction sanction;
 				if (action == QStringLiteral("mute")) {
@@ -1062,8 +1231,13 @@ void GameServer::readMaster()
 					 {QStringLiteral("reason"), reason}, {QStringLiteral("textChat"), sanction.textChat},
 						 {QStringLiteral("voiceChat"), sanction.voiceChat},
 						 {QStringLiteral("expiresAt"), sanction.expiresAt}}));
-				if (action == QStringLiteral("kick") || action == QStringLiteral("ban"))
-					player->socket->disconnectFromHost();
+				if (action == QStringLiteral("kick") || action == QStringLiteral("ban")) {
+					QTcpSocket* targetSocket = player->socket;
+					removePlayer(targetSocket);
+					if (targetSocket)
+						targetSocket->disconnectFromHost();
+				}
+				continue;
 			} else if (action == QStringLiteral("unmute")) {
 				if (player != players_.end()) {
 					player->serverTextMuted = false;
@@ -1142,7 +1316,7 @@ void GameServer::sendMasterRegistration(bool initial)
 	QJsonArray presence;
 	for (const QString& username : playerOrder_) {
 		const auto player = players_.constFind(username);
-		if (player == players_.cend())
+		if (player == players_.cend() || !player->socket)
 			continue;
 		presence.append(QJsonObject{{QStringLiteral("username"), username},
 			{QStringLiteral("roomId"), room_.roomId}, {QStringLiteral("spectator"), player->spectator},
@@ -1487,6 +1661,8 @@ void GameServer::endRound(const QString& reason)
 {
 	if (!roundActive_)
 		return;
+	if (reconnectPaused_)
+		return;
 	roundActive_ = false;
 	roundTimer_.stop();
 	countdownTimer_.stop();
@@ -1533,7 +1709,7 @@ void GameServer::sendGuess(const QString& username, const QString& rawText)
 	const QString text = rawText.trimmed();
 	if (!isValidSingleLineText(text, 100))
 		return;
-	if (containsProfanity(text)) {
+	if (containsProfanity(text, profanityWords_)) {
 		if (const auto player = players_.constFind(username); player != players_.cend())
 			sendMessage(player->socket, makeMessage(QStringLiteral("Error"),
 				{{QStringLiteral("message"), QStringLiteral("Your guess was blocked by the profanity filter")}}));
@@ -1632,6 +1808,42 @@ bool GameServer::loadDictionary(QString* error)
 	}
 	words_ = std::move(loadedWords);
 	return true;
+}
+
+void GameServer::refreshRuntimeConfiguration()
+{
+	if (configFilePath_.isEmpty())
+		return;
+	AppConfig config;
+	QString error;
+	if (!config.loadOrCreate(configFilePath_, &error)) {
+		qWarning().noquote() << QStringLiteral("Runtime configuration reload skipped: %1").arg(error);
+		return;
+	}
+	const QString updatedProfanityPath = config.resolvedPath(QStringLiteral("gameServer"),
+		QStringLiteral("profanityDictionaryPath"));
+	QSet<QString> updatedWords;
+	if (!loadProfanityWords(updatedProfanityPath, &updatedWords, &error)) {
+		qWarning().noquote() << QStringLiteral("Profanity dictionary reload skipped: %1").arg(error);
+		return;
+	}
+	const int updatedRoundSeconds = config.intValue(QStringLiteral("gameServer"), QStringLiteral("roundSeconds"));
+	const int updatedIntermissionSeconds = config.intValue(QStringLiteral("gameServer"), QStringLiteral("intermissionSeconds"));
+	const int updatedMaxPlayers = config.intValue(QStringLiteral("gameServer"), QStringLiteral("maxPlayers"));
+	const int updatedReconnectGraceSeconds = config.intValue(QStringLiteral("gameServer"), QStringLiteral("reconnectGraceSeconds"));
+	if (updatedRoundSeconds < 10 || updatedRoundSeconds > 600 || updatedIntermissionSeconds < 0
+		|| updatedIntermissionSeconds > 120 || updatedMaxPlayers < 2 || updatedMaxPlayers > 32
+		|| updatedReconnectGraceSeconds < 5 || updatedReconnectGraceSeconds > 300) {
+		qWarning().noquote() << QStringLiteral("Runtime configuration reload skipped: invalid room settings");
+		return;
+	}
+	profanityDictionaryPath_ = updatedProfanityPath;
+	profanityWords_ = std::move(updatedWords);
+	setConfiguredProfanityWords(profanityWords_);
+	room_.roundSeconds = updatedRoundSeconds;
+	room_.maxPlayers = updatedMaxPlayers;
+	intermissionSeconds_ = updatedIntermissionSeconds;
+	reconnectGraceSeconds_ = updatedReconnectGraceSeconds;
 }
 
 }
