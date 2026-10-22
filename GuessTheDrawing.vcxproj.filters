@@ -55,6 +55,12 @@
     <ClInclude Include="src\shared\app_config.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\shared\app_version.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shared\update_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\shared\protocol.cpp">
@@ -118,6 +124,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="tests\test_master_server.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\shared\update_manager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
