@@ -67,6 +67,7 @@ private:
 	QHash<QTcpSocket*, QByteArray> pendingData_;
 	QHash<QTcpSocket*, QString> serverIdsBySocket_;
 	QHash<QTcpSocket*, QString> authenticatedClients_;
+	QHash<QString, QString> activityStatusByUsername_;
 	QHash<QTcpSocket*, quint64> lastRoundResultSequence_;
 	QHash<QTcpSocket*, quint64> lastScoreUpdateSequence_;
 	QHash<QString, Registration> registrations_;

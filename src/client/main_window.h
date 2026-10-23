@@ -18,6 +18,7 @@
 class QCheckBox;
 class QDateTimeEdit;
 class QDialog;
+class QEvent;
 class QAudioSink;
 class QAudioSource;
 class QComboBox;
@@ -47,6 +48,9 @@ class MainWindow final : public QMainWindow {
 public:
 	MainWindow(AppConfig& config, QString masterHost, quint16 masterPort, QWidget* parent = nullptr);
 
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
 	QWidget* createLoginPage();
 	QWidget* createLobbyPage();
@@ -62,6 +66,8 @@ private:
 	void searchUsers();
 	void requestSocialList();
 	void requestInboxList();
+	void setPresenceStatus(const QString& status);
+	void sortFriendsList();
 	void deleteInboxConversation(const QString& targetUsername);
 	void deleteInboxMessage(qint64 messageId);
 	void sendSocialAction(const QString& action, const QString& targetUsername = {}, qint64 requestId = 0,
@@ -69,7 +75,7 @@ private:
 	void clearNotification(QListWidgetItem* item);
 	void updateSocialTabTitle();
 	void openInbox(const QString& targetUsername);
-	void markInboxConversationRead();
+	void markInboxConversationRead(const QString& targetUsername = {});
 	void showUserDirectoryEntry(const UserDirectoryEntry& entry);
 	void joinRoom(const RoomInfo& room, bool spectator);
 	void populateRooms(const QJsonArray& rooms);
@@ -138,6 +144,7 @@ private:
 	QHash<QString, QByteArray> voiceOutputPending_;
 	QTimer voiceOutputFlushTimer_;
 	QTimer updateCheckTimer_;
+	QTimer presenceIdleTimer_;
 	UpdateManager* updateManager_ = nullptr;
 	QString pendingUpdateArchive_;
 	QString pendingUpdateVersion_;
@@ -253,6 +260,7 @@ private:
 	QPushButton* layerUpButton_ = nullptr;
 	QPushButton* layerDownButton_ = nullptr;
 	QString authToken_;
+	QString presenceStatus_ = QStringLiteral("active");
 	QString languageCode_ = QStringLiteral("en");
 	QString username_;
 	QString currentServerRole_ = QStringLiteral("player");

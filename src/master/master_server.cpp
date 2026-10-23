@@ -313,6 +313,27 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 		sendMessage(socket, mismatch);
 		return;
 	}
+	if (type == QStringLiteral("PresenceStatusUpdate")) {
+		QString actor;
+		if (!verifyClientSession(message, &actor, &error)) {
+			sendError(socket, message, error);
+			return;
+		}
+		if (authenticatedClients_.value(socket) != actor) {
+			sendError(socket, message, QStringLiteral("Session is not connected"));
+			return;
+		}
+		const QString status = message.value(QStringLiteral("status")).toString();
+		if (status != QStringLiteral("active") && status != QStringLiteral("idle")) {
+			sendError(socket, message, QStringLiteral("Invalid presence status"));
+			return;
+		}
+		if (activityStatusByUsername_.value(actor, QStringLiteral("active")) != status) {
+			activityStatusByUsername_.insert(actor, status);
+			broadcastPresence(actor);
+		}
+		return;
+	}
 	if (type == QStringLiteral("UserSearchRequest") || type == QStringLiteral("UserProfileRequest")) {
 		QString viewer;
 		if (!verifyClientSession(message, &viewer, &error)) {
@@ -749,8 +770,12 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	if (type == QStringLiteral("Logout")) {
 		const QString loggedOut = authenticatedClients_.take(socket);
 		if (!loggedOut.isEmpty()) {
+			const bool stillConnected = authenticatedClients_.values().contains(loggedOut);
+			if (!stillConnected)
+				activityStatusByUsername_.remove(loggedOut);
 			logPopulationStats();
-			broadcastPresence(loggedOut);
+			if (!stillConnected)
+				broadcastPresence(loggedOut);
 		}
 		return;
 	}
@@ -1154,18 +1179,18 @@ UserDirectoryEntry MasterServer::directoryEntry(const QString& viewer, const Pla
 QJsonObject MasterServer::presenceData(const QString& username) const
 {
 	const QString target = username.toLower();
+	const QString status = activityStatusByUsername_.value(target, QStringLiteral("active"));
 	const auto roomPresence = roomPresenceByUsername_.constFind(target);
 	if (roomPresence != roomPresenceByUsername_.cend()) {
 		QJsonObject result = roomPresence.value();
 		result.insert(QStringLiteral("username"), target);
-		result.insert(QStringLiteral("status"), result.value(QStringLiteral("spectator")).toBool()
-			? QStringLiteral("spectating") : QStringLiteral("in-game"));
+		result.insert(QStringLiteral("status"), status);
 		result.insert(QStringLiteral("hasRoom"), true);
 		return result;
 	}
 	for (const QString& connected : authenticatedClients_) {
 		if (connected == target)
-			return {{QStringLiteral("username"), target}, {QStringLiteral("status"), QStringLiteral("online")},
+			return {{QStringLiteral("username"), target}, {QStringLiteral("status"), status},
 				{QStringLiteral("hasRoom"), false}};
 	}
 	return {{QStringLiteral("username"), target}, {QStringLiteral("status"), QStringLiteral("offline")},
@@ -1227,6 +1252,7 @@ void MasterServer::sendAuthResult(QTcpSocket* socket, const QJsonObject& request
 		}
 	}
 	authenticatedClients_.insert(socket, profile->username);
+	activityStatusByUsername_.insert(profile->username, QStringLiteral("active"));
 	logPopulationStats();
 	broadcastPresence(profile->username);
 	const qint64 expiresAt = QDateTime::currentSecsSinceEpoch() + SessionLifetimeSeconds;
@@ -1592,13 +1618,18 @@ void MasterServer::removeSocket(QTcpSocket* socket, bool logDisconnect)
 	pendingData_.remove(socket);
 	const QString clientUsername = authenticatedClients_.take(socket);
 	const bool clientRemoved = !clientUsername.isEmpty();
+	const bool anotherSessionConnected = clientRemoved
+		&& authenticatedClients_.values().contains(clientUsername);
+	if (clientRemoved && !anotherSessionConnected)
+		activityStatusByUsername_.remove(clientUsername);
 	lastRoundResultSequence_.remove(socket);
 	lastScoreUpdateSequence_.remove(socket);
 	const QString serverId = serverIdsBySocket_.take(socket);
 	if (serverId.isEmpty()) {
 		if (clientRemoved) {
 			logPopulationStats();
-			broadcastPresence(clientUsername);
+			if (!anotherSessionConnected)
+				broadcastPresence(clientUsername);
 		}
 		return;
 	}

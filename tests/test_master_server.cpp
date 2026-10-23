@@ -584,6 +584,20 @@ private slots:
 			return response.value(QStringLiteral("type")).toString() == QStringLiteral("AuthResult")
 				&& response.value(QStringLiteral("requestId")).toString() == QStringLiteral("victim-login");
 		}));
+		const auto victimAuthResult = std::find_if(victimResponses.cbegin(), victimResponses.cend(),
+			[](const QJsonObject& response) {
+				return response.value(QStringLiteral("type")).toString() == QStringLiteral("AuthResult")
+					&& response.value(QStringLiteral("requestId")).toString() == QStringLiteral("victim-login");
+			});
+		QVERIFY(victimAuthResult != victimResponses.cend());
+		QVERIFY(gtd::sendMessage(&victimClient, gtd::makeMessage(QStringLiteral("PresenceStatusUpdate"),
+			{{QStringLiteral("authToken"), victimAuthResult->value(QStringLiteral("authToken"))},
+			 {QStringLiteral("status"), QStringLiteral("idle")}})));
+		QTRY_VERIFY(std::any_of(victimResponses.cbegin(), victimResponses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("PresenceChanged")
+				&& response.value(QStringLiteral("username")).toString() == QStringLiteral("victim")
+				&& response.value(QStringLiteral("status")).toString() == QStringLiteral("idle");
+		}));
 
 		serverResponses.clear();
 		QVERIFY(sendClient(QStringLiteral("adminuser"), QStringLiteral("ModerationRequest"),

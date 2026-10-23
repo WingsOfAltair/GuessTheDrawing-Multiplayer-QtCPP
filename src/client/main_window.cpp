@@ -10,6 +10,7 @@
 #include <QAudioSource>
 #include <QApplication>
 #include <QCheckBox>
+#include <QChildEvent>
 #include <QDateTimeEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -18,6 +19,7 @@
 #include <QDateTime>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -885,6 +887,15 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	setCentralWidget(pages_);
 	pages_->setCurrentWidget(loginPage_);
 	applyLanguage(languageCode_);
+	qApp->installEventFilter(this);
+	setMouseTracking(true);
+	for (QWidget* widget : findChildren<QWidget*>())
+		widget->setMouseTracking(true);
+	presenceIdleTimer_.setSingleShot(true);
+	presenceIdleTimer_.setInterval(5 * 60 * 1000);
+	connect(&presenceIdleTimer_, &QTimer::timeout, this, [this] {
+		setPresenceStatus(QStringLiteral("idle"));
+	});
 
 	connect(&masterSocket_, &QTcpSocket::connected, this, [this] {
 		setLocalizedText(loginConnectionStatusLabel_, QStringLiteral("Connected to master"), languageCode_);
@@ -1006,6 +1017,49 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	updateCheckTimer_.start();
 	QTimer::singleShot(0, updateManager_, &UpdateManager::checkForUpdates);
 	connectMaster();
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+	QWidget* widget = qobject_cast<QWidget*>(watched);
+	if (event->type() == QEvent::ChildAdded && widget && (widget == this || isAncestorOf(widget))) {
+		QPointer<QWidget> parentWidget(widget);
+		QTimer::singleShot(0, this, [parentWidget] {
+			if (!parentWidget)
+				return;
+			parentWidget->setMouseTracking(true);
+			for (QWidget* child : parentWidget->findChildren<QWidget*>())
+				child->setMouseTracking(true);
+		});
+	}
+	if (!authToken_.isEmpty() && widget && (widget == this || isAncestorOf(widget))) {
+		switch (event->type()) {
+		case QEvent::MouseMove:
+		case QEvent::MouseButtonPress:
+		case QEvent::MouseButtonDblClick:
+		case QEvent::Wheel:
+		case QEvent::KeyPress:
+			presenceIdleTimer_.start();
+			setPresenceStatus(QStringLiteral("active"));
+			break;
+		default:
+			break;
+		}
+	}
+	return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::setPresenceStatus(const QString& status)
+{
+	if (status != QStringLiteral("active") && status != QStringLiteral("idle"))
+		return;
+	if (presenceStatus_ == status)
+		return;
+	presenceStatus_ = status;
+	if (authToken_.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState)
+		return;
+	sendMessage(&masterSocket_, makeMessage(QStringLiteral("PresenceStatusUpdate"),
+		{{QStringLiteral("authToken"), authToken_}, {QStringLiteral("status"), status}}));
 }
 
 void MainWindow::applyLanguage(const QString& languageCode)
@@ -1313,10 +1367,13 @@ QWidget* MainWindow::createLobbyPage()
 			return;
 		QMenu menu(this);
 		QAction* open = menu.addAction(localizedText(QStringLiteral("Open conversation"), languageCode_));
+		QAction* markRead = menu.addAction(localizedText(QStringLiteral("Mark conversation as read"), languageCode_));
 		QAction* remove = menu.addAction(localizedText(QStringLiteral("Delete conversation"), languageCode_));
 		const QAction* selected = menu.exec(inboxContactsList_->mapToGlobal(position));
 		if (selected == open)
 			openInbox(item->data(Qt::UserRole).toString());
+		else if (selected == markRead)
+			markInboxConversationRead(item->data(Qt::UserRole).toString());
 		else if (selected == remove)
 			deleteInboxConversation(item->data(Qt::UserRole).toString());
 	});
@@ -1597,9 +1654,11 @@ QWidget* MainWindow::createLobbyPage()
 	});
 	connect(roomsTable_, &QTableWidget::itemDoubleClicked, this, [this] { joinSelectedRoom(); });
 	connect(signOutButton, &QPushButton::clicked, this, [this] {
+		presenceIdleTimer_.stop();
 		if (masterSocket_.state() == QAbstractSocket::ConnectedState)
 			sendMessage(&masterSocket_, makeMessage(QStringLiteral("Logout")));
 		authToken_.clear();
+		presenceStatus_ = QStringLiteral("active");
 		pages_->setCurrentWidget(loginPage_);
 		roomRefreshTimer_.stop();
 	});
@@ -2035,10 +2094,13 @@ QWidget* MainWindow::createGamePage()
 						return;
 					QMenu menu(this);
 					QAction* open = menu.addAction(localizedText(QStringLiteral("Open conversation"), languageCode_));
+					QAction* markRead = menu.addAction(localizedText(QStringLiteral("Mark conversation as read"), languageCode_));
 					QAction* remove = menu.addAction(localizedText(QStringLiteral("Delete conversation"), languageCode_));
 					const QAction* selected = menu.exec(roomInboxList_->mapToGlobal(position));
 					if (selected == open)
 						openInbox(item->data(Qt::UserRole).toString());
+					else if (selected == markRead)
+						markInboxConversationRead(item->data(Qt::UserRole).toString());
 					else if (selected == remove)
 						deleteInboxConversation(item->data(Qt::UserRole).toString());
 				});
@@ -2375,6 +2437,7 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		return;
 	}
 	if (type == QStringLiteral("SessionReplaced")) {
+		presenceIdleTimer_.stop();
 		authToken_.clear();
 		masterSuperAdmin_ = false;
 		currentServerRole_ = QStringLiteral("player");
@@ -2405,6 +2468,8 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 			return;
 		}
 		authToken_ = message.value(QStringLiteral("authToken")).toString();
+		presenceStatus_ = QStringLiteral("active");
+		presenceIdleTimer_.start();
 		knownNotificationIds_.clear();
 		notificationListInitialized_ = false;
 		const PlayerProfile profile = PlayerProfile::fromJson(message.value(QStringLiteral("profile")).toObject());
@@ -2467,7 +2532,10 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 					entry.presenceStatus), friendsList_);
 			item->setData(Qt::UserRole, entry.profile.username);
 			item->setData(Qt::UserRole + 1, QStringLiteral("friend"));
+			item->setData(Qt::UserRole + 2, entry.profile.displayName);
+			item->setData(Qt::UserRole + 3, entry.presenceStatus);
 		}
+		sortFriendsList();
 		friendsList_->addItem(localizedText(QStringLiteral("Friend requests"), languageCode_));
 		for (const QJsonValue& value : message.value(QStringLiteral("requests")).toArray()) {
 			const FriendRequest request = FriendRequest::fromJson(value.toObject());
@@ -2911,10 +2979,13 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 				if (item->data(Qt::UserRole + 1).toString() != QStringLiteral("friend")
 					|| item->data(Qt::UserRole).toString() != changedUsername)
 					continue;
-				item->setText(QStringLiteral("%1 · %2").arg(changedUsername,
-					message.value(QStringLiteral("status")).toString()));
+				const QString status = message.value(QStringLiteral("status")).toString();
+				const QString displayName = item->data(Qt::UserRole + 2).toString();
+				item->setData(Qt::UserRole + 3, status);
+				item->setText(QStringLiteral("%1 (@%2) · %3").arg(displayName, changedUsername, status));
 				break;
 			}
+			sortFriendsList();
 		}
 		for (int index = 0; index < userSearchResults_->count(); ++index) {
 			QListWidgetItem* item = userSearchResults_->item(index);
@@ -4229,6 +4300,30 @@ void MainWindow::requestInboxList()
 			{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_}}));
 }
 
+void MainWindow::sortFriendsList()
+{
+	if (!friendsList_)
+		return;
+	QList<QListWidgetItem*> friends;
+	while (friendsList_->count() > 0
+		&& friendsList_->item(0)->data(Qt::UserRole + 1).toString() == QStringLiteral("friend"))
+		friends.append(friendsList_->takeItem(0));
+	const auto presenceRank = [](const QString& status) {
+		if (status == QStringLiteral("offline"))
+			return 2;
+		if (status == QStringLiteral("idle") || status == QStringLiteral("away"))
+			return 1;
+		return 0;
+	};
+	std::stable_sort(friends.begin(), friends.end(), [&presenceRank](const QListWidgetItem* left,
+		const QListWidgetItem* right) {
+		return presenceRank(left->data(Qt::UserRole + 3).toString())
+			< presenceRank(right->data(Qt::UserRole + 3).toString());
+	});
+	for (int index = 0; index < friends.size(); ++index)
+		friendsList_->insertItem(index, friends.at(index));
+}
+
 void MainWindow::deleteInboxConversation(const QString& targetUsername)
 {
 	if (targetUsername.isEmpty() || masterSocket_.state() != QAbstractSocket::ConnectedState
@@ -4361,14 +4456,15 @@ void MainWindow::openInbox(const QString& targetUsername)
 	inboxDialog_->raise();
 }
 
-void MainWindow::markInboxConversationRead()
+void MainWindow::markInboxConversationRead(const QString& targetUsername)
 {
-	if (inboxTargetUsername_.isEmpty() || !inboxDialog_ || !inboxDialog_->isVisible()
+	const QString target = targetUsername.isEmpty() ? inboxTargetUsername_ : targetUsername;
+	if (target.isEmpty() || (targetUsername.isEmpty() && (!inboxDialog_ || !inboxDialog_->isVisible()))
 		|| masterSocket_.state() != QAbstractSocket::ConnectedState || authToken_.isEmpty())
 		return;
 	sendMessage(&masterSocket_, makeMessage(QStringLiteral("InboxMarkRead"),
 		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("authToken"), authToken_},
-		 {QStringLiteral("targetUsername"), inboxTargetUsername_}}));
+		 {QStringLiteral("targetUsername"), target}}));
 }
 
 void MainWindow::showPlayerProfile(const QString& username)
