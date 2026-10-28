@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
-project(GuessTheDrawing VERSION 1.0.0 LANGUAGES CXX)
+project(GuessTheDrawing VERSION 1.0.1 LANGUAGES CXX)
+
+set(GTD_APP_VERSION "${PROJECT_VERSION}")
+if(DEFINED ENV{GTD_RELEASE_VERSION})
+	set(GTD_APP_VERSION "$ENV{GTD_RELEASE_VERSION}")
+endif()
 
 if(NOT WIN32)
 	message(STATUS "Automatic update installation is currently supported for Windows ZIP releases; version checks remain enabled everywhere.")
@@ -29,7 +34,7 @@ add_library(gtd_shared
 	src/shared/game_rules.h
 )
 target_include_directories(gtd_shared PUBLIC src)
-target_compile_definitions(gtd_shared PUBLIC GTD_APP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(gtd_shared PUBLIC GTD_APP_VERSION="${GTD_APP_VERSION}")
 target_link_libraries(gtd_shared PUBLIC Qt6::Core Qt6::Network)
 
 add_library(gtd_storage

@@ -7,6 +7,7 @@
 #include <QCommandLineParser>
 #include <QCryptographicHash>
 #include <QCoreApplication>
+#include <QDebug>
 #include <QPasswordDigestor>
 #include <QRandomGenerator>
 #include <QTextStream>
@@ -16,6 +17,7 @@ int main(int argc, char* argv[])
 	QCoreApplication application(argc, argv);
 	QCoreApplication::setApplicationName(QStringLiteral("gtd_game_server"));
 	QCoreApplication::setApplicationVersion(gtd::ApplicationVersion);
+	qInfo().noquote() << QStringLiteral("Guess The Drawing game server %1").arg(gtd::ApplicationVersion);
 	QCommandLineParser parser;
 	parser.setApplicationDescription(QStringLiteral("Guess The Drawing dedicated room server"));
 	parser.addHelpOption();

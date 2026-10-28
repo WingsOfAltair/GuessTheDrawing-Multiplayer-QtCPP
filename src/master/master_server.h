@@ -65,6 +65,7 @@ private:
 	QString automaticBanDurationUnit_ = QStringLiteral("hours");
 	QTimer configurationRefreshTimer_;
 	QHash<QTcpSocket*, QByteArray> pendingData_;
+	QSet<QTcpSocket*> mismatchedVersionSockets_;
 	QHash<QTcpSocket*, QString> serverIdsBySocket_;
 	QHash<QTcpSocket*, QString> authenticatedClients_;
 	QHash<QString, QString> activityStatusByUsername_;

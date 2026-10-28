@@ -17,6 +17,8 @@ public:
 	bool installAndRestart(const QString& archivePath, QString* error = nullptr) const;
 
 signals:
+	void updateStatusChanged(const QString& status);
+	void downloadProgressChanged(qint64 received, qint64 total);
 	void updateAvailable(const QString& version, const QString& archivePath);
 	void checkFailed(const QString& message);
 
@@ -25,6 +27,7 @@ private:
 
 	QNetworkAccessManager* network_ = nullptr;
 	bool checking_ = false;
+	bool updateReady_ = false;
 };
 
 }

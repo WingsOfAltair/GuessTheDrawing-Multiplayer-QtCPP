@@ -24,6 +24,7 @@
     <None Include="dictionary" />
     <None Include="README.md" />
     <None Include="gtd-update.json" />
+    <None Include=".github\workflows\release.yml" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shared\models.h">

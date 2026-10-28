@@ -179,6 +179,7 @@ private:
 	QLabel* loginStatusLabel_ = nullptr;
 	QLabel* loginConnectionStatusLabel_ = nullptr;
 	QProgressBar* loginProgressBar_ = nullptr;
+	QProgressBar* updateProgressBar_ = nullptr;
 	QLabel* connectionStatusLabel_ = nullptr;
 	QProgressBar* lobbyProgressBar_ = nullptr;
 	QLineEdit* userSearchEdit_ = nullptr;

@@ -23,13 +23,15 @@ class MasterServerTests final : public QObject {
 	Q_OBJECT
 
 private slots:
-	void rejectsClientWithWrongApplicationVersion()
+	void allowsClientWithWrongApplicationVersionToAuthenticateDuringUpdate()
 	{
 		QTemporaryDir directory;
 		QVERIFY(directory.isValid());
 		gtd::AccountStore accountStore(directory.filePath(QStringLiteral("versions.sqlite")));
 		QString error;
 		QVERIFY2(accountStore.initialize(&error), qPrintable(error));
+		QVERIFY2(accountStore.createAccount(QStringLiteral("legacy"), QStringLiteral("password123"),
+			QStringLiteral("Legacy"), &error), qPrintable(error));
 		gtd::MasterServer master(&accountStore, QStringLiteral("version-server-secret-long"),
 			QStringLiteral("version-session-secret-long"));
 		QVERIFY(master.start(QHostAddress::LocalHost, 0));
@@ -51,6 +53,54 @@ private slots:
 			return response.value(QStringLiteral("type")).toString() == QStringLiteral("VersionMismatch")
 				&& response.value(QStringLiteral("requiredVersion")).toString() == gtd::ApplicationVersion;
 		}));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("AuthResult")
+				&& response.value(QStringLiteral("ok")).toBool();
+		}));
+		QCOMPARE(client.state(), QAbstractSocket::ConnectedState);
+	}
+
+	void allowsGameServerWithWrongApplicationVersionToRegisterDuringUpdate()
+	{
+		QTemporaryDir directory;
+		QVERIFY(directory.isValid());
+		gtd::AccountStore accountStore(directory.filePath(QStringLiteral("server-versions.sqlite")));
+		QString error;
+		QVERIFY2(accountStore.initialize(&error), qPrintable(error));
+		const QString serverSecret = QStringLiteral("version-server-secret-long");
+		gtd::MasterServer master(&accountStore, serverSecret, QStringLiteral("version-session-secret-long"));
+		QVERIFY(master.start(QHostAddress::LocalHost, 0));
+		QTcpSocket gameServer;
+		QByteArray responseBuffer;
+		QList<QJsonObject> responses;
+		connect(&gameServer, &QTcpSocket::readyRead, this, [&] {
+			responses.append(gtd::takeMessages(&responseBuffer, gameServer.readAll()));
+		});
+		gameServer.connectToHost(QHostAddress::LocalHost, master.serverPort());
+		QTRY_COMPARE(gameServer.state(), QAbstractSocket::ConnectedState);
+		gtd::RoomInfo room;
+		room.roomId = QStringLiteral("legacy-room");
+		room.roomName = QStringLiteral("Legacy Room");
+		room.port = 45451;
+		const QJsonObject registration{
+			{QStringLiteral("version"), gtd::ProtocolVersion},
+			{QStringLiteral("appVersion"), QStringLiteral("0.0.0")},
+			{QStringLiteral("type"), QStringLiteral("ServerRegister")},
+			{QStringLiteral("requestId"), QStringLiteral("legacy-server")},
+			{QStringLiteral("serverId"), QStringLiteral("legacy-server")},
+			{QStringLiteral("secret"), serverSecret},
+			{QStringLiteral("host"), QStringLiteral("127.0.0.1")},
+			{QStringLiteral("rooms"), QJsonArray{room.toJson()}}};
+		const QByteArray frame = QJsonDocument(registration).toJson(QJsonDocument::Compact) + '\n';
+		QCOMPARE(gameServer.write(frame), qint64(frame.size()));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("VersionMismatch");
+		}));
+		QTRY_VERIFY(std::any_of(responses.cbegin(), responses.cend(), [](const QJsonObject& response) {
+			return response.value(QStringLiteral("type")).toString() == QStringLiteral("ServerRegisterAck")
+				&& response.value(QStringLiteral("ok")).toBool();
+		}));
+		QCOMPARE(gameServer.state(), QAbstractSocket::ConnectedState);
 	}
 
 	void automaticReportBanUsesConfiguredCalendarDuration()

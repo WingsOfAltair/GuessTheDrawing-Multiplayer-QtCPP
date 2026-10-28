@@ -144,6 +144,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include=".github\copilot-instructions.md" />
+    <None Include=".github\workflows\release.yml" />
     <None Include=".gitignore" />
     <None Include="dictionary" />
     <None Include="gtd-update.json" />

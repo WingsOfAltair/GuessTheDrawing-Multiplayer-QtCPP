@@ -5,6 +5,7 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDebug>
 #include <QHostAddress>
 #include <QTextStream>
 
@@ -13,6 +14,7 @@ int main(int argc, char* argv[])
 	QCoreApplication application(argc, argv);
 	QCoreApplication::setApplicationName(QStringLiteral("gtd_master"));
 	QCoreApplication::setApplicationVersion(gtd::ApplicationVersion);
+	qInfo().noquote() << QStringLiteral("Guess The Drawing master server %1").arg(gtd::ApplicationVersion);
 	QCommandLineParser parser;
 	parser.setApplicationDescription(QStringLiteral("Guess The Drawing master service"));
 	parser.addHelpOption();

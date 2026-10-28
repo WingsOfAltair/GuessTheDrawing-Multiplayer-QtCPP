@@ -1,6 +1,7 @@
 #include "client/main_window.h"
 
 #include "client/drawing_canvas.h"
+#include "shared/app_version.h"
 #include "shared/protocol.h"
 #include "shared/update_manager.h"
 
@@ -874,7 +875,7 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 	gameSocket_.setReadBufferSize(MaximumFrameBytes);
 	applyLanguage(config_.stringValue(QStringLiteral("client"), QStringLiteral("language")));
 	applyTheme(config_.stringValue(QStringLiteral("client"), QStringLiteral("theme")));
-	setWindowTitle(QStringLiteral("Guess The Drawing"));
+	setWindowTitle(QStringLiteral("Guess The Drawing %1").arg(gtd::ApplicationVersion));
 	resize(1100, 720);
 
 	pages_ = new QStackedWidget(this);
@@ -1009,10 +1010,35 @@ MainWindow::MainWindow(AppConfig& config, QString masterHost, quint16 masterPort
 				installPendingUpdate();
 			}
 		});
-	connect(updateManager_, &UpdateManager::checkFailed, this, [](const QString& error) {
+	connect(updateManager_, &UpdateManager::updateStatusChanged, this, [this](const QString& status) {
+		if (status == QStringLiteral("Already up to date")) {
+			updateProgressBar_->hide();
+			return;
+		}
+		updateProgressBar_->show();
+		updateProgressBar_->setRange(0, 0);
+		loginStatusLabel_->setText(status);
+	});
+	connect(updateManager_, &UpdateManager::downloadProgressChanged, this,
+		[this](qint64 received, qint64 total) {
+		if (total > 0) {
+			updateProgressBar_->setRange(0, 1000);
+			updateProgressBar_->setValue(static_cast<int>((received * 1000) / total));
+			loginStatusLabel_->setText(localizedText(QStringLiteral("Downloading update: %1%"), languageCode_)
+				.arg(static_cast<int>((received * 100) / total)));
+		} else {
+			updateProgressBar_->setRange(0, 0);
+		}
+	});
+	connect(updateManager_, &UpdateManager::checkFailed, this, [this](const QString& error) {
 			qWarning().noquote() << QStringLiteral("Update check failed: %1").arg(error);
+			const QString status = localizedText(QStringLiteral("Could not check for an update: %1"), languageCode_).arg(error);
+			loginStatusLabel_->setText(status);
+			updateProgressBar_->hide();
+			if (connectionStatusLabel_)
+				connectionStatusLabel_->setText(status);
 		});
-	updateCheckTimer_.setInterval(15 * 60 * 1000);
+	updateCheckTimer_.setInterval(30 * 1000);
 	connect(&updateCheckTimer_, &QTimer::timeout, updateManager_, &UpdateManager::checkForUpdates);
 	updateCheckTimer_.start();
 	QTimer::singleShot(0, updateManager_, &UpdateManager::checkForUpdates);
@@ -1208,8 +1234,13 @@ QWidget* MainWindow::createLoginPage()
 	loginProgressBar_->setTextVisible(false);
 	loginProgressBar_->setFixedWidth(36);
 	loginProgressBar_->hide();
+	updateProgressBar_ = new QProgressBar(page);
+	updateProgressBar_->setRange(0, 0);
+	updateProgressBar_->setTextVisible(false);
+	updateProgressBar_->hide();
 	auto* loginStatusRow = new QHBoxLayout;
 	loginStatusRow->addWidget(loginProgressBar_);
+	loginStatusRow->addWidget(updateProgressBar_);
 	loginStatusRow->addWidget(loginStatusLabel_, 1);
 	outer->addLayout(loginStatusRow);
 	loginConnectionStatusLabel_ = new QLabel(QStringLiteral("Connecting to master…"), page);
@@ -2429,10 +2460,10 @@ void MainWindow::handleMasterMessage(const QJsonObject& message)
 		passwordEdit_->setEnabled(true);
 		displayNameEdit_->setEnabled(true);
 		createAccountCheck_->setEnabled(true);
-		const QString error = message.value(QStringLiteral("error")).toString(
-			localizedText(QStringLiteral("A game update is required before you can connect."), languageCode_));
-		loginStatusLabel_->setText(error);
-		QMessageBox::critical(this, localizedText(QStringLiteral("Update required"), languageCode_), error);
+		const QString requiredVersion = message.value(QStringLiteral("requiredVersion")).toString();
+		loginStatusLabel_->setText(localizedText(
+			QStringLiteral("The master requires game version %1. Checking for an update; you can continue using the current connection during the rollout…"), languageCode_)
+			.arg(requiredVersion));
 		updateManager_->checkForUpdates();
 		return;
 	}
@@ -3125,9 +3156,14 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 	}
 	if (type == QStringLiteral("ServerUpdateScheduled") || type == QStringLiteral("ServerUpdateCountdown")) {
 		const int secondsRemaining = qMax(0, message.value(QStringLiteral("secondsRemaining")).toInt());
+		QString version = message.value(QStringLiteral("version")).toString().trimmed();
+		if (version.isEmpty())
+			version = message.value(QStringLiteral("requiredVersion")).toString().trimmed();
+		if (version.isEmpty())
+			version = localizedText(QStringLiteral("a new version"), languageCode_);
 		const QString notice = localizedText(
 			QStringLiteral("This game server is updating to version %1 and will restart in %2 seconds. Finish your current round and reconnect afterward."),
-			languageCode_).arg(message.value(QStringLiteral("version")).toString()).arg(secondsRemaining);
+			languageCode_).arg(version).arg(secondsRemaining);
 		if (chatList_)
 			appendGameMessage(notice);
 		if (type == QStringLiteral("ServerUpdateScheduled")) {
@@ -3141,7 +3177,13 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		return;
 	}
 	if (type == QStringLiteral("ServerRestarting")) {
-		appendGameMessage(localizedText(QStringLiteral("The server is restarting to install an update. Reconnect after it is available."), languageCode_));
+		QString version = message.value(QStringLiteral("version")).toString().trimmed();
+		if (version.isEmpty())
+			version = message.value(QStringLiteral("requiredVersion")).toString().trimmed();
+		const QString notice = version.isEmpty()
+			? localizedText(QStringLiteral("The server is restarting to install an update. Reconnect after it is available."), languageCode_)
+			: localizedText(QStringLiteral("The server is restarting to install version %1. Reconnect after it is available."), languageCode_).arg(version);
+		appendGameMessage(notice);
 		leaveRoom();
 		stopGameReconnect();
 		reconnectingGameServer_ = false;

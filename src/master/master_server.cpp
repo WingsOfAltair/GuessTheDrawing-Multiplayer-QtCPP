@@ -278,15 +278,16 @@ void MasterServer::readSocket(QTcpSocket* socket)
 
 void MasterServer::handleMessage(QTcpSocket* socket, const QJsonObject& message)
 {
-	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
+	const QString providedVersion = message.value(QStringLiteral("appVersion")).toString();
+	if (providedVersion != ApplicationVersion && !providedVersion.isEmpty()
+		&& !mismatchedVersionSockets_.contains(socket)) {
+		mismatchedVersionSockets_.insert(socket);
 		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
 			{{QStringLiteral("requiredVersion"), ApplicationVersion},
-			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
-			 {QStringLiteral("error"), QStringLiteral("Game update required before connecting to the master service")}});
+			 {QStringLiteral("providedVersion"), providedVersion},
+			 {QStringLiteral("error"), QStringLiteral("An update is available; this connection remains active during rollout")}});
 		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
 		sendMessage(socket, mismatch);
-		socket->disconnectFromHost();
-		return;
 	}
 	if (serverIdsBySocket_.contains(socket)) {
 		handleServerMessage(socket, message);
@@ -304,15 +305,6 @@ void MasterServer::handleClientMessage(QTcpSocket* socket, const QJsonObject& me
 	const QString type = message.value(QStringLiteral("type")).toString();
 	const QString username = message.value(QStringLiteral("username")).toString();
 	QString error;
-	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
-		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
-			{{QStringLiteral("requiredVersion"), ApplicationVersion},
-			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
-			 {QStringLiteral("error"), QStringLiteral("Client update required. Install the current game version and reconnect.")}});
-		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
-		sendMessage(socket, mismatch);
-		return;
-	}
 	if (type == QStringLiteral("PresenceStatusUpdate")) {
 		QString actor;
 		if (!verifyClientSession(message, &actor, &error)) {
@@ -1275,16 +1267,6 @@ void MasterServer::sendRoomList(QTcpSocket* socket, const QJsonObject& request)
 
 void MasterServer::handleServerRegistration(QTcpSocket* socket, const QJsonObject& message)
 {
-	if (message.value(QStringLiteral("appVersion")).toString() != ApplicationVersion) {
-		QJsonObject mismatch = withRequestId(QStringLiteral("VersionMismatch"), message,
-			{{QStringLiteral("requiredVersion"), ApplicationVersion},
-			 {QStringLiteral("providedVersion"), message.value(QStringLiteral("appVersion"))},
-			 {QStringLiteral("error"), QStringLiteral("Game server update required")}});
-		mismatch.insert(QStringLiteral("appVersion"), ApplicationVersion);
-		sendMessage(socket, mismatch);
-		socket->disconnectFromHost();
-		return;
-	}
 	const QByteArray suppliedSecret = message.value(QStringLiteral("secret")).toString().toUtf8();
 	if (serverSecret_.isEmpty() || !constantTimeEqual(suppliedSecret, serverSecret_.toUtf8())) {
 		sendError(socket, message, QStringLiteral("Game server registration rejected"));
@@ -1609,13 +1591,14 @@ void MasterServer::logPopulationStats()
 	lastPlayingCount_ = playing;
 	lastSpectatingCount_ = spectating;
 	lastIdleCount_ = idle;
-	writePopulationStatus(QStringLiteral("Rooms: %1 | Players online: %2 | Playing: %3 | Spectating: %4 | Idle: %5")
-		.arg(roomCount).arg(connected).arg(playing).arg(spectating).arg(idle));
+	writePopulationStatus(QStringLiteral("Version %1 | Rooms: %2 | Players online: %3 | Playing: %4 | Spectating: %5 | Idle: %6")
+		.arg(ApplicationVersion).arg(roomCount).arg(connected).arg(playing).arg(spectating).arg(idle));
 }
 
 void MasterServer::removeSocket(QTcpSocket* socket, bool logDisconnect)
 {
 	pendingData_.remove(socket);
+	mismatchedVersionSockets_.remove(socket);
 	const QString clientUsername = authenticatedClients_.take(socket);
 	const bool clientRemoved = !clientUsername.isEmpty();
 	const bool anotherSessionConnected = clientRemoved

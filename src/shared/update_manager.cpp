@@ -54,9 +54,10 @@ UpdateManager::UpdateManager(QObject* parent)
 void UpdateManager::checkForUpdates()
 {
 #ifdef Q_OS_WIN
-	if (checking_)
+	if (checking_ || updateReady_)
 		return;
 	checking_ = true;
+	emit updateStatusChanged(QStringLiteral("Checking for updates"));
 	QNetworkReply* reply = network_->get(secureRequest(ManifestUrl));
 	connect(reply, &QNetworkReply::finished, this, [this, reply] {
 		const QByteArray manifestData = reply->readAll();
@@ -91,6 +92,21 @@ void UpdateManager::checkForUpdates()
 		}
 		if (QVersionNumber::compare(remoteVersion, localVersion) <= 0) {
 			checking_ = false;
+			emit updateStatusChanged(QStringLiteral("Already up to date"));
+			return;
+		}
+		const QString stagedArchive = QDir(QStandardPaths::writableLocation(
+			QStandardPaths::AppLocalDataLocation)).filePath(
+				QStringLiteral("updates/gtd-windows-x64-%1.zip").arg(versionText));
+		QFile stagedPackage(stagedArchive);
+		if (stagedPackage.size() > 0 && stagedPackage.size() <= MaximumPackageBytes
+			&& stagedPackage.open(QIODevice::ReadOnly)
+			&& QCryptographicHash::hash(stagedPackage.readAll(), QCryptographicHash::Sha256)
+				== QByteArray::fromHex(sha256.toLatin1())) {
+			checking_ = false;
+			updateReady_ = true;
+			emit updateStatusChanged(QStringLiteral("Update %1 is already downloaded").arg(versionText));
+			emit updateAvailable(versionText, stagedArchive);
 			return;
 		}
 		downloadPackage(versionText, QByteArray::fromHex(sha256.toLatin1()));
@@ -102,8 +118,10 @@ void UpdateManager::checkForUpdates()
 
 void UpdateManager::downloadPackage(const QString& version, const QByteArray& expectedSha256)
 {
+	emit updateStatusChanged(QStringLiteral("Downloading update %1").arg(version));
 	QNetworkReply* reply = network_->get(secureRequest(PackageUrl));
-	connect(reply, &QNetworkReply::downloadProgress, this, [reply](qint64 received, qint64 total) {
+	connect(reply, &QNetworkReply::downloadProgress, this, [this, reply](qint64 received, qint64 total) {
+		emit downloadProgressChanged(received, total);
 		if (received > MaximumPackageBytes || total > MaximumPackageBytes)
 			reply->abort();
 	});
@@ -120,6 +138,7 @@ void UpdateManager::downloadPackage(const QString& version, const QByteArray& ex
 				? QStringLiteral("The update package was invalid or exceeded the size limit") : errorText);
 			return;
 		}
+		emit updateStatusChanged(QStringLiteral("Verifying update package"));
 		if (QCryptographicHash::hash(packageData, QCryptographicHash::Sha256) != expectedSha256) {
 			emit checkFailed(QStringLiteral("The update package checksum did not match the release manifest"));
 			return;
@@ -139,6 +158,8 @@ void UpdateManager::downloadPackage(const QString& version, const QByteArray& ex
 			emit checkFailed(QStringLiteral("Could not save the verified update package"));
 			return;
 		}
+		updateReady_ = true;
+		emit updateStatusChanged(QStringLiteral("Update downloaded and verified"));
 		emit updateAvailable(version, archivePath);
 	});
 }
@@ -176,7 +197,22 @@ bool UpdateManager::installAndRestart(const QString& archivePath, QString* error
 		"  New-Item -ItemType Directory -Path $stageDir -Force | Out-Null\n"
 		"  Expand-Archive -LiteralPath $archive -DestinationPath $stageDir -Force\n"
 		"  if (-not (Test-Path -LiteralPath (Join-Path $stageDir (Split-Path $executable -Leaf)))) { throw 'The package does not contain the running application.' }\n"
-		"  Get-ChildItem -LiteralPath $stageDir -Force | Copy-Item -Destination $installDir -Recurse -Force\n"
+		"  Get-ChildItem -LiteralPath $stageDir -File -Force -Recurse | ForEach-Object {\n"
+		"    $source = $_\n"
+		"    $relativePath = $source.FullName.Substring($stageDir.Length + 1)\n"
+		"    $destination = Join-Path $installDir $relativePath\n"
+		"    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null\n"
+		"    for ($attempt = 0; $attempt -lt 900; $attempt++) {\n"
+		"      try {\n"
+		"        Copy-Item -LiteralPath $source.FullName -Destination $destination -Force -ErrorAction Stop\n"
+		"        break\n"
+		"      } catch {\n"
+		"        $errorCode = $_.Exception.HResult -band 0xFFFF\n"
+		"        if (($errorCode -ne 32 -and $errorCode -ne 33) -or $attempt -eq 899) { throw }\n"
+		"        Start-Sleep -Seconds 1\n"
+		"      }\n"
+		"    }\n"
+		"  }\n"
 		"  function Quote-Arg([string]$value) { $escaped = $value -replace '(\\\\*)\"', '$1$1\\\"'; $escaped = $escaped -replace '(\\\\+)$', '$1$1'; return '\"' + $escaped + '\"' }\n"
 		"  $argumentLine = ($restartArgs | ForEach-Object { Quote-Arg ([string]$_) }) -join ' '\n"
 		"  Start-Process -FilePath $executable -ArgumentList $argumentLine -WorkingDirectory $installDir\n"

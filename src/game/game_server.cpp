@@ -207,11 +207,18 @@ GameServer::GameServer(RoomInfo room, QString serverId, QString publicHost, QStr
 	connect(&updateRestartCountdownTimer_, &QTimer::timeout, this, [this] {
 		if (!updateRestartPending_)
 			return;
+		if (!hasConnectedClients() && QDateTime::currentDateTimeUtc() < updateRestartDeadline_) {
+			qInfo().noquote() << QStringLiteral("No clients remain connected; ending the update countdown.");
+			updateRestartDeadline_ = QDateTime::currentDateTimeUtc();
+		}
 		const int remaining = qMax(0, static_cast<int>(updateRestartDeadline_.toSecsSinceEpoch()
 			- QDateTime::currentSecsSinceEpoch()));
+		qInfo().noquote() << QStringLiteral("Server update %1 restart countdown: %2 seconds remaining.")
+			.arg(pendingUpdateVersion_).arg(remaining);
 		broadcast(makeMessage(QStringLiteral("ServerUpdateCountdown"),
 			{{QStringLiteral("secondsRemaining"), remaining},
-			 {QStringLiteral("version"), pendingUpdateVersion_}}));
+			 {QStringLiteral("version"), pendingUpdateVersion_},
+			 {QStringLiteral("requiredVersion"), pendingUpdateVersion_}}));
 		if (remaining == 0)
 			maybeRestartForUpdate();
 	});
@@ -257,20 +264,34 @@ bool GameServer::start(QString* error)
 	reconnectGraceTimer_.start();
 	QTimer::singleShot(0, this, [this] { updateConsoleStatus(); });
 	connectToMaster();
-	auto* updateManager = new UpdateManager(this);
-	connect(updateManager, &UpdateManager::updateAvailable, this,
-		[this, updateManager](const QString& version, const QString& archivePath) {
+	updateManager_ = new UpdateManager(this);
+	connect(updateManager_, &UpdateManager::updateAvailable, this,
+		[this](const QString& version, const QString& archivePath) {
 			qInfo().noquote() << QStringLiteral("A game server update (%1) is ready at %2. Restart will occur after the countdown and current round.")
 				.arg(version, archivePath);
 			scheduleUpdateRestart(version, archivePath);
 		});
-	connect(updateManager, &UpdateManager::checkFailed, this, [](const QString& error) {
+	connect(updateManager_, &UpdateManager::updateStatusChanged, this, [](const QString& status) {
+		qInfo().noquote() << QStringLiteral("Update: %1").arg(status);
+	});
+	connect(updateManager_, &UpdateManager::downloadProgressChanged, this,
+		[](qint64 received, qint64 total) {
+		if (total <= 0)
+			return;
+		static int lastReportedPercent = -1;
+		const int percent = static_cast<int>((received * 100) / total);
+		if (percent == 100 || percent >= lastReportedPercent + 5) {
+			qInfo().noquote() << QStringLiteral("Update download: %1%").arg(percent);
+			lastReportedPercent = percent == 100 ? -1 : percent;
+		}
+	});
+	connect(updateManager_, &UpdateManager::checkFailed, this, [](const QString& error) {
 			qWarning().noquote() << QStringLiteral("Update check failed: %1").arg(error);
 		});
-	updateCheckTimer_.setInterval(30 * 60 * 1000);
-	connect(&updateCheckTimer_, &QTimer::timeout, updateManager, &UpdateManager::checkForUpdates);
+	updateCheckTimer_.setInterval(30 * 1000);
+	connect(&updateCheckTimer_, &QTimer::timeout, updateManager_, &UpdateManager::checkForUpdates);
 	updateCheckTimer_.start();
-	QTimer::singleShot(0, updateManager, &UpdateManager::checkForUpdates);
+	QTimer::singleShot(0, updateManager_, &UpdateManager::checkForUpdates);
 	return true;
 }
 
@@ -1025,8 +1046,8 @@ void GameServer::updateConsoleStatus()
 	lastStatusPlayerCount_ = players;
 	lastStatusSpectatorCount_ = spectators;
 	lastStatusQueueCount_ = queue;
-	writeConsoleStatus(QStringLiteral("Players: %1 | Spectators: %2 | In queue: %3")
-		.arg(players).arg(spectators).arg(queue));
+	writeConsoleStatus(QStringLiteral("Version %1 | Players: %2 | Spectators: %3 | In queue: %4")
+		.arg(ApplicationVersion).arg(players).arg(spectators).arg(queue));
 }
 
 void GameServer::processPlayerQueue()
@@ -1147,7 +1168,12 @@ void GameServer::readMaster()
 	}
 	for (const QJsonObject& message : messages) {
 		const QString type = message.value(QStringLiteral("type")).toString();
-		if (type == QStringLiteral("ServerRegisterAck")) {
+		if (type == QStringLiteral("VersionMismatch")) {
+			qWarning().noquote() << QStringLiteral("Master requires game version %1; checking for an update.")
+				.arg(message.value(QStringLiteral("requiredVersion")).toString());
+			if (updateManager_)
+				updateManager_->checkForUpdates();
+		} else if (type == QStringLiteral("ServerRegisterAck")) {
 			masterRegistered_ = message.value(QStringLiteral("ok")).toBool();
 			if (masterRegistered_) {
 				sendMasterRegistration(false);
@@ -1706,32 +1732,82 @@ void GameServer::scheduleUpdateRestart(const QString& version, const QString& ar
 	updateRestartPending_ = true;
 	pendingUpdateVersion_ = version;
 	pendingUpdateArchive_ = archivePath;
-	updateRestartDeadline_ = QDateTime::currentDateTimeUtc().addSecs(120);
-	qInfo().noquote() << QStringLiteral("Server update %1 scheduled. Restart in 120 seconds after the current round/intermission completes.")
-		.arg(version);
-	broadcast(makeMessage(QStringLiteral("ServerUpdateScheduled"),
-			{{QStringLiteral("version"), version}, {QStringLiteral("secondsRemaining"), 120}}));
-	updateRestartCountdownTimer_.start();
-	updateRestartTimer_.start(120000);
+	if (hasConnectedClients()) {
+		updateRestartDeadline_ = QDateTime::currentDateTimeUtc().addSecs(120);
+		qInfo().noquote() << QStringLiteral("Server update %1 scheduled. Restart in 120 seconds after the current round/intermission completes.")
+			.arg(version);
+		broadcast(makeMessage(QStringLiteral("ServerUpdateScheduled"),
+			{{QStringLiteral("version"), version}, {QStringLiteral("requiredVersion"), version},
+			 {QStringLiteral("secondsRemaining"), 120}}));
+		updateRestartCountdownTimer_.start();
+		updateRestartTimer_.start(120000);
+	} else {
+		updateRestartDeadline_ = QDateTime::currentDateTimeUtc();
+		qInfo().noquote() << QStringLiteral("No clients are connected; installing server update %1 without a countdown.")
+			.arg(version);
+		QTimer::singleShot(0, this, [this] { maybeRestartForUpdate(); });
+	}
+}
+
+bool GameServer::hasConnectedClients() const
+{
+	for (QTcpSocket* socket : playersBySocket_.keys())
+		if (socket && socket->state() == QAbstractSocket::ConnectedState)
+			return true;
+	for (const PendingJoinRequest& pending : pendingJoinRequests_)
+		if (pending.socket && pending.socket->state() == QAbstractSocket::ConnectedState)
+			return true;
+	return false;
 }
 
 void GameServer::maybeRestartForUpdate()
 {
-	if (!updateRestartPending_ || QDateTime::currentDateTimeUtc() < updateRestartDeadline_)
+	if (!updateRestartPending_)
 		return;
-	if (roundActive_ || roundStarting_ || !pendingJoinRequests_.isEmpty()) {
+	if (hasConnectedClients() && QDateTime::currentDateTimeUtc() < updateRestartDeadline_) {
 		updateRestartTimer_.start(1000);
 		return;
 	}
+	if (roundActive_) {
+		qInfo().noquote() << QStringLiteral("Update countdown finished; ending the active round for installation.");
+		endRound(QStringLiteral("server_update"));
+	}
+	if (roundStarting_) {
+		roundStarting_ = false;
+		intermissionTimer_.stop();
+		countdownTimer_.stop();
+	}
 	updateRestartCountdownTimer_.stop();
 	listener_.close();
-	for (QTcpSocket* socket : playersBySocket_.keys()) {
-		if (!socket || socket->state() != QAbstractSocket::ConnectedState)
-			continue;
-		sendMessage(socket, makeMessage(QStringLiteral("ServerRestarting"),
-			{{QStringLiteral("version"), pendingUpdateVersion_}}));
-		socket->disconnectFromHost();
+	if (!updateRestartDisconnecting_) {
+		QList<QTcpSocket*> connectedClients;
+		for (QTcpSocket* socket : playersBySocket_.keys()) {
+			if (socket && socket->state() == QAbstractSocket::ConnectedState)
+				connectedClients.append(socket);
+		}
+		for (const PendingJoinRequest& pending : pendingJoinRequests_)
+			if (pending.socket && pending.socket->state() == QAbstractSocket::ConnectedState
+				&& !connectedClients.contains(pending.socket))
+				connectedClients.append(pending.socket);
+		if (!connectedClients.isEmpty()) {
+			updateRestartDisconnecting_ = true;
+			for (QTcpSocket* socket : connectedClients) {
+				sendMessage(socket, makeMessage(QStringLiteral("ServerRestarting"),
+					{{QStringLiteral("version"), pendingUpdateVersion_},
+					 {QStringLiteral("requiredVersion"), pendingUpdateVersion_}}));
+				socket->disconnectFromHost();
+			}
+			qInfo().noquote() << QStringLiteral("Notified %1 connected client(s) to leave; forcing remaining connections closed before installation.")
+				.arg(connectedClients.size());
+			updateRestartTimer_.start(1000);
+			return;
+		}
 	}
+	qInfo().noquote() << QStringLiteral("Update restart deadline reached; closing remaining client connections and installing version %1.")
+		.arg(pendingUpdateVersion_);
+	for (QTcpSocket* socket : playersBySocket_.keys())
+		if (socket && socket->state() != QAbstractSocket::UnconnectedState)
+			socket->abort();
 	masterSocket_.disconnectFromHost();
 	UpdateManager installer;
 	QString error;
@@ -1771,7 +1847,7 @@ void GameServer::endRound(const QString& reason)
 	currentWord_.clear();
 	currentDrawer_.clear();
 	updateMasterRoom();
-	if (activePlayerCount() >= 2) {
+	if (!updateRestartPending_ && activePlayerCount() >= 2) {
 		QTimer::singleShot(3000, this, [this] {
 			if (updateRestartPending_ && QDateTime::currentDateTimeUtc() >= updateRestartDeadline_) {
 				maybeRestartForUpdate();

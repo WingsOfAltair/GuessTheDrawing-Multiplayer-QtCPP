@@ -15,6 +15,8 @@
 
 namespace gtd {
 
+class UpdateManager;
+
 class GameServer final : public QObject {
 public:
 	GameServer(RoomInfo room, QString serverId, QString publicHost, QString masterHost,
@@ -130,6 +132,7 @@ private:
 	void refreshRuntimeConfiguration();
 	void scheduleUpdateRestart(const QString& version, const QString& archivePath);
 	void maybeRestartForUpdate();
+	bool hasConnectedClients() const;
 
 	RoomInfo room_;
 	QString serverId_;
@@ -157,6 +160,7 @@ private:
 	QTimer configurationRefreshTimer_;
 	QTimer reconnectGraceTimer_;
 	QTimer updateCheckTimer_;
+	UpdateManager* updateManager_ = nullptr;
 	QTimer updateRestartTimer_;
 	QTimer updateRestartCountdownTimer_;
 	QElapsedTimer actionRateLimitClock_;
@@ -198,6 +202,7 @@ private:
 	bool masterRegistered_ = false;
 	bool reconnectPaused_ = false;
 	bool updateRestartPending_ = false;
+	bool updateRestartDisconnecting_ = false;
 	int reconnectGraceSeconds_ = 30;
 	int pausedRoundRemainingMs_ = 0;
 };

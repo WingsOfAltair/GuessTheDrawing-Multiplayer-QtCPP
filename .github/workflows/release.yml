@@ -1,0 +1,74 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtmultimedia
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set release version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = '${{ inputs.version }}'
+          } else {
+            $version = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version: $version" }
+          "GTD_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Configure and build
+        run: cmake -S . -B build -A x64 -DGTD_VERSION=${{ env.GTD_VERSION }} -DBUILD_TESTING=OFF
+
+      - name: Build release
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage application package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD 'release-stage'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item 'build/Release/gtd_client.exe' $stage
+          Copy-Item 'build/Release/gtd_game_server.exe' $stage
+          Copy-Item 'build/Release/dictionary' $stage -Recurse
+          Copy-Item 'profanity-dictionary.txt' $stage
+          windeployqt --release --no-translations --compiler-runtime --multimedia (Join-Path $stage 'gtd_client.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed for the client' }
+          windeployqt --release --no-translations --compiler-runtime --multimedia (Join-Path $stage 'gtd_game_server.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed' }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath 'gtd-windows-x64.zip' -CompressionLevel Optimal
+          $hash = (Get-FileHash 'gtd-windows-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{ version = $env:GTD_VERSION; sha256 = $hash } | ConvertTo-Json | Set-Content 'gtd-update.json' -Encoding utf8
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { "v$env:GTD_VERSION" } else { '${{ github.ref_name }}' }
+          gh release create $tag gtd-windows-x64.zip gtd-update.json --title $tag --generate-notes
