@@ -23,6 +23,7 @@
     <None Include=".gitignore" />
     <None Include="dictionary" />
     <None Include="README.md" />
+    <None Include="gtd-update.json" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shared\models.h">
