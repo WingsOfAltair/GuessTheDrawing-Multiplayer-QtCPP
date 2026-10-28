@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -191,16 +192,24 @@ bool UpdateManager::installAndRestart(const QString& archivePath, QString* error
 		"$executable = Decode '%4'\n"
 		"$restartArgs = @(Decode '%5' | ConvertFrom-Json)\n"
 		"$stageDir = Join-Path $env:TEMP ('gtd-update-' + [Guid]::NewGuid().ToString('N'))\n"
-		"$logPath = Join-Path $env:LOCALAPPDATA 'GuessTheDrawing\\update-error.log'\n"
+		"$logPath = Join-Path (Decode '%6') 'update-error.log'\n"
+		"function Write-UpdateLog([string]$message) { [IO.File]::AppendAllText($logPath, ([DateTime]::UtcNow.ToString('o') + ' ' + $message + [Environment]::NewLine)) }\n"
 		"try {\n"
-		"  Wait-Process -Id $parentPid -ErrorAction SilentlyContinue\n"
+		"  New-Item -ItemType Directory -Path (Split-Path $logPath) -Force | Out-Null\n"
+		"  Write-UpdateLog ('Installer started; waiting for server process ' + $parentPid + ' to exit.')\n"
+		"  Wait-Process -Id $parentPid -Timeout 120 -ErrorAction SilentlyContinue\n"
+		"  if (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) { throw ('Timed out waiting for server process ' + $parentPid + ' to exit.') }\n"
+		"  Write-UpdateLog 'Server process exited; extracting the update archive.'\n"
 		"  New-Item -ItemType Directory -Path $stageDir -Force | Out-Null\n"
 		"  Expand-Archive -LiteralPath $archive -DestinationPath $stageDir -Force\n"
+		"  Write-UpdateLog 'Update archive extracted; copying package files.'\n"
 		"  if (-not (Test-Path -LiteralPath (Join-Path $stageDir (Split-Path $executable -Leaf)))) { throw 'The package does not contain the running application.' }\n"
-		"  Get-ChildItem -LiteralPath $stageDir -File -Force -Recurse | ForEach-Object {\n"
+		"  if ((Split-Path $executable -Leaf) -ieq 'gtd_game_server.exe') { Write-UpdateLog 'Skipping gtd_client.exe during server update; the client updater will update it separately.' }\n"
+		"  Get-ChildItem -LiteralPath $stageDir -File -Force -Recurse | Where-Object { $_.Name -ne 'gtd_client.exe' -or (Split-Path $executable -Leaf) -ne 'gtd_game_server.exe' } | ForEach-Object {\n"
 		"    $source = $_\n"
 		"    $relativePath = $source.FullName.Substring($stageDir.Length + 1)\n"
 		"    $destination = Join-Path $installDir $relativePath\n"
+		"    Write-UpdateLog ('Copying package file: ' + $relativePath)\n"
 		"    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null\n"
 		"    for ($attempt = 0; $attempt -lt 900; $attempt++) {\n"
 		"      try {\n"
@@ -209,23 +218,31 @@ bool UpdateManager::installAndRestart(const QString& archivePath, QString* error
 		"      } catch {\n"
 		"        $errorCode = $_.Exception.HResult -band 0xFFFF\n"
 		"        if (($errorCode -ne 32 -and $errorCode -ne 33) -or $attempt -eq 899) { throw }\n"
+		"        if (($attempt + 1) % 10 -eq 0) { Write-UpdateLog ('Still waiting to copy ' + $relativePath + ' due to a file lock; retry ' + ($attempt + 1) + ' of 900.') }\n"
 		"        Start-Sleep -Seconds 1\n"
 		"      }\n"
 		"    }\n"
+		"    Write-UpdateLog ('Copied package file: ' + $relativePath)\n"
 		"  }\n"
+		"  Write-UpdateLog 'Package files copied; launching updated application.'\n"
 		"  function Quote-Arg([string]$value) { $escaped = $value -replace '(\\\\*)\"', '$1$1\\\"'; $escaped = $escaped -replace '(\\\\+)$', '$1$1'; return '\"' + $escaped + '\"' }\n"
 		"  $argumentLine = ($restartArgs | ForEach-Object { Quote-Arg ([string]$_) }) -join ' '\n"
-		"  Start-Process -FilePath $executable -ArgumentList $argumentLine -WorkingDirectory $installDir\n"
+		"  $updatedProcess = Start-Process -FilePath $executable -ArgumentList $argumentLine -WorkingDirectory $installDir -PassThru\n"
+		"  Start-Sleep -Seconds 2\n"
+		"  $updatedProcess.Refresh()\n"
+		"  if ($updatedProcess.HasExited) { throw \"Updated application exited during startup with code $($updatedProcess.ExitCode).\" }\n"
+		"  Write-UpdateLog ('Started updated application with PID ' + $updatedProcess.Id)\n"
 		"} catch {\n"
 		"  New-Item -ItemType Directory -Path (Split-Path $logPath) -Force | Out-Null\n"
-		"  [IO.File]::AppendAllText($logPath, ([DateTime]::UtcNow.ToString('o') + ' ' + $_.ToString() + [Environment]::NewLine))\n"
+		"  Write-UpdateLog ($_.ToString())\n"
 		"} finally {\n"
 		"  if (Test-Path -LiteralPath $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }\n"
 		"}\n")
 		.arg(QCoreApplication::applicationPid())
 		.arg(encodeBase64(archivePath.toUtf8()), encodeBase64(installDirectory.toUtf8()),
 			encodeBase64(executablePath.toUtf8()),
-			encodeBase64(QJsonDocument(restartArguments).toJson(QJsonDocument::Compact)));
+			encodeBase64(QJsonDocument(restartArguments).toJson(QJsonDocument::Compact)),
+			encodeBase64(updaterDirectory.toUtf8()));
 
 	QSaveFile scriptFile(scriptPath);
 	if (!scriptFile.open(QIODevice::WriteOnly) || scriptFile.write(script.toUtf8()) != script.toUtf8().size()
@@ -236,13 +253,15 @@ bool UpdateManager::installAndRestart(const QString& archivePath, QString* error
 	}
 	qint64 detachedPid = 0;
 	if (!QProcess::startDetached(QStringLiteral("powershell.exe"),
-		{QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
+		{QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"), QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
 		 QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
 		 QStringLiteral("-File"), scriptPath}, updaterDirectory, &detachedPid)) {
 		if (error)
 			*error = QStringLiteral("Could not launch the update installer");
 		return false;
 	}
+	qInfo().noquote() << QStringLiteral("Update installer diagnostics: %1")
+		.arg(QDir(updaterDirectory).filePath(QStringLiteral("update-error.log")));
 	return true;
 #else
 	Q_UNUSED(archivePath);
