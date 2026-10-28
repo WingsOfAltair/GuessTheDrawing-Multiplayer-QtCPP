@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GuessTheDrawing VERSION 1.1.0 LANGUAGES CXX)
+project(GuessTheDrawing VERSION 1.0.0 LANGUAGES CXX)
 
 if(NOT WIN32)
 	message(STATUS "Automatic update installation is currently supported for Windows ZIP releases; version checks remain enabled everywhere.")
