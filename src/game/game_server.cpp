@@ -440,9 +440,16 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 								  {{QStringLiteral("message"), QStringLiteral("Spectators cannot guess")}}));
 			return;
 		}
+		if (player->chatBlockedThisRound)
+			return;
 		sendGuess(username, message.value(QStringLiteral("text")).toString());
 	} else if (type == QStringLiteral("RoomChat")) {
 		const auto player = players_.constFind(username);
+		if (player != players_.cend() && player->chatBlockedThisRound) {
+			sendMessage(socket, reply(QStringLiteral("Error"), message,
+				{{QStringLiteral("message"), QStringLiteral("Chat is disabled after guessing until the round ends")}}));
+			return;
+		}
 		if (player != players_.cend() && player->serverTextMuted
 			&& (player->serverMuteExpiresAt == 0 || player->serverMuteExpiresAt > QDateTime::currentSecsSinceEpoch())) {
 			sendMessage(socket, reply(QStringLiteral("Error"), message,
@@ -466,12 +473,12 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			{{QStringLiteral("username"), username}, {QStringLiteral("displayName"), player->displayName},
 			 {QStringLiteral("text"), text}, {QStringLiteral("roomChat"), true}});
 		for (const Player& recipient : players_) {
-			if (recipient.socket && !recipient.mutedTextUsers.contains(username))
+			if (recipient.socket && !recipient.chatBlockedThisRound && !recipient.mutedTextUsers.contains(username))
 				sendMessage(recipient.socket, chatMessage);
 		}
 	} else if (type == QStringLiteral("VoiceFrame")) {
 		const auto player = players_.constFind(username);
-		if (player == players_.cend() || (player->serverVoiceMuted
+		if (player == players_.cend() || player->chatBlockedThisRound || (player->serverVoiceMuted
 			&& (player->serverMuteExpiresAt == 0
 				|| player->serverMuteExpiresAt > QDateTime::currentSecsSinceEpoch()))
 			|| (roundActive_ && username == currentDrawer_))
@@ -488,7 +495,8 @@ void GameServer::handlePlayerMessage(QTcpSocket* socket, const QJsonObject& mess
 			 {QStringLiteral("sampleRate"), sampleRate},
 			 {QStringLiteral("audio"), QString::fromLatin1(encodedAudio)}});
 		for (const Player& recipient : players_) {
-			if (recipient.socket && recipient.username != username && !recipient.mutedVoiceUsers.contains(username))
+			if (recipient.socket && recipient.username != username && !recipient.chatBlockedThisRound
+				&& !recipient.mutedVoiceUsers.contains(username))
 				sendMessage(recipient.socket, frame);
 		}
 	} else if (type == QStringLiteral("DrawStroke")) {
@@ -1116,6 +1124,7 @@ QJsonArray GameServer::roster() const
 		result.append(QJsonObject{{QStringLiteral("profile"), profile.toJson()},
 								 {QStringLiteral("roomScore"), player.roomScore},
 								 {QStringLiteral("guessed"), player.guessed},
+								 {QStringLiteral("chatBlocked"), player.chatBlockedThisRound},
 								 {QStringLiteral("spectator"), player.spectator}});
 	}
 	return result;
@@ -1693,7 +1702,7 @@ void GameServer::startRoundNow()
 	++roundNumber_;
 	correctGuesses_ = 0;
 	for (auto player = players_.begin(); player != players_.end(); ++player)
-		player->guessed = false;
+		player->guessed = player->chatBlockedThisRound = false;
 	resetCanvas();
 	roundActive_ = true;
 	roundDeadline_ = QDateTime::currentDateTime().addSecs(room_.roundSeconds);
@@ -1705,6 +1714,7 @@ void GameServer::startRoundNow()
 
 	broadcast(makeMessage(QStringLiteral("CanvasState"),
 		{{QStringLiteral("layers"), canvasLayersJson()}, {QStringLiteral("objects"), canvasObjectsJson()}}));
+	broadcastRoster();
 	broadcast(makeMessage(QStringLiteral("RoundStarted"),
 		{{QStringLiteral("round"), roundNumber_}, {QStringLiteral("drawerUsername"), currentDrawer_},
 		 {QStringLiteral("roundSeconds"), room_.roundSeconds},
@@ -1837,6 +1847,8 @@ void GameServer::endRound(const QString& reason)
 			reportRoundResult(username, roundParticipantTokens_.value(username), username == roundWinnerUsername_);
 		}
 	}
+	for (auto player = players_.begin(); player != players_.end(); ++player)
+		player->chatBlockedThisRound = false;
 	roundWinnerUsername_.clear();
 	roundParticipants_.clear();
 	roundAbandonedParticipants_.clear();
@@ -1846,6 +1858,7 @@ void GameServer::endRound(const QString& reason)
 		 {QStringLiteral("reason"), reason}}));
 	currentWord_.clear();
 	currentDrawer_.clear();
+	broadcastRoster();
 	updateMasterRoom();
 	if (!updateRestartPending_ && activePlayerCount() >= 2) {
 		QTimer::singleShot(3000, this, [this] {
@@ -1873,7 +1886,7 @@ void GameServer::markRoundAbandoned(const QString& username)
 void GameServer::sendGuess(const QString& username, const QString& rawText)
 {
 	auto guesser = players_.find(username);
-	if (!roundActive_ || guesser == players_.end() || guesser->spectator
+	if (!roundActive_ || guesser == players_.end() || guesser->spectator || guesser->chatBlockedThisRound
 		|| username == currentDrawer_ || guesser->guessed)
 		return;
 	const QString text = rawText.trimmed();
@@ -1893,6 +1906,7 @@ void GameServer::sendGuess(const QString& username, const QString& rawText)
 	}
 
 	guesser->guessed = true;
+	guesser->chatBlockedThisRound = true;
 	++correctGuesses_;
 	const int placement = correctGuesses_;
 	if (placement == 1)

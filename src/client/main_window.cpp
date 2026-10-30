@@ -3321,6 +3321,7 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		canvas_->applyOperation(message.value(QStringLiteral("operation")).toObject());
 	} else if (type == QStringLiteral("RoomRoster")) {
 		updateRoster(message.value(QStringLiteral("players")).toArray(), message.value(QStringLiteral("room")).toObject());
+		updateRoundControls();
 	} else if (type == QStringLiteral("QueueStatus")) {
 		updateQueueStatus(message);
 	} else if (type == QStringLiteral("RoleChanged")) {
@@ -3389,6 +3390,7 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 		roundStarting_ = false;
 		currentDrawer_.clear();
 		updateRoster(roomRoster_, {});
+		chatBlockedThisRound_ = false;
 		setLocalizedFormattedText(wordLabel_, QStringLiteral("Answer: %1"),
 			{message.value(QStringLiteral("word")).toString()}, languageCode_);
 		setLocalizedText(roundStatusLabel_, QStringLiteral("Round ended"), languageCode_);
@@ -3413,6 +3415,10 @@ void MainWindow::handleGameMessage(const QJsonObject& message)
 			? QStringLiteral("reconnected") : QStringLiteral("disconnected; waiting to reconnect");
 		appendGameMessage(QStringLiteral("%1 %2").arg(message.value(QStringLiteral("username")).toString(), state));
 	} else if (type == QStringLiteral("GuessCorrect")) {
+		if (message.value(QStringLiteral("username")).toString() == username_) {
+			chatBlockedThisRound_ = true;
+			updateRoundControls();
+		}
 		appendGameMessage(localizedText(QStringLiteral("%1 guessed correctly in place %2 (+%3 points)"), languageCode_)
 			.arg(message.value(QStringLiteral("displayName")).toString())
 			.arg(message.value(QStringLiteral("placement")).toInt())
@@ -3796,7 +3802,7 @@ void MainWindow::flushPendingCanvasOperations()
 void MainWindow::sendGuess()
 {
 	const QString guess = guessEdit_->text().trimmed();
-	if (guess.isEmpty())
+	if (chatBlockedThisRound_ || guess.isEmpty())
 		return;
 	sendGameMessage(makeMessage(QStringLiteral("Guess"), {{QStringLiteral("text"), guess}}));
 	guessEdit_->clear();
@@ -3805,7 +3811,7 @@ void MainWindow::sendGuess()
 void MainWindow::sendRoomChat()
 {
 	const QString text = roomChatEdit_->text().trimmed();
-	if (!inRoom_ || text.isEmpty() || (roundActive_ && currentDrawer_ == username_))
+	if (!inRoom_ || chatBlockedThisRound_ || text.isEmpty() || (roundActive_ && currentDrawer_ == username_))
 		return;
 	sendGameMessage(makeMessage(QStringLiteral("RoomChat"),
 		{{QStringLiteral("requestId"), nextRequestId()}, {QStringLiteral("text"), text.left(300)}}));
@@ -3815,7 +3821,7 @@ void MainWindow::sendRoomChat()
 void MainWindow::startVoiceInput()
 {
 	if (!inRoom_ || gameSocket_.state() != QAbstractSocket::ConnectedState
-		|| (roundActive_ && currentDrawer_ == username_)) {
+		|| chatBlockedThisRound_ || (roundActive_ && currentDrawer_ == username_)) {
 		stopVoiceInput();
 		return;
 	}
@@ -4012,6 +4018,7 @@ void MainWindow::appendGameMessage(const QString& message)
 void MainWindow::updateRoundControls()
 {
 	const bool isDrawer = roundActive_ && currentDrawer_ == username_ && !isSpectator_;
+	const bool chatBlocked = inRoom_ && chatBlockedThisRound_;
 	bool selectedLayerLocked = false;
 	for (const CanvasLayer& layer : canvas_->layers()) {
 		if (layer.id == canvas_->selectedLayerId())
@@ -4037,15 +4044,15 @@ void MainWindow::updateRoundControls()
 	lockLayerButton_->setEnabled(isDrawer);
 	layerUpButton_->setEnabled(isDrawer);
 	layerDownButton_->setEnabled(isDrawer);
-	guessEdit_->setEnabled(roundActive_ && !isDrawer && !isSpectator_);
-	sendGuessButton_->setEnabled(roundActive_ && !isDrawer && !isSpectator_);
-	if (isDrawer && voiceButton_->isChecked())
+	guessEdit_->setEnabled(roundActive_ && !isDrawer && !isSpectator_ && !chatBlocked);
+	sendGuessButton_->setEnabled(roundActive_ && !isDrawer && !isSpectator_ && !chatBlocked);
+	if ((isDrawer || chatBlocked) && voiceButton_->isChecked())
 		stopVoiceInput();
-	roomChatEdit_->setEnabled(inRoom_ && !isDrawer);
+	roomChatEdit_->setEnabled(inRoom_ && !isDrawer && !chatBlocked);
 	setLocalizedPlaceholder(roomChatEdit_, isDrawer
 		? QStringLiteral("Drawer can listen but not send") : QStringLiteral("Send a room message"), languageCode_);
-	sendChatButton_->setEnabled(inRoom_ && !isDrawer);
-	voiceButton_->setEnabled(inRoom_ && !isDrawer);
+	sendChatButton_->setEnabled(inRoom_ && !isDrawer && !chatBlocked);
+	voiceButton_->setEnabled(inRoom_ && !isDrawer && !chatBlocked);
 	setLocalizedText(voiceButton_, isDrawer ? QStringLiteral("Drawer: receive only")
 		: voiceButton_->isChecked() ? QStringLiteral("Disable microphone") : QStringLiteral("Enable microphone"), languageCode_);
 	if (isDrawer)
@@ -4077,6 +4084,7 @@ void MainWindow::updateRoster(const QJsonArray& players, const QJsonObject& room
 		const QJsonObject entry = value.toObject();
 		const PlayerProfile profile = PlayerProfile::fromJson(entry.value(QStringLiteral("profile")).toObject());
 		if (profile.username == username_) {
+			chatBlockedThisRound_ = entry.value(QStringLiteral("chatBlocked")).toBool();
 			currentServerRole_ = profile.serverRole;
 			masterSuperAdmin_ = profile.masterSuperAdmin;
 		}

@@ -480,7 +480,7 @@ private slots:
 		gtd::RoomInfo room;
 		room.roomId = QStringLiteral("room-chat-voice");
 		room.roomName = QStringLiteral("Chat and voice room");
-		room.maxPlayers = 2;
+		room.maxPlayers = 3;
 		gtd::GameServer server(room, QStringLiteral("server-chat-voice"), QStringLiteral("127.0.0.1"),
 			QStringLiteral("127.0.0.1"), master.serverPort(), QStringLiteral("server-secret"),
 			QStringLiteral("session-secret"), dictionaryPath, 0);
@@ -538,14 +538,18 @@ private slots:
 
 		QTcpSocket firstPlayer;
 		QTcpSocket secondPlayer;
+		QTcpSocket thirdPlayer;
 		join(&firstPlayer, QStringLiteral("voice-first"), QStringLiteral("join-first"));
 		join(&secondPlayer, QStringLiteral("voice-second"), QStringLiteral("join-second"));
+		join(&thirdPlayer, QStringLiteral("voice-third"), QStringLiteral("join-third"));
 		QTRY_VERIFY(!findMessage(&firstPlayer, QStringLiteral("RoundStarted")).isEmpty());
 		const QString drawerUsername = findMessage(&firstPlayer, QStringLiteral("RoundStarted"))
 			.value(QStringLiteral("drawerUsername")).toString();
 		QVERIFY(drawerUsername == QStringLiteral("voice-first") || drawerUsername == QStringLiteral("voice-second"));
 		QTcpSocket* drawer = drawerUsername == QStringLiteral("voice-first") ? &firstPlayer : &secondPlayer;
 		QTcpSocket* listener = drawer == &firstPlayer ? &secondPlayer : &firstPlayer;
+		const QString listenerUsername = drawer == &firstPlayer ? QStringLiteral("voice-second") : QStringLiteral("voice-first");
+		QTcpSocket* observer = &thirdPlayer;
 		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("WordAssigned")).isEmpty());
 		QCOMPARE(findMessage(drawer, QStringLiteral("WordAssigned"))
 			.value(QStringLiteral("word")).toString(), QStringLiteral("customword"));
@@ -640,6 +644,47 @@ private slots:
 			 {QStringLiteral("text"), QStringLiteral("still blocked")}})));
 		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("Error"), QStringLiteral("drawer-chat-barrier")).isEmpty());
 		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
+
+		received[drawer].clear();
+		received[listener].clear();
+		received[observer].clear();
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("Guess"),
+			{{QStringLiteral("text"), QStringLiteral("customword")}})));
+		QTRY_VERIFY(!findMessage(listener, QStringLiteral("GuessCorrect")).isEmpty());
+		auto hasBlockedRosterEntry = [&] {
+			const QJsonArray players = findMessage(listener, QStringLiteral("RoomRoster"))
+				.value(QStringLiteral("players")).toArray();
+			return std::any_of(players.cbegin(), players.cend(), [&listenerUsername](const QJsonValue& value) {
+				const QJsonObject entry = value.toObject();
+				return entry.value(QStringLiteral("profile")).toObject().value(QStringLiteral("username")).toString()
+					== listenerUsername && entry.value(QStringLiteral("chatBlocked")).toBool();
+			});
+		};
+		QTRY_VERIFY(hasBlockedRosterEntry());
+		QTest::qWait(1100);
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("guessed-chat")},
+			 {QStringLiteral("text"), QStringLiteral("blocked after guessing")}})));
+		QTRY_VERIFY(!findMessage(listener, QStringLiteral("Error"), QStringLiteral("guessed-chat")).isEmpty());
+		QVERIFY(gtd::sendMessage(observer, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("observer-chat")},
+			 {QStringLiteral("text"), QStringLiteral("message after a guess")}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("ChatMessage"), QStringLiteral("message after a guess")).isEmpty());
+		QTest::qWait(50);
+		QVERIFY(findMessage(listener, QStringLiteral("ChatMessage"), QStringLiteral("message after a guess")).isEmpty());
+		QVERIFY(gtd::sendMessage(observer, gtd::makeMessage(QStringLiteral("VoiceFrame"),
+			{{QStringLiteral("sampleRate"), 16000},
+			 {QStringLiteral("audio"), QString::fromLatin1(audio.toBase64())}})));
+		QTRY_VERIFY(!findMessage(drawer, QStringLiteral("VoiceFrame")).isEmpty());
+		QTest::qWait(50);
+		QVERIFY(findMessage(listener, QStringLiteral("VoiceFrame")).isEmpty());
+		QVERIFY(gtd::sendMessage(observer, gtd::makeMessage(QStringLiteral("Guess"),
+			{{QStringLiteral("text"), QStringLiteral("customword")}})));
+		QTRY_VERIFY(!findMessage(observer, QStringLiteral("RoundEnded")).isEmpty());
+		QVERIFY(gtd::sendMessage(listener, gtd::makeMessage(QStringLiteral("RoomChat"),
+			{{QStringLiteral("requestId"), QStringLiteral("chat-after-round")},
+			 {QStringLiteral("text"), QStringLiteral("chat restored after round")}})));
+		QTRY_VERIFY(!findMessage(observer, QStringLiteral("ChatMessage"), QStringLiteral("chat restored after round")).isEmpty());
 	}
 
 	void filtersServerMutesAndViewerMutesByChannel()

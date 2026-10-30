@@ -51,6 +51,7 @@ private:
 		QString guessingRank;
 		QString drawingRank;
 		bool guessed = false;
+		bool chatBlockedThisRound = false;
 		bool spectator = false;
 		bool queuedForPlayer = false;
 		bool masterSuperAdmin = false;

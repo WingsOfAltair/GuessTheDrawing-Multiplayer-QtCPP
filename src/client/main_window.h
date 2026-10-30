@@ -269,6 +269,7 @@ private:
 	QSet<QString> mutedVoiceUsers_;
 	QString currentDrawer_;
 	QJsonArray roomRoster_;
+	bool chatBlockedThisRound_ = false;
 	QString pendingAuthRequestId_;
 	QString pendingRoomsRequestId_;
 	QString pendingInboxRequestId_;
