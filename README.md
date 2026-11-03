@@ -8,6 +8,18 @@ Guess The Drawing is a Qt 6/C++20 multiplayer drawing-and-guessing game. It cons
 
 The network protocol uses newline-delimited JSON. The project does not provide TLS; deploy only on trusted networks or behind a TLS-terminating proxy.
 
+## Native Android and iOS clients
+
+The repository also includes independent native mobile gameplay clients:
+
+- **Android:** open [mobile/android](mobile/android) in Android Studio (Kotlin and native Android UI).
+- **iPhone / iPad:** open [GuessTheDrawing.xcodeproj](mobile/ios/GuessTheDrawing.xcodeproj) in Xcode on a Mac (SwiftUI and a UIKit drawing canvas).
+
+Both connect to these same master and room servers for accounts, private rooms,
+drawing, guessing, chat, voice and spectating. See [mobile/README.md](mobile/README.md)
+for builds, device networking, exact server-version matching, tests and the
+documented differences from the desktop client.
+
 ## Requirements
 
 - CMake 3.21 or newer

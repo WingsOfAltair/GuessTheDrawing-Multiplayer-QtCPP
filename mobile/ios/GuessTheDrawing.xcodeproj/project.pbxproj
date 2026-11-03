@@ -1,0 +1,38 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+3EAB37EF1074FA652D4CADB5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Connection.swift"; sourceTree = "<group>"; };
+93F77EE5E47B5A9A7B7D5681 = {isa = PBXBuildFile; fileRef = 3EAB37EF1074FA652D4CADB5; };
+8C4C03D2D0B58F3FB0214461 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/CanvasScene.swift"; sourceTree = "<group>"; };
+81F15E96C3B651C5A6227D9F = {isa = PBXBuildFile; fileRef = 8C4C03D2D0B58F3FB0214461; };
+073BE70B22A8150AB49D7E94 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/Protocol.swift"; sourceTree = "<group>"; };
+874C9AFA89BCE31296CEFAD5 = {isa = PBXBuildFile; fileRef = 073BE70B22A8150AB49D7E94; };
+0584B5307516AEFD202FA802 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/DrawingBoard.swift"; sourceTree = "<group>"; };
+196EE995FA88BE1D6D5B8D89 = {isa = PBXBuildFile; fileRef = 0584B5307516AEFD202FA802; };
+673376E5762AE554F75607BB = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/GameClient.swift"; sourceTree = "<group>"; };
+C529C4C06F0E57D51AF2EDD4 = {isa = PBXBuildFile; fileRef = 673376E5762AE554F75607BB; };
+5CDB7DC30C66B3A75CF51ED5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/GuessTheDrawingApp.swift"; sourceTree = "<group>"; };
+71B457C6230EFA86D1A710AB = {isa = PBXBuildFile; fileRef = 5CDB7DC30C66B3A75CF51ED5; };
+5449ECB1E856A0A792D746BA = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Views.swift"; sourceTree = "<group>"; };
+C4AB34767B997619901AA057 = {isa = PBXBuildFile; fileRef = 5449ECB1E856A0A792D746BA; };
+B31517BE4FFDCBFE235B2B2B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/VoiceChat.swift"; sourceTree = "<group>"; };
+AEDA0DF02EC67CAED666D088 = {isa = PBXBuildFile; fileRef = B31517BE4FFDCBFE235B2B2B; };
+2934FB49D6B38ADEF036C28F = {isa = PBXFileReference; lastKnownFileType = folder; path = "../../country-flags"; sourceTree = "<group>"; };
+8BF729FFE074CAEE622C0292 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = GuessTheDrawing/Assets.xcassets; sourceTree = "<group>"; };
+B79606FB3AFEA5BD1609ED40 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "../GameVersion.xcconfig"; sourceTree = "<group>"; };
+06271BAF49532C879AA3C58B = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GuessTheDrawing/Info.plist; sourceTree = "<group>"; };
+F61393D4077173717B8C8126 = {isa = PBXBuildFile; fileRef = 2934FB49D6B38ADEF036C28F; };
+999FF37E9C5A0FFB78E1CDE2 = {isa = PBXBuildFile; fileRef = 8BF729FFE074CAEE622C0292; };
+A8792157CB4F27FB949C035F = {isa = PBXFileReference; explicitFileType = wrapper.application; path = GuessTheDrawing.app; sourceTree = BUILT_PRODUCTS_DIR; };
+AD936FCBED631FA67E05C3EA = {isa = PBXGroup; children = (3EAB37EF1074FA652D4CADB5, 8C4C03D2D0B58F3FB0214461, 073BE70B22A8150AB49D7E94, 0584B5307516AEFD202FA802, 673376E5762AE554F75607BB, 5CDB7DC30C66B3A75CF51ED5, 5449ECB1E856A0A792D746BA, B31517BE4FFDCBFE235B2B2B, 2934FB49D6B38ADEF036C28F, 8BF729FFE074CAEE622C0292, B79606FB3AFEA5BD1609ED40, 06271BAF49532C879AA3C58B, A8792157CB4F27FB949C035F,); sourceTree = "<group>"; };
+2BDC836913C0251C655AC270 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (93F77EE5E47B5A9A7B7D5681, 81F15E96C3B651C5A6227D9F, 874C9AFA89BCE31296CEFAD5, 196EE995FA88BE1D6D5B8D89, C529C4C06F0E57D51AF2EDD4, 71B457C6230EFA86D1A710AB, C4AB34767B997619901AA057, AEDA0DF02EC67CAED666D088,); runOnlyForDeploymentPostprocessing = 0; };
+B4A5B8DEEC6F3BA340C44838 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (F61393D4077173717B8C8126, 999FF37E9C5A0FFB78E1CDE2,); runOnlyForDeploymentPostprocessing = 0; };
+85A1A7D12D3BA9F4EB2AEE07 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+EDDA600A3F771F810A8065C9 = {isa = XCBuildConfiguration; baseConfigurationReference = B79606FB3AFEA5BD1609ED40; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon"; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor"; CODE_SIGN_STYLE = "Automatic"; CURRENT_PROJECT_VERSION = "1"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "GuessTheDrawing/Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = "16.0"; MARKETING_VERSION = "$(GTD_GAME_VERSION)"; PRODUCT_BUNDLE_IDENTIFIER = "com.guessthedrawing.mobile"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = "iphoneos"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = "NO"; SWIFT_VERSION = "5.0"; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = "YES"; }; name = Debug; };
+2B23A31EEC75B029432F2445 = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; }; name = Debug; };
+594BCDCC96599D88EF772A08 = {isa = XCBuildConfiguration; baseConfigurationReference = B79606FB3AFEA5BD1609ED40; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon"; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor"; CODE_SIGN_STYLE = "Automatic"; CURRENT_PROJECT_VERSION = "1"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "GuessTheDrawing/Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = "16.0"; MARKETING_VERSION = "$(GTD_GAME_VERSION)"; PRODUCT_BUNDLE_IDENTIFIER = "com.guessthedrawing.mobile"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = "iphoneos"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = "NO"; SWIFT_VERSION = "5.0"; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; SWIFT_OPTIMIZATION_LEVEL = "-O"; ENABLE_TESTABILITY = "NO"; }; name = Release; };
+07CA1E69F6068DEA30A4DA6B = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; }; name = Release; };
+28A8BB66987DD87BDA946B2E = {isa = XCConfigurationList; buildConfigurations = (EDDA600A3F771F810A8065C9, 594BCDCC96599D88EF772A08,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+D69E6ABAEE8D1F0F03292F91 = {isa = XCConfigurationList; buildConfigurations = (2B23A31EEC75B029432F2445, 07CA1E69F6068DEA30A4DA6B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+34A04005BCAF206EEC990BD9 = {isa = PBXNativeTarget; buildConfigurationList = 28A8BB66987DD87BDA946B2E; buildPhases = (2BDC836913C0251C655AC270, 85A1A7D12D3BA9F4EB2AEE07, B4A5B8DEEC6F3BA340C44838,); buildRules = (); dependencies = (); name = GuessTheDrawing; productName = GuessTheDrawing; productReference = A8792157CB4F27FB949C035F; productType = "com.apple.product-type.application"; };
+244210E48437B6556980A702 = {isa = PBXProject; attributes = { LastUpgradeCheck = 1600; }; buildConfigurationList = D69E6ABAEE8D1F0F03292F91; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = AD936FCBED631FA67E05C3EA; productRefGroup = AD936FCBED631FA67E05C3EA; projectDirPath = ""; projectRoot = ""; targets = (34A04005BCAF206EEC990BD9,); };
+}; rootObject = 244210E48437B6556980A702; }

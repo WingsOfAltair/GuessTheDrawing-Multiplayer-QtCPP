@@ -1,0 +1,65 @@
+{
+  "passkey": {
+    "password": "drawing-🔑-مرحبا",
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "proof": "WalESc/2ooWqUNw17LA/gZXqWjsRL1Yv9HzPqJkxojM="
+  },
+  "layers": [
+    {
+      "id": "base",
+      "name": "Background",
+      "order": 0,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "top",
+      "name": "Details",
+      "order": 1,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "objects": [
+    {
+      "id": "stroke-a",
+      "layerId": "base",
+      "type": "freehand",
+      "color": "#202124",
+      "fillColor": "#ffffff",
+      "strokeWidth": 4,
+      "fontSize": 24,
+      "filled": false,
+      "x": 0.1,
+      "y": 0.2,
+      "width": 0.7,
+      "height": 0.5,
+      "points": [
+        {
+          "x": 0.1,
+          "y": 0.2
+        },
+        {
+          "x": 0.8,
+          "y": 0.7
+        }
+      ]
+    },
+    {
+      "id": "rect-b",
+      "layerId": "top",
+      "type": "rectangle",
+      "color": "#4488ff",
+      "fillColor": "#ffffff",
+      "strokeWidth": 8,
+      "fontSize": 24,
+      "filled": true,
+      "x": 0.2,
+      "y": 0.3,
+      "width": 0.4,
+      "height": 0.3,
+      "points": []
+    }
+  ]
+}
