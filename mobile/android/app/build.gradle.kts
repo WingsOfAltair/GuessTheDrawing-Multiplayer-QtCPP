@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 val gameVersion = providers.gradleProperty("gtdVersion")
     .orElse(providers.environmentVariable("GTD_RELEASE_VERSION"))
@@ -23,16 +22,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    // Share the actual flags with the Qt client.
-    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/flags"))
-    sourceSets["test"].resources.srcDir("../../fixtures")
+    sourceSets.named("main") {
+        assets.directories.add("build/generated/flags")
+    }
+    sourceSets.named("test") {
+        resources.directories.add("../../fixtures")
+    }
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
-val syncCountryFlags by tasks.registering(Sync::class) {
+val syncCountryFlags = tasks.register<Sync>("syncCountryFlags") {
     from("../../../country-flags") { include("*.png") }
     into(layout.buildDirectory.dir("generated/flags/country-flags"))
 }
-tasks.named("preBuild") { dependsOn(syncCountryFlags) }
+tasks.named("preBuild").configure { dependsOn(syncCountryFlags) }
 dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     testImplementation("junit:junit:4.13.2")
