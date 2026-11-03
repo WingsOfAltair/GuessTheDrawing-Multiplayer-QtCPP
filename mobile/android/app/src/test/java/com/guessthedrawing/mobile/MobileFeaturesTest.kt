@@ -6,6 +6,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MobileFeaturesTest {
+    @Test fun microphoneMeterDistinguishesSilentCaptureFromActualSamples() {
+        for (rate in listOf(16000, 44100, 48000)) {
+            val meter = VoiceInputMeter(rate)
+            val buffer = ShortArray(rate / 50 + 1)
+            // An unread buffer tail must not disguise the emulator's all-zero input.
+            buffer[buffer.lastIndex] = 32767
+            repeat(149) { meter.accept(buffer, buffer.lastIndex) }
+            assertFalse(meter.noSignal); assertEquals(0, meter.level)
+            meter.accept(buffer, buffer.lastIndex)
+            assertTrue(meter.noSignal)
+            meter.accept(shortArrayOf(-32768), 1)
+            assertEquals(100, meter.level); assertFalse(meter.noSignal)
+            meter.accept(shortArrayOf(1000), 1)
+            assertTrue(meter.level in 1..99)
+        }
+    }
     @Test fun curveHitUsesScreenDistanceAndPreservesPointOrder() {
         val points = listOf(CurvePoint(.1f,.4f), CurvePoint(.9f,.4f))
         val hit = CurveGeometry.insertion(points, CurvePoint(.5f,.41f), 400f, 900f, 22f)!!

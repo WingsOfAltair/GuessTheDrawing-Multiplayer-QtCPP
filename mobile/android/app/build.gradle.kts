@@ -12,7 +12,7 @@ android {
         applicationId = providers.gradleProperty("gtdApplicationId").getOrElse("com.guessthedrawing.mobile")
         minSdk = 26
         targetSdk = 36
-        versionCode = providers.gradleProperty("gtdVersionCode").getOrElse("2").toInt()
+        versionCode = providers.gradleProperty("gtdVersionCode").getOrElse("3").toInt()
         versionName = gameVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GAME_VERSION", "\"$gameVersion\"")

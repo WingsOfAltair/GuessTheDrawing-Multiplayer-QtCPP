@@ -63,7 +63,10 @@ class AppAppearance(private val activity: Activity) {
                 if (view.tag == "primary") view.setTextColor(states(p.accentText, p.disabledText))
             }
             is EditText -> view.backgroundTintList = states(p.accent, p.disabledText)
-            is ProgressBar -> view.indeterminateTintList = ColorStateList.valueOf(p.accent)
+            is ProgressBar -> {
+                view.indeterminateTintList = ColorStateList.valueOf(p.accent)
+                view.progressTintList = ColorStateList.valueOf(p.accent)
+            }
         }
         if (view is ViewGroup) for (i in 0 until view.childCount) apply(view.getChildAt(i))
     }

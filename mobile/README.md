@@ -41,6 +41,32 @@ only listens on localhost. On a physical phone, use the computer's LAN address
 and the server settings above; 127.0.0.1 means the phone itself. Allow **Local
 Network** access on iOS when prompted.
 
+### Android emulator microphone
+
+The emulator disables host microphone input by default, independently of the
+app's microphone permission. The app can show **Mic on** and receive desktop
+audio while sending silent samples. Enable the host input after each emulator
+restart:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File mobile/tools/enable_emulator_microphone.ps1
+~~~
+
+Then turn the game's Mic off and on. With multiple emulators, add
+`-Serial emulator-5554` for the intended one. The connection helper also accepts
+`-EnableMicrophone` to set up networking and microphone access together.
+
+The equivalent emulator setting is **Extended Controls > Microphone > Enable
+Host Microphone Access** (called **Virtual microphone uses host audio input**
+in some versions). Windows must allow microphone access for the emulator.
+See the [Android emulator microphone documentation](https://developer.android.com/studio/run/emulator-extended-controls).
+
+Android shows a live input meter while Mic is on. After three seconds of entirely
+silent samples, it displays microphone setup guidance. The indicator measures
+captured sound, not just whether the recording device opened. It does not record
+audio to disk or change the volume of transmitted speech. Pass `-Disable` to the
+helper to turn emulator host input off again.
+
 The existing protocol is plaintext TCP. Use a trusted private network or VPN;
 these apps do not add TLS to the server. No server/session signing secrets are
 included. Passwords, private-room passkeys and session tokens are not saved to
@@ -49,7 +75,7 @@ preferences.
 ## Build Android
 
 Requirements: Android SDK 36 and network access for the first dependency
-download. The checked-in wrapper uses Gradle 9.6.0 and AGP 9.5.0 with built-in
+download. The checked-in wrapper uses Gradle 9.8.2 and AGP 9.5.0 with built-in
 Kotlin. The existing daemon criteria request JetBrains JDK 21; Gradle can
 provision it. Use JDK 21 for JAVA_HOME when building from a terminal.
 
@@ -103,7 +129,7 @@ xcodebuild -project mobile/ios/GuessTheDrawing.xcodeproj \
 ~~~
 
 Android also accepts GTD_RELEASE_VERSION, matching the Qt build environment
-variable. Store build numbers (versionCode / CURRENT_PROJECT_VERSION, currently 2) are
+variable. Store build numbers (Android versionCode 3 / iOS CURRENT_PROJECT_VERSION 2) are
 independent of the exact protocol app-version string. Mismatches are shown in
 the app; mobile builds never download or execute the Windows updater.
 

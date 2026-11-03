@@ -27,6 +27,9 @@ class MainActivity : ComponentActivity() {
     private var socialButton: Button? = null
     private var micButton: Button? = null
     private var audioButton: Button? = null
+    private var micInput: LinearLayout? = null
+    private var micLevel: ProgressBar? = null
+    private var micStatus: TextView? = null
     private var curveControls: View? = null
     private var curveHint: TextView? = null
     private var drawingToolbar: View? = null
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
         screen = client.page; lastList = ""; board = null; listArea = null; authButton = null
         root = column().apply { setBackgroundColor(appearance.palette.window) }
         micButton = null; audioButton = null; curveControls = null; curveHint = null; socialButton = null; drawingToolbar = null
+        micInput = null; micLevel = null; micStatus = null
         root.setOnApplyWindowInsetsListener { v, insets ->
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 val area = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
@@ -266,6 +270,16 @@ class MainActivity : ComponentActivity() {
         micButton = button("Mic off") { toggleMic() }; audioButton = button("Audio on") { voice.listening = !voice.listening }
         socialButton = button("People") { communityUI.hub() }
         weighted(audio, micButton!!); weighted(audio, audioButton!!); weighted(audio, socialButton!!); root.addView(audio)
+        micInput = column().apply {
+            visibility = View.GONE
+            micLevel = ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                isIndeterminate = false; max = 100; contentDescription = "Microphone input level"
+            }
+            addView(micLevel, LinearLayout.LayoutParams(-1, dp(4)))
+            micStatus = label("Microphone listening…", 12f)
+            addView(micStatus)
+        }
+        root.addView(micInput)
         root.addView(tabs(listOf("Chat", "Players", "Layers"), gameTab) { gameTab = it; lastList = ""; refreshList() })
         listArea = column(); root.addView(scroll(listArea!!), LinearLayout.LayoutParams(-1, 0, 1f))
         val compose = row()
@@ -454,6 +468,9 @@ class MainActivity : ComponentActivity() {
         micButton?.text = if (voice.recording) "● Mic on" else "Mic off"
         micButton?.isEnabled = client.canSpeak || voice.recording
         audioButton?.text = if (voice.listening) "Audio on" else "Audio muted"
+        micInput?.visibility = if (voice.recording) View.VISIBLE else View.GONE
+        micLevel?.progress = voice.inputLevel
+        micStatus?.text = voice.inputStatus
     }
     internal fun chooseTheme() {
         val ids = listOf("system") + ThemePalette.all.map { it.id }

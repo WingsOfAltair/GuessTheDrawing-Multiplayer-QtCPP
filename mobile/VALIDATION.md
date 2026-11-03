@@ -1,6 +1,23 @@
 # Validation on 2026-11-03
 
-## Executed successfully on Windows
+## Emulator microphone follow-up
+
+* The user reproduced one-way voice on Android Studio's Pixel Tablet emulator:
+  desktop speech was audible on Android, but Android speech was silent on desktop.
+* Enabled host microphone input using `adb -s emulator-5554 emu avd hostmicon`.
+  The user then confirmed that Android speech was audible in the desktop client.
+  Opening AudioRecord and relaying valid frames had not detected the emulator's
+  disabled host input in the earlier automated test.
+* Added a live Android input meter and guidance after three seconds of entirely
+  zero-valued input. A unit test checks silence duration, recovery on real samples,
+  full-scale negative PCM values, and unread buffer tails at 16/44.1/48 kHz.
+* Build 3: Android assembleDebug, all twelve unit tests and lint passed using the
+  user's Gradle 9.8.2 / AGP 9.5.0 configuration. The saved microphone helper was
+  also run successfully against the user's emulator.
+* The new indicator was compiled and unit-tested; the earlier complete game
+  integration suite was not repeated for this follow-up. No iOS changes here.
+
+## Earlier feature checks executed successfully on Windows
 
 * Android debug APK build (game version 1.0.0, build number 2), with the normal
   com.guessthedrawing.mobile application ID. Gradle 9.6.0 / AGP 9.5.0.

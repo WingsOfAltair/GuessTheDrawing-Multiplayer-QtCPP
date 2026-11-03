@@ -22,6 +22,15 @@ class VoiceChat(context: Context, private val client: GameClient) {
     private val ui = Handler(Looper.getMainLooper())
     var changed: () -> Unit = {}
     @Volatile var recording = false; private set
+    var inputLevel = 0; private set
+    var inputHasNoSignal = false; private set
+    val inputStatus: String get() = when {
+        inputHasNoSignal && (Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")) ->
+            "No microphone signal. Emulator: Extended Controls > Microphone > Enable Host Microphone Access."
+        inputHasNoSignal -> "No microphone signal. Check the device's microphone access and input."
+        inputLevel > 0 -> "Microphone input detected"
+        else -> "Microphone listening…"
+    }
     var listening = true
         set(value) { field = value; if (!value) stopPlayback(); changed() }
     var foreground = true
@@ -116,10 +125,23 @@ class VoiceChat(context: Context, private val client: GameClient) {
                 var failure: Exception? = null
                 try {
                     val framer = VoiceFramer(active.sampleRate)
+                    val meter = VoiceInputMeter(active.sampleRate)
+                    var lastMeterUpdate = 0L
                     val samples = ShortArray(maxOf(320, active.sampleRate / 50))
                     while (recorder === active && recording) {
                         val count = active.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
                         check(count > 0) { "Microphone read failed ($count)" }
+                        meter.accept(samples, count)
+                        val measuredAt = SystemClock.elapsedRealtime()
+                        if (measuredAt - lastMeterUpdate >= 150) {
+                            lastMeterUpdate = measuredAt
+                            val level = meter.level; val noSignal = meter.noSignal
+                            ui.post {
+                                if (captureEpoch == epoch && recording && SystemClock.elapsedRealtime() - measuredAt < 200) {
+                                    inputLevel = level; inputHasNoSignal = noSignal; changed()
+                                }
+                            }
+                        }
                         for (frame in framer.append(samples, count)) {
                             if (pending.get() >= 8) continue
                             pending.incrementAndGet()
@@ -140,6 +162,7 @@ class VoiceChat(context: Context, private val client: GameClient) {
                     ui.post {
                         if (recorder === active) {
                             recorder = null; recording = false; captureEpoch++
+                            inputLevel = 0; inputHasNoSignal = false
                             if (speakers.isEmpty()) releaseAudio()
                             changed(); failure?.let { client.notice("Microphone stopped: ${it.message}. Tap Mic to retry.") }
                         }
@@ -156,6 +179,7 @@ class VoiceChat(context: Context, private val client: GameClient) {
         captureEpoch++
         val active = recorder; recorder = null
         val wasRecording = recording; recording = false
+        inputLevel = 0; inputHasNoSignal = false
         runCatching { active?.stop() }
         if (speakers.isEmpty()) releaseAudio()
         if (wasRecording) changed()
