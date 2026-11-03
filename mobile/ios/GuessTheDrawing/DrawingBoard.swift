@@ -4,12 +4,15 @@ import ImageIO
 
 @MainActor
 final class DrawingTools: ObservableObject {
-    @Published var tool = "freehand"
+    @Published var tool = "freehand" { willSet { if newValue != tool { finishCurve() } } }
     @Published var color = Color(red: 0.125, green: 0.13, blue: 0.14)
     @Published var width = 6
     @Published var filled = false
-    @Published var layerID = ""
+    @Published var layerID = "" { willSet { if newValue != layerID { finishCurve() } } }
     @Published var askText = false
+    @Published var curvePending = false
+    var finishCurve: () -> Void = {}
+    var cancelCurve: () -> Void = {}
     var undo: () -> Void = {}
     var redo: () -> Void = {}
     var addText: (String) -> Void = { _ in }
@@ -37,6 +40,8 @@ struct DrawingBoard: UIViewRepresentable {
         tools.redo = { [weak view] in view?.redo() }
         tools.snapshot = { [weak view] in view?.snapshot() }
         tools.addText = { [weak view] in view?.addText($0) }
+        tools.finishCurve = { [weak view] in view?.finishCurve() }
+        tools.cancelCurve = { [weak view] in view?.cancelCurve() }
         return view
     }
     func updateUIView(_ view: BoardView, context: Context) { view.refresh() }
@@ -51,6 +56,7 @@ final class BoardView: UIView {
     private var textPoint = CGPoint.zero
     private var lastSent = Date.distantPast
     private var roundKey = ""
+    private var curveHandle: Int?
     private var history: [(JSON, JSON)] = []
     private var redoHistory: [(JSON, JSON)] = []
     private let images = NSCache<NSString, UIImage>()
@@ -64,7 +70,12 @@ final class BoardView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     func refresh() {
         let key = "\(client.drawer):\(client.roundActive):\(client.canDraw):\(client.scene.resetCount)"
-        if key != roundKey { draft = nil; original = nil; history = []; redoHistory = []; roundKey = key }
+        if key != roundKey || !editable {
+            draft = nil; original = nil; curveHandle = nil
+            if key != roundKey { history = []; redoHistory = []; roundKey = key }
+            // updateUIView must not publish a SwiftUI change synchronously.
+            if tools.curvePending { DispatchQueue.main.async { [weak self] in self?.publishCurveState() } }
+        }
         setNeedsDisplay()
     }
     private var selectedLayer: JSON? {
@@ -78,10 +89,12 @@ final class BoardView: UIView {
         if history.count > 50 { history.removeFirst() }
     }
     func undo() {
+        if draft?.string("type") == "curve" { cancelCurve(); return }
         guard client.canDraw, let entry = history.popLast() else { return }
         client.operation(entry.1); redoHistory.append(entry)
     }
     func redo() {
+        finishCurve()
         guard client.canDraw, let entry = redoHistory.popLast() else { return }
         client.operation(entry.0); history.append(entry)
     }
@@ -110,6 +123,51 @@ final class BoardView: UIView {
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         render(context, size: bounds.size)
+        if draft?.string("type") == "curve", editable {
+            context.setLineWidth(2); context.setStrokeColor(UIColor.systemBlue.cgColor)
+            context.setFillColor(UIColor.white.cgColor)
+            for p in curvePoints {
+                context.addEllipse(in: CGRect(x: p.x*bounds.width-6, y: p.y*bounds.height-6, width: 12, height: 12))
+                context.drawPath(using: .fillStroke)
+            }
+        }
+    }
+    private var curvePoints: [CGPoint] {
+        (draft?.objects("points") ?? []).map { CGPoint(x: $0.number("x"), y: $0.number("y")) }
+    }
+    private func setCurvePoints(_ points: [CGPoint]) {
+        guard var object = draft else { return }
+        object["points"] = points.map(point); geometry(&object); draft = object
+    }
+    private func publishCurveState() {
+        let pending = draft?.string("type") == "curve"
+        if tools.curvePending != pending { tools.curvePending = pending }
+    }
+    func cancelCurve() {
+        guard draft?.string("type") == "curve" else { return }
+        draft = nil; curveHandle = nil; publishCurveState(); setNeedsDisplay()
+    }
+    func finishCurve() {
+        guard let object = draft, object.string("type") == "curve" else { return }
+        let points = curvePoints
+        draft = nil; curveHandle = nil
+        if editable, CurveGeometry.valid(points) { commit(upsert(object), inverse: deletion(object.string("id"))) }
+        publishCurveState(); setNeedsDisplay()
+    }
+    private func beginCurve(_ p: CGPoint) {
+        if draft?.string("type") != "curve" {
+            guard client.scene.objects.count < 1000 else { client.notice("Canvas has reached its object limit."); return }
+            draft = newObject(p, type: "curve"); setCurvePoints([p, p]); curveHandle = 1
+        } else {
+            var points = curvePoints
+            func distance(_ i: Int) -> CGFloat { hypot((points[i].x-p.x)*bounds.width, (points[i].y-p.y)*bounds.height) }
+            if let nearest = points.indices.min(by: { distance($0) < distance($1) }), distance(nearest) <= 22 {
+                curveHandle = nearest
+            } else if let hit = CurveGeometry.insertion(points, touch: p, size: bounds.size, radius: 22) {
+                points.insert(hit.point, at: hit.index); curveHandle = hit.index; setCurvePoints(points)
+            } else { finishCurve(); return }
+        }
+        publishCurveState(); setNeedsDisplay()
     }
     private func render(_ c: CGContext, size: CGSize) {
         c.setFillColor(UIColor.white.cgColor); c.fill(CGRect(origin: .zero, size: size))
@@ -188,6 +246,7 @@ final class BoardView: UIView {
         guard editable, let touch = touches.first else { return }
         start = location(touch); original = nil
         switch tools.tool {
+        case "curve": beginCurve(start)
         case "text": textPoint = start; tools.askText = true
         case "eraser": if let old = hit(start) { commit(deletion(old.string("id")), inverse: upsert(old)) }
         case "move": original = hit(start); draft = original
@@ -195,7 +254,7 @@ final class BoardView: UIView {
         default:
             guard client.scene.objects.count < 1000 else { client.notice("Canvas has reached its object limit."); return }
             var object = newObject(start)
-            if ["freehand", "brush", "airbrush", "curve", "polygon", "line"].contains(tools.tool) { object["points"] = [point(start)] }
+            if ["freehand", "brush", "airbrush", "polygon", "line"].contains(tools.tool) { object["points"] = [point(start)] }
             draft = object; lastSent = .distantPast
         }
         setNeedsDisplay()
@@ -207,13 +266,23 @@ final class BoardView: UIView {
         guard let touch = touches.first else { return }; updateStroke(location(touch), ended: true)
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        cancelCurve()
         if let draft, client.canDraw, client.scene.objects.contains(where: { $0.string("id") == draft.string("id") }) {
             commit(upsert(draft), inverse: original.map(upsert) ?? deletion(draft.string("id")))
         }
         draft = nil; original = nil; setNeedsDisplay()
     }
     private func updateStroke(_ p: CGPoint, ended: Bool) {
-        guard editable, var object = draft else { draft = nil; return }
+        guard editable, var object = draft else { cancelCurve(); draft = nil; return }
+        if tools.tool == "curve" {
+            var points = curvePoints
+            if let i = curveHandle, points.indices.contains(i) { points[i] = p; setCurvePoints(points) }
+            if ended {
+                curveHandle = nil
+                if !CurveGeometry.valid(points) { cancelCurve() } else if points.count == 4 { finishCurve() }
+            }
+            publishCurveState(); setNeedsDisplay(); return
+        }
         switch tools.tool {
         case "move":
             if let old = original {
@@ -223,7 +292,7 @@ final class BoardView: UIView {
                 object["points"] = old.objects("points").map { ["x": $0.number("x") + dx, "y": $0.number("y") + dy] }
             }
         case "line": object["points"] = [point(start), point(p)]; geometry(&object)
-        case "freehand", "brush", "airbrush", "curve", "polygon":
+        case "freehand", "brush", "airbrush", "polygon":
             var points = object.objects("points"); if points.count < 2000 { points.append(point(p)) }
             object["points"] = points; geometry(&object)
         default:
@@ -236,7 +305,7 @@ final class BoardView: UIView {
                 commit(upsert(object), inverse: original.map(upsert) ?? deletion(object.string("id")))
             }
             draft = nil; original = nil
-        } else if ["freehand", "brush", "airbrush", "curve"].contains(tools.tool), Date().timeIntervalSince(lastSent) >= 0.06 {
+        } else if ["freehand", "brush", "airbrush"].contains(tools.tool), Date().timeIntervalSince(lastSent) >= 0.06 {
             client.operation(upsert(object)); lastSent = Date()
         }
         setNeedsDisplay()

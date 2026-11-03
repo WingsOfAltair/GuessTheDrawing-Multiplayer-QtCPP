@@ -8,6 +8,11 @@ import java.util.UUID
 import kotlin.concurrent.thread
 
 class GameClient {
+    val community by lazy { CommunityClient(this, { type, fields -> sendMaster(type, fields) }, { notifyChange() }) }
+    private var serverTextMuted = false
+    private var serverVoiceMuted = false
+    private var muteExpiresAt = 0L
+    private val muteActive get() = muteExpiresAt == 0L || muteExpiresAt > System.currentTimeMillis() / 1000
     var changed: () -> Unit = {}
     var voiceReceived: (JSONObject) -> Unit = {}
     private val ui = Handler(Looper.getMainLooper())
@@ -45,6 +50,8 @@ class GameClient {
     val username get() = profile.optString("username")
     val canDraw get() = connected && roundActive && !spectator && drawer == username
     val canChat get() = connected && !canDraw && !guessed
+    val canSpeak get() = canChat && !(serverVoiceMuted && muteActive)
+    val canTextChat get() = canChat && !(serverTextMuted && muteActive)
     val canGuess get() = canChat && roundActive && !spectator
     val roundLabel get() = when {
         !connected -> "Reconnecting…"
@@ -117,7 +124,8 @@ class GameClient {
         socket.connect(host, port)
     }
     private fun sendMaster(type: String, fields: JSONObject = JSONObject()): Boolean {
-        fields.put("requestId", id()).put("authToken", token)
+        if (!fields.has("requestId")) fields.put("requestId", id())
+        fields.put("authToken", token)
         return master?.send(Protocol.message(type, fields)) == true
     }
     fun refreshRooms() { if (token.isNotEmpty()) sendMaster("ListRooms") }
@@ -133,6 +141,7 @@ class GameClient {
         notifyChange()
     }
     private fun handleMaster(m: JSONObject) {
+        if (community.handle(m) && m.optString("type") != "Error") return
         when (m.optString("type")) {
             "AuthResult" -> {
                 if (m.optString("requestId") != authId || authId.isEmpty()) return
@@ -141,6 +150,7 @@ class GameClient {
                 else {
                     token = m.optString("authToken"); profile = m.obj("profile")
                     page = "lobby"; status = "Choose a room"; refreshRooms(); refreshLeaderboards()
+                    community.refresh()
                 }
             }
             "RoomList" -> { rooms = m.array("rooms"); if (!busy && page == "lobby") status = "Choose a room" }
@@ -206,7 +216,7 @@ class GameClient {
     fun sendGame(type: String, fields: JSONObject = JSONObject()): Boolean =
         game?.send(Protocol.message(type, fields)) == true
     fun sendText(text: String, guess: Boolean) {
-        if (text.isBlank() || (guess && !canGuess) || (!guess && !canChat)) return
+        if (text.isBlank() || (guess && !canGuess) || (!guess && !canTextChat)) return
         sendGame(if (guess) "Guess" else "RoomChat", json("text" to text.take(if (guess) 100 else 300)))
     }
     fun changeRole() {
@@ -257,6 +267,7 @@ class GameClient {
                     guessed = false; roster(m); queue(m.obj("queue"))
                     scene.replace(m.array("layers"), m.array("objects"))
                     status = room.optString("roomName"); log("Joined " + status)
+                    serverTextMuted = false; serverVoiceMuted = false; community.refreshRoom()
                 }
             }
             "CanvasState" -> scene.replace(m.array("layers"), m.array("objects"))
@@ -295,7 +306,10 @@ class GameClient {
             "VoiceFrame" -> { if (connected) voiceReceived(m); return }
             "VersionMismatch" -> versionMismatch(m)
             "ModerationNotice" -> moderation(m)
-            "ModerationAnnouncement" -> log(m.optString("targetUsername") + ": " + m.optString("action") + " · " + m.optString("reason"))
+            "ModerationAnnouncement" -> {
+                if (m.optString("targetUsername") == username && m.optString("action") == "unmute") { serverTextMuted = false; serverVoiceMuted = false }
+                log(m.optString("targetUsername") + ": " + m.optString("action") + " · " + m.optString("reason"))
+            }
             "ServerUpdateScheduled" -> log("Server update in " + m.optInt("secondsRemaining") + " seconds")
             "ServerRestarting" -> { leaveRoom(false); status = "Server restarting. Refresh rooms shortly." }
             "Error" -> { busy = false; log(m.optString("message")); status = m.optString("message") }
@@ -305,6 +319,10 @@ class GameClient {
     private fun moderation(m: JSONObject) {
         val text = m.optString("reason", m.optString("message", "Server moderation notice"))
         log(text); status = text
+        if (m.optString("action") == "mute") {
+            serverTextMuted = m.optBoolean("textChat"); serverVoiceMuted = m.optBoolean("voiceChat"); muteExpiresAt = m.optLong("expiresAt")
+        }
+        if (m.optString("action") == "unmute") { serverTextMuted = false; serverVoiceMuted = false; muteExpiresAt = 0 }
         if (m.optString("action") in listOf("kick", "ban")) { leaveRoom(false); status = text }
     }
     private fun versionMismatch(m: JSONObject) {
@@ -325,7 +343,12 @@ class GameClient {
         if (send) master?.finish(Protocol.message("Logout", json("authToken" to token))) else master?.close()
         master = null; token = ""; authId = ""; profile = JSONObject()
         rooms = JSONArray(); leaderboards.clear(); page = "login"; busy = false
+        community.clear()
         notifyChange()
     }
     fun close() { logout(); ui.removeCallbacksAndMessages(null) }
+    fun setForeground(active: Boolean) {
+        community.foreground = active
+        if (token.isNotEmpty()) sendMaster("PresenceStatusUpdate", json("status" to if (active) "active" else "idle"))
+    }
 }

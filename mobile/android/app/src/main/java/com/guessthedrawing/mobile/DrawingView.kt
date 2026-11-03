@@ -15,10 +15,16 @@ import kotlin.concurrent.thread
 
 class DrawingView(context: Context, val client: GameClient) : View(context) {
     var tool = "freehand"
+        set(value) { if (field != value) finishCurve(); field = value; editingChanged() }
     var ink = "#202124"
     var strokeSize = 6
     var filled = false
     var selectedLayer = ""
+        set(value) { if (field != value) finishCurve(); field = value }
+    var editingChanged: () -> Unit = {}
+    val curvePending get() = draft?.optString("type") == "curve"
+    private var curveHandle = -1
+    private var choosingLayer = false
     var requestText: (Float, Float) -> Unit = { _, _ -> }
     private var draft: JSONObject? = null
     private var original: JSONObject? = null
@@ -30,11 +36,15 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val images = android.util.LruCache<String, Bitmap>(12)
     init { setBackgroundColor(Color.WHITE); contentDescription = "Shared drawing canvas"; isFocusable = true }
-    fun resetEditing() { draft = null; original = null; history.clear(); redo.clear(); invalidate() }
+    fun resetEditing() { cancelCurve(); draft = null; original = null; history.clear(); redo.clear(); invalidate() }
     private fun layer(): JSONObject? {
         val layers = client.scene.layers
-        if (layers.none { it.optString("id") == selectedLayer })
+        if (!choosingLayer && layers.none { it.optString("id") == selectedLayer }) {
+            choosingLayer = true
+            cancelCurve()
             selectedLayer = layers.firstOrNull()?.optString("id") ?: ""
+            choosingLayer = false
+        }
         return layers.find { it.optString("id") == selectedLayer }
     }
     private fun editable() = client.canDraw && layer()?.optBoolean("locked", false) == false &&
@@ -42,10 +52,12 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
     private fun upsert(o: JSONObject) = json("action" to "object_upsert", "object" to o)
     private fun deletion(id: String) = json("action" to "object_delete", "objectId" to id)
     fun undo() {
+        if (curvePending) { cancelCurve(); return }
         if (!client.canDraw || history.isEmpty()) return
         val entry = history.removeLast(); client.operation(entry.second); redo.addLast(entry)
     }
     fun redo() {
+        finishCurve()
         if (!client.canDraw || redo.isEmpty()) return
         val entry = redo.removeLast(); client.operation(entry.first); history.addLast(entry)
     }
@@ -69,7 +81,51 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
         o.put("x", x).put("y", y).put("width", points.maxOf { it.optDouble("x") } - x)
             .put("height", points.maxOf { it.optDouble("y") } - y)
     }
-    override fun onDraw(canvas: Canvas) { super.onDraw(canvas); render(canvas, width.toFloat(), height.toFloat()) }
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas); render(canvas, width.toFloat(), height.toFloat())
+        if (curvePending && editable()) curvePoints().forEach {
+            paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+            val radius = 6 * resources.displayMetrics.density
+            canvas.drawCircle(it.x * width, it.y * height, radius, paint)
+            paint.style = Paint.Style.STROKE; paint.color = Color.rgb(26, 115, 232); paint.strokeWidth = 2 * resources.displayMetrics.density
+            canvas.drawCircle(it.x * width, it.y * height, radius, paint)
+        }
+    }
+    private fun curvePoints() = draft?.array("points")?.objects()?.map {
+        CurvePoint(it.optDouble("x").toFloat(), it.optDouble("y").toFloat())
+    } ?: emptyList()
+    private fun setCurvePoints(points: List<CurvePoint>) {
+        draft?.let { it.put("points", JSONArray(points.map { p -> point(p.x, p.y) })); geometry(it) }
+    }
+    fun cancelCurve() {
+        if (curvePending) { draft = null; original = null; curveHandle = -1; invalidate(); editingChanged() }
+    }
+    fun finishCurve() {
+        if (!curvePending) return
+        val objectToSave = draft
+        val points = curvePoints()
+        draft = null; curveHandle = -1
+        if (objectToSave != null && editable() && CurveGeometry.valid(points))
+            commit(upsert(objectToSave), deletion(objectToSave.optString("id")))
+        invalidate(); editingChanged()
+    }
+    private fun beginCurve(x: Float, y: Float) {
+        val p = CurvePoint(x, y)
+        if (!curvePending) {
+            if (client.scene.objects.size >= 1000) { client.notice("Canvas has reached its object limit."); return }
+            draft = newObject(x, y, "curve"); setCurvePoints(listOf(p, p)); curveHandle = 1
+        } else {
+            val points = curvePoints().toMutableList()
+            val radius = 22 * resources.displayMetrics.density
+            curveHandle = points.indices.minByOrNull { i -> hypot((points[i].x-x)*width, (points[i].y-y)*height) } ?: -1
+            if (curveHandle < 0 || hypot((points[curveHandle].x-x)*width, (points[curveHandle].y-y)*height) > radius) {
+                val hit = CurveGeometry.insertion(points, p, width.toFloat(), height.toFloat(), radius)
+                if (hit == null) { finishCurve(); return }
+                points.add(hit.index, hit.point); curveHandle = hit.index; setCurvePoints(points)
+            }
+        }
+        invalidate(); editingChanged()
+    }
     fun render(canvas: Canvas, w: Float, h: Float) {
         canvas.drawColor(Color.WHITE)
         val active = draft
@@ -161,13 +217,14 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
         }
     }
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (!editable() || filling) { draft = null; return false }
+        if (!editable() || filling) { cancelCurve(); draft = null; return false }
         val x = (e.x / max(1, width)).coerceIn(0f, 1f)
         val y = (e.y / max(1, height)).coerceIn(0f, 1f)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent.requestDisallowInterceptTouchEvent(true); start = PointF(x, y); original = null
                 when (tool) {
+                    "curve" -> beginCurve(x, y)
                     "text" -> requestText(x, y)
                     "pick" -> {
                         val bitmap = snapshot(); val pixel = bitmap.getPixel((x * (bitmap.width - 1)).toInt(), (y * (bitmap.height - 1)).toInt())
@@ -179,7 +236,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                     else -> {
                         if (client.scene.objects.size >= 1000) { client.notice("Canvas has reached its object limit."); return true }
                         draft = newObject(x, y)
-                        if (tool in listOf("freehand", "brush", "airbrush", "curve", "polygon", "line"))
+                        if (tool in listOf("freehand", "brush", "airbrush", "polygon", "line"))
                             draft?.put("points", JSONArray().put(point(x, y)))
                         lastSent = 0
                     }
@@ -187,6 +244,16 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                 invalidate(); return true
             }
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                if (tool == "curve") {
+                    val points = curvePoints().toMutableList()
+                    if (curveHandle in points.indices) { points[curveHandle] = CurvePoint(x, y); setCurvePoints(points) }
+                    if (e.actionMasked == MotionEvent.ACTION_UP) {
+                        curveHandle = -1
+                        if (!CurveGeometry.valid(points)) cancelCurve() else if (points.size == 4) finishCurve()
+                        parent.requestDisallowInterceptTouchEvent(false); performClick(); editingChanged()
+                    }
+                    invalidate(); return true
+                }
                 val d = draft
                 if (d != null) {
                     when (tool) {
@@ -199,7 +266,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                             }))
                         }
                         "line" -> { d.put("points", JSONArray().put(point(start.x, start.y)).put(point(x, y))); geometry(d) }
-                        "freehand", "brush", "airbrush", "curve", "polygon" -> {
+                        "freehand", "brush", "airbrush", "polygon" -> {
                             val points = d.array("points")
                             if (points.length() < 2000) points.put(point(x, y))
                             geometry(d)
@@ -211,7 +278,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                         if (tool != "polygon" || d.array("points").length() >= 3)
                             commit(upsert(d), original?.let { upsert(it) } ?: deletion(d.optString("id")))
                         draft = null; original = null
-                    } else if (tool in listOf("freehand", "brush", "airbrush", "curve") && SystemClock.uptimeMillis() - lastSent >= 60) {
+                    } else if (tool in listOf("freehand", "brush", "airbrush") && SystemClock.uptimeMillis() - lastSent >= 60) {
                         client.operation(upsert(d.copy())); lastSent = SystemClock.uptimeMillis()
                     }
                 }
@@ -219,6 +286,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                 invalidate(); return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                cancelCurve()
                 draft?.let { d ->
                     if (client.scene.objects.any { it.optString("id") == d.optString("id") })
                         commit(upsert(d), original?.let { upsert(it) } ?: deletion(d.optString("id")))

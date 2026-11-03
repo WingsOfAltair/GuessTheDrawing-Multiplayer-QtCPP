@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -102,7 +103,7 @@ def main():
                 "masterAddress": "127.0.0.1", "masterPort": master_port,
                 "serverId": "mobile-test", "roomId": "mobile-test", "roomName": "Mobile test room",
                 "roomPasskey": PASSWORD, "publicHost": "127.0.0.1", "port": game_port,
-                "roundSeconds": 60, "intermissionSeconds": 0, "maxPlayers": 8,
+                "roundSeconds": 300, "intermissionSeconds": 0, "maxPlayers": 8,
                 "profanityDictionaryPath": str(binary / "profanity-dictionary.txt")},
             "client": {"dictionaryPath": str(binary / "dictionary")}
         }
@@ -125,14 +126,24 @@ def main():
                             log.seek(0); raise AssertionError(log.read())
                         time.sleep(.1)
             if args.android:
+                # A test-only staff account in the disposable database, never the user's server.
+                admin = Peer(master_port)
+                admin.send("CreateAccount", requestId="test-admin", username="mobile_test_admin",
+                           password="MobileTest123!", displayName="Mobile moderator")
+                assert admin.wait("AuthResult")["ok"]
+                admin.close()
+                with sqlite3.connect(folder / "test.sqlite") as db:
+                    db.execute("INSERT INTO master_super_admins(username) VALUES (?)", ("mobile_test_admin",))
+                db.close()
                 for port in (master_port, game_port):
                     subprocess.run([adb, "-e", "reverse", f"tcp:{port}", f"tcp:{port}"], check=True)
                 gradle = MOBILE / "android" / ("gradlew.bat" if os.name == "nt" else "gradlew")
                 subprocess.run([str(gradle), "--no-daemon", "connectedDebugAndroidTest",
                     f"-PgtdVersion={VERSION}",
+                    "-PgtdApplicationId=com.guessthedrawing.mobile.regression",
                     f"-Pandroid.testInstrumentationRunnerArguments.masterPort={master_port}"],
                     cwd=gradle.parent, env=env, check=True)
-                print("PASS: native Android UI login, private join, round, drawing relay, late spectator, chat, guessing")
+                print("PASS: Android native login, social, inbox, profiles, curves, voice, moderation and game integration")
                 return
             tokens = []
             for i in range(3):

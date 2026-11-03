@@ -3,12 +3,15 @@ import SwiftUI
 @MainActor
 struct RootView: View {
     @ObservedObject var client: GameClient
+    @StateObject private var theme = AppTheme()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Group {
             if client.page == "login" { LoginView(client: client) }
             else if client.page == "game" { GameView(client: client) }
             else { LobbyView(client: client) }
-        }
+        }.environmentObject(theme).preferredColorScheme(theme.scheme).tint(theme.accent)
+            .onChange(of: scenePhase) { client.setForeground($0 == .active) }
     }
 }
 @MainActor
@@ -34,7 +37,7 @@ struct LoginView: View {
         NavigationStack {
             Form {
                 Section {
-                    Image(systemName: "pencil.and.outline").font(.system(size: 44)).foregroundStyle(.indigo).accessibilityHidden(true)
+                    Image(systemName: "pencil.and.outline").font(.system(size: 44)).foregroundStyle(.tint).accessibilityHidden(true)
                     Text("Draw together.\nGuess together.").font(.largeTitle.bold())
                     Text("Play with friends on desktop, iPhone, iPad and Android.").foregroundStyle(.secondary)
                 }.listRowBackground(Color.clear)
@@ -42,7 +45,7 @@ struct LoginView: View {
                     TextField("Master server address", text: $host).textContentType(.URL)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("Port", text: $port).keyboardType(.numberPad)
-                }
+                }.gtdRow()
                 Section("Account") {
                     TextField("Username", text: $username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("Password", text: $password).textContentType(create ? .newPassword : .password)
@@ -53,11 +56,11 @@ struct LoginView: View {
                             password: password, name: displayName, create: create)
                         password = ""
                     }.disabled(client.busy).frame(maxWidth: .infinity)
-                }
+                }.gtdRow()
                 Section { StatusView(client: client) } footer: {
                     Text("Use your host computer's LAN address. Allow Local Network access when asked. Game version \(Wire.appVersion).")
                 }
-            }.navigationTitle("Guess The Drawing")
+            }.gtdSurface().navigationTitle("Guess The Drawing").toolbar { ThemeMenu() }
         }
     }
 }
@@ -68,6 +71,7 @@ struct LobbyView: View {
         TabView {
             RoomListView(client: client).tabItem { Label("Rooms", systemImage: "rectangle.3.group") }
             LeaderboardView(client: client).tabItem { Label("Ranks", systemImage: "trophy") }
+            CommunityHub(client: client, embedded: true).tabItem { Label("People", systemImage: "person.2") }.badge(client.community.badge)
             ProfileView(client: client).tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
     }
@@ -100,10 +104,10 @@ struct RoomListView: View {
                                 Button { join(room, watching: false) } label: { Label("Play", systemImage: "play.fill") }.buttonStyle(.borderedProminent)
                                 Button { join(room, watching: true) } label: { Label("Watch", systemImage: "eye") }.buttonStyle(.bordered)
                             }.disabled(client.busy)
-                        }.padding(.vertical, 6)
+                        }.padding(.vertical, 6).gtdRow()
                     }
                 }.refreshable { client.refreshRooms() }
-            }.navigationTitle("Rooms")
+            }.gtdSurface().navigationTitle("Rooms")
                 .toolbar { Button { client.refreshRooms() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Refresh rooms") }
                 .alert("Room passkey", isPresented: $showPasskey) {
                     SecureField("Passkey", text: $passkey)
@@ -143,9 +147,9 @@ struct LeaderboardView: View {
             List {
                 Picker("Leaderboard", selection: $track) { Text("Guessing").tag("guessing"); Text("Drawing").tag("drawing") }.pickerStyle(.segmented)
                 ForEach(Array((client.leaderboards[track] ?? []).prefix(100).enumerated()), id: \.offset) { _, p in
-                    PlayerRow(profile: p, detail: "#\(p.int(track + "LeaderboardRank")) · \(p.int(track + "Score")) points")
+                    InteractivePlayerRow(client: client, social: client.community, profile: p, detail: "#\(p.int(track + "LeaderboardRank")) · \(p.int(track + "Score")) points")
                 }
-            }.navigationTitle("Leaderboards").refreshable { client.refreshLeaderboards() }
+            }.gtdSurface().navigationTitle("Leaderboards").refreshable { client.refreshLeaderboards() }
         }
     }
 }
@@ -174,7 +178,7 @@ struct ProfileView: View {
                     TextField("Display name", text: $name)
                     Picker("Country", selection: $country) {
                         Text("No country").tag("")
-                        ForEach(countries, id: \.self) { code in Text(code).tag(code) }
+                        ForEach(countries, id: \.self) { code in HStack { CountryFlag(code: code) }.tag(code) }
                     }
                 }
                 Section("Change password (optional)") {
@@ -187,7 +191,8 @@ struct ProfileView: View {
                 }.disabled(client.busy)
                 StatusView(client: client)
                 Button("Sign out", role: .destructive) { client.logout() }
-            }.navigationTitle("Profile").onAppear { name = client.profile.string("displayName"); country = client.profile.string("countryCode") }
+                ThemeMenu()
+            }.gtdSurface().navigationTitle("Profile").onAppear { name = client.profile.string("displayName"); country = client.profile.string("countryCode") }
         }
     }
 }
@@ -204,6 +209,8 @@ struct GameView: View {
     @State private var leave = false
     @State private var clear = false
     @State private var sharedImage: SharedImage?
+    @State private var showPeople = false
+    @State private var peopleSection = "Friends"
     private var word: String {
         if !client.word.isEmpty { return (client.canDraw ? "Your word: " : "Answer: ") + client.word }
         if client.queued { return "Waiting for a player slot · position \(client.queuePosition)" }
@@ -215,12 +222,36 @@ struct GameView: View {
         NavigationStack {
             VStack(spacing: 8) {
                 if client.busy { ProgressView(client.status).font(.caption) }
+                else if client.status != client.room.string("roomName"), !client.status.isEmpty {
+                    Text(client.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
                 Text(client.roundLabel).font(.subheadline).foregroundStyle(.secondary)
                 Text(word).font(.headline).lineLimit(2).minimumScaleFactor(0.7)
                 DrawingBoard(client: client, tools: tools).aspectRatio(4 / 3, contentMode: .fit)
                     .background(.white).clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary)).layoutPriority(1)
-                drawingToolbar
+                if client.canDraw { drawingToolbar }
+                if tools.tool == "curve", client.canDraw {
+                    HStack {
+                        Text(tools.curvePending ? "Drag the line to bend it." : "Drag to place the endpoints.").font(.caption)
+                        Spacer()
+                        if tools.curvePending {
+                            Button("Finish", action: tools.finishCurve).buttonStyle(.borderedProminent)
+                            Button("Cancel", action: tools.cancelCurve)
+                        }
+                    }
+                }
+                HStack {
+                    Button { if voice.recording { voice.stopRecording() } else { voice.requestMicrophone(client: client) } } label: {
+                        Label(voice.recording ? "Mic on" : "Mic off", systemImage: voice.recording ? "mic.fill" : "mic.slash")
+                    }.disabled(!client.canSpeak && !voice.recording)
+                    Spacer()
+                    Button { showPeople = true } label: { Label(client.community.badge > 0 ? "People (\(client.community.badge))" : "People", systemImage: "person.2") }
+                    Spacer()
+                    Button { voice.listening.toggle() } label: {
+                        Label(voice.listening ? "Audio on" : "Audio muted", systemImage: voice.listening ? "speaker.wave.2" : "speaker.slash")
+                    }
+                }.font(.subheadline).buttonStyle(.bordered)
                 Picker("Room panel", selection: $tab) { Text("Chat").tag(0); Text("Players").tag(1); Text("Layers").tag(2) }.pickerStyle(.segmented)
                 roomPanel.frame(maxHeight: .infinity)
                 HStack {
@@ -228,11 +259,11 @@ struct GameView: View {
                         Label(guess ? "Guess" : "Chat", systemImage: guess ? "lightbulb" : "bubble.left")
                     }
                     TextField(guess ? "Your guess" : "Message", text: $message).textFieldStyle(.roundedBorder)
-                        .submitLabel(.send).onSubmit(send).disabled(guess ? !client.canGuess : !client.canChat)
+                        .submitLabel(.send).onSubmit(send).disabled(guess ? !client.canGuess : !client.canTextChat)
                     Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .disabled((guess ? !client.canGuess : !client.canChat) || message.isEmpty).accessibilityLabel("Send")
+                        .disabled((guess ? !client.canGuess : !client.canTextChat) || message.isEmpty).accessibilityLabel("Send")
                 }
-            }.padding(.horizontal).padding(.bottom, 8)
+            }.padding(.horizontal).padding(.bottom, 8).gtdSurface()
                 .navigationTitle(client.room.string("roomName")).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) { Button("Leave") { leave = true } }
@@ -249,11 +280,15 @@ struct GameView: View {
                     Button("Add") { tools.addText(text); text = "" }; Button("Cancel", role: .cancel) { text = "" }
                 }
                 .sheet(item: $sharedImage) { ShareSheet(image: $0.image) }
-                .onAppear { client.voiceReceived = { [weak voice] in voice?.receive($0) } }
+                .sheet(isPresented: $showPeople) { CommunityHub(client: client, initial: peopleSection) }
+                .onAppear { voice.attach(client: client); client.voiceReceived = { [weak voice] in voice?.receive($0) } }
                 .onDisappear { client.voiceReceived = { _ in }; voice.close() }
-                .onChange(of: client.canChat) { if !$0 { voice.stopRecording() } }
+                .onChange(of: client.canSpeak) { if !$0 { voice.stopRecording() } }
                 .onChange(of: client.connected) { if !$0 { voice.close() } }
-                .onChange(of: scenePhase) { if $0 != .active { voice.close() } }
+                .onChange(of: scenePhase) {
+                    if $0 == .background { voice.setForeground(false); tools.cancelCurve() }
+                    else if $0 == .active { voice.setForeground(true) }
+                }
         }
     }
     private func send() { client.sendText(message, guess: guess); message = "" }
@@ -278,22 +313,26 @@ struct GameView: View {
     @ViewBuilder private var roomPanel: some View {
         if tab == 0 {
             ScrollViewReader { reader in
-                List(Array(client.messages.enumerated()), id: \.offset) { i, message in Text(message).font(.subheadline).id(i) }
-                    .listStyle(.plain)
+                List(Array(client.messages.enumerated()), id: \.offset) { i, message in Text(message).font(.subheadline).id(i).gtdRow() }
+                    .listStyle(.plain).gtdSurface()
                     .onChange(of: client.messages.count) { _ in if !client.messages.isEmpty { reader.scrollTo(client.messages.count - 1, anchor: .bottom) } }
             }
         } else if tab == 1 {
             List(Array(client.players.enumerated()), id: \.offset) { _, p in
-                PlayerRow(profile: p.object("profile"), detail: (p.bool("spectator") ? "Spectator" : "Player") + " · \(p.int("roomScore")) points")
-            }.listStyle(.plain)
+                InteractivePlayerRow(client: client, social: client.community, profile: p.object("profile"), detail: (p.bool("spectator") ? "Spectator" : "Player") + " · \(p.int("roomScore")) points")
+            }.listStyle(.plain).gtdSurface()
         } else { LayersView(client: client, tools: tools) }
     }
     private var roomMenu: some View {
         Menu {
+            ThemeMenu()
+            Button("Find players") { peopleSection = "Find players"; showPeople = true }
+            Button("Friends & inbox") { peopleSection = "Friends"; showPeople = true }
+            if client.community.canModerate { Button("Server moderation") { peopleSection = "Moderation"; showPeople = true } }
             Button(client.queued ? "Cancel player queue" : client.spectator ? "Join as player" : "Switch to spectator") { client.changeRole() }.disabled(client.busy)
             Button(voice.recording ? "Turn microphone off" : "Turn microphone on") {
                 if voice.recording { voice.stopRecording() } else { voice.requestMicrophone(client: client) }
-            }.disabled(!client.canChat)
+            }.disabled(!client.canSpeak)
             Toggle("Listen to room audio", isOn: $voice.listening).onChange(of: voice.listening) { if !$0 { voice.stopPlayback() } }
             Button { if let image = tools.snapshot() { sharedImage = SharedImage(image: image) } } label: { Label("Share drawing", systemImage: "square.and.arrow.up") }
             Button("Clear canvas", role: .destructive) { clear = true }.disabled(!client.canDraw)
@@ -341,7 +380,7 @@ struct LayersView: View {
                 }
                 Button { editID = ""; name = ""; showName = true } label: { Label("Add layer", systemImage: "plus") }.disabled(!client.canDraw || client.scene.layers.count >= 32)
             }
-        }.listStyle(.plain).alert(editID.isEmpty ? "Add layer" : "Rename layer", isPresented: $showName) {
+        }.listStyle(.plain).gtdSurface().alert(editID.isEmpty ? "Add layer" : "Rename layer", isPresented: $showName) {
             TextField("Layer name", text: $name)
             Button("Save") {
                 guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }

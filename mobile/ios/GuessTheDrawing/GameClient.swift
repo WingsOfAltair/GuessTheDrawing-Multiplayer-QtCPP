@@ -3,6 +3,10 @@ import Combine
 
 @MainActor
 final class GameClient: ObservableObject {
+    lazy var community = CommunityClient(client: self)
+    private var serverTextMuted = false, serverVoiceMuted = false
+    private var muteExpiresAt = 0.0
+    private var muteActive: Bool { muteExpiresAt == 0 || muteExpiresAt > Date().timeIntervalSince1970 }
     private var master: Connection?
     private var game: Connection?
     private var token = ""
@@ -39,6 +43,8 @@ final class GameClient: ObservableObject {
     var username: String { profile.string("username") }
     var canDraw: Bool { connected && roundActive && !spectator && drawer == username }
     var canChat: Bool { connected && !canDraw && !guessed }
+    var canSpeak: Bool { canChat && !(serverVoiceMuted && muteActive) }
+    var canTextChat: Bool { canChat && !(serverTextMuted && muteActive) }
     var canGuess: Bool { canChat && roundActive && !spectator }
     var roundLabel: String {
         if !connected { return "Reconnecting…" }
@@ -57,6 +63,7 @@ final class GameClient: ObservableObject {
         }
     }
     private func update() { objectWillChange.send() }
+    func communityChanged() { update() }
     func notice(_ text: String) { status = text; update() }
     private func log(_ text: String) { messages.append(text); if messages.count > 200 { messages.removeFirst() } }
     private func waitForReply(_ text: String) {
@@ -103,9 +110,10 @@ final class GameClient: ObservableObject {
         }
         master = socket; socket.connect(host: host, port: port)
     }
-    @discardableResult private func sendMaster(_ type: String, _ fields: JSON = [:]) -> Bool {
+    @discardableResult func sendMaster(_ type: String, _ fields: JSON = [:]) -> Bool {
         guard let master else { return false }
-        var fields = fields; fields["authToken"] = token; fields["requestId"] = UUID().uuidString
+        var fields = fields; fields["authToken"] = token
+        if fields["requestId"] == nil { fields["requestId"] = UUID().uuidString }
         master.send(Wire.message(type, fields)); return true
     }
     func refreshRooms() { if !token.isEmpty { sendMaster("ListRooms") } }
@@ -120,6 +128,7 @@ final class GameClient: ObservableObject {
         update()
     }
     private func handleMaster(_ m: JSON) {
+        if community.handle(m), m.string("type") != "Error" { return }
         switch m.string("type") {
         case "AuthResult":
             guard !authID.isEmpty, m.string("requestId") == authID else { return }
@@ -128,6 +137,7 @@ final class GameClient: ObservableObject {
             else {
                 token = m.string("authToken"); profile = m.object("profile"); page = "lobby"
                 status = "Choose a room"; refreshRooms(); refreshLeaderboards()
+                community.refresh()
             }
         case "RoomList": rooms = m.objects("rooms"); if !busy && page == "lobby" { status = "Choose a room" }
         case "LeaderboardResult": leaderboards[m.string("track")] = m.objects("players")
@@ -187,7 +197,7 @@ final class GameClient: ObservableObject {
     }
     func sendGame(_ type: String, _ fields: JSON = [:]) { game?.send(Wire.message(type, fields)) }
     func sendText(_ text: String, guess: Bool) {
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty, guess ? canGuess : canChat else { return }
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty, guess ? canGuess : canTextChat else { return }
         sendGame(guess ? "Guess" : "RoomChat", ["text": String(text.prefix(guess ? 100 : 300))])
     }
     func changeRole() {
@@ -233,6 +243,7 @@ final class GameClient: ObservableObject {
                 guessed = false; roster(m); queue(m.object("queue"))
                 scene.replace(layers: m.objects("layers"), objects: m.objects("objects"))
                 status = room.string("roomName"); log("Joined " + status)
+                serverTextMuted = false; serverVoiceMuted = false; community.refreshRoom()
             }
         case "CanvasState": scene.replace(layers: m.objects("layers"), objects: m.objects("objects"))
         case "CanvasOperation": scene.apply(m.object("operation"))
@@ -264,7 +275,9 @@ final class GameClient: ObservableObject {
         case "VoiceFrame": if connected { voiceReceived(m) }; return
         case "VersionMismatch": versionMismatch(m)
         case "ModerationNotice": moderation(m)
-        case "ModerationAnnouncement": log(m.string("targetUsername") + ": " + m.string("action") + " · " + m.string("reason"))
+        case "ModerationAnnouncement":
+            if m.string("targetUsername") == username, m.string("action") == "unmute" { serverTextMuted = false; serverVoiceMuted = false }
+            log(m.string("targetUsername") + ": " + m.string("action") + " · " + m.string("reason"))
         case "ServerUpdateScheduled": log("Server update in \(m.int("secondsRemaining")) seconds")
         case "ServerRestarting": leaveRoom(send: false); status = "Server restarting. Refresh rooms shortly."
         case "Error": busy = false; status = m.string("message"); log(status)
@@ -275,6 +288,8 @@ final class GameClient: ObservableObject {
     private func moderation(_ m: JSON) {
         let text = m.string("reason", m.string("message", "Server moderation notice"))
         log(text); status = text
+        if m.string("action") == "mute" { serverTextMuted = m.bool("textChat"); serverVoiceMuted = m.bool("voiceChat"); muteExpiresAt = m.number("expiresAt") }
+        if m.string("action") == "unmute" { serverTextMuted = false; serverVoiceMuted = false; muteExpiresAt = 0 }
         if ["kick", "ban"].contains(m.string("action")) { leaveRoom(send: false); status = text }
     }
     private func versionMismatch(_ m: JSON) {
@@ -289,7 +304,11 @@ final class GameClient: ObservableObject {
     func logout(send: Bool = true) {
         leaveRoom(send: send)
         if send { master?.send(Wire.message("Logout", ["authToken": token]), closeAfter: true) } else { master?.close() }
-        master = nil; token = ""; authID = ""; profile = [:]; rooms = []; leaderboards = [:]; page = "login"; busy = false; update()
+        master = nil; token = ""; authID = ""; profile = [:]; rooms = []; leaderboards = [:]; page = "login"; busy = false; community.clear(); update()
+    }
+    func setForeground(_ active: Bool) {
+        community.foreground = active
+        if !token.isEmpty { sendMaster("PresenceStatusUpdate", ["status": active ? "active" : "idle"]) }
     }
     deinit { timer?.invalidate(); master?.close(); game?.close() }
 }

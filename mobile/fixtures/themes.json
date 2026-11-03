@@ -1,0 +1,15 @@
+[
+  {"id":"light","name":"Light","colors":["#f5f6f8","#f1f3f4","#ffffff","#202124","#1a73e8","#ffffff","#e8eaed","#80868b"]},
+  {"id":"dark","name":"Dark","colors":["#202124","#292a2d","#17181a","#e8eaed","#8ab4f8","#202124","#303134","#9aa0a6"]},
+  {"id":"ocean","name":"Ocean","colors":["#0b1f2a","#173747","#102c3a","#e3f6fc","#35c4d0","#062027","#174454","#87a9b5"]},
+  {"id":"forest","name":"Forest","colors":["#16251b","#263c2d","#1d3023","#e5f2e8","#8ccf83","#15251a","#304b37","#9caf9e"]},
+  {"id":"sunset","name":"Sunset","colors":["#2a1b2d","#47303c","#352333","#fff0e6","#ff9a62","#30180c","#513440","#baa5ad"]},
+  {"id":"purple","name":"Purple","colors":["#211a2e","#382b4b","#2b203b","#f1e9ff","#c4a1ff","#241333","#403052","#ab9dbb"]},
+  {"id":"solarized","name":"Solarized","colors":["#002b36","#073642","#00212b","#839496","#268bd2","#fdf6e3","#073642","#586e75"]},
+  {"id":"high-contrast","name":"High contrast","colors":["#000000","#000000","#000000","#ffffff","#ffff00","#000000","#000000","#d0d0d0"]},
+  {"id":"rose","name":"Rose","colors":["#fff5f7","#fce4ec","#ffffff","#44212a","#d84a7b","#ffffff","#f8d7e2","#9a7c85"]},
+  {"id":"midnight","name":"Midnight","colors":["#101828","#202d46","#141e32","#e7edff","#65d6ff","#06151e","#253653","#98a6c4"]},
+  {"id":"nord","name":"Nord","colors":["#2e3440","#434c5e","#3b4252","#eceff4","#88c0d0","#2e3440","#4c566a","#aab2bf"]},
+  {"id":"dracula","name":"Dracula","colors":["#282a36","#44475a","#343746","#f8f8f2","#bd93f9","#282a36","#44475a","#a7a9b5"]},
+  {"id":"monokai","name":"Monokai","colors":["#272822","#3e3d32","#2e2d27","#f8f8f2","#a6e22e","#1c1d16","#49483e","#a6a69f"]}
+]

@@ -5,6 +5,6 @@ import SwiftUI
 struct GuessTheDrawingApp: App {
     @StateObject private var client = GameClient()
     var body: some Scene {
-        WindowGroup { RootView(client: client).tint(.indigo) }
+        WindowGroup { RootView(client: client) }
     }
 }
