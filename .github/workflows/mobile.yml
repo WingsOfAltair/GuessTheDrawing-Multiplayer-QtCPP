@@ -1,9 +1,9 @@
 name: Native mobile clients
 on:
   push:
-    paths: ['mobile/**', 'country-flags/**', '.github/workflows/mobile.yml']
+    paths: ['mobile/**', 'country-flags/**', '.github/workflows/mobile.yml', '.github/swift-problem-matcher.json']
   pull_request:
-    paths: ['mobile/**', 'country-flags/**', '.github/workflows/mobile.yml']
+    paths: ['mobile/**', 'country-flags/**', '.github/workflows/mobile.yml', '.github/swift-problem-matcher.json']
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,7 +16,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+        with:
+          # The legacy "tools" package requested by v3 is no longer available.
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - name: Build and test Kotlin client
         working-directory: mobile/android
@@ -29,6 +32,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Annotate Swift compiler diagnostics
+        run: echo '::add-matcher::.github/swift-problem-matcher.json'
       - name: Test Swift protocol and canvas state
         run: swift test --package-path mobile/ios
       - name: Build native iPhone and iPad app

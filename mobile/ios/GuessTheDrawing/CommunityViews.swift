@@ -386,9 +386,17 @@ struct PlayerActionForm: View {
     @ObservedObject var social: CommunityClient
     let destination: PlayerDestination
     @Environment(\.dismiss) private var dismiss
-    @State private var username = "", reason = "", passkey = "", error = "", role = "player"
-    @State private var textChat = true, voiceChat = true, watch = false
-    @State private var mode = "duration", amount = "1", unit = 3600
+    @State private var username = ""
+    @State private var reason = ""
+    @State private var passkey = ""
+    @State private var error = ""
+    @State private var role = "player"
+    @State private var textChat = true
+    @State private var voiceChat = true
+    @State private var watch = false
+    @State private var mode = "duration"
+    @State private var amount = "1"
+    @State private var unit = 3600
     @State private var until = Date().addingTimeInterval(86400)
     private var action: String { destination.action }
     private var room: JSON {
