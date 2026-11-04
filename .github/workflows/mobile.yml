@@ -29,7 +29,8 @@ jobs:
           name: android-debug
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
   ios:
-    runs-on: macos-15
+    # Use the standard Intel pool while macOS Arm64 runners have capacity delays.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - name: Annotate Swift compiler diagnostics
