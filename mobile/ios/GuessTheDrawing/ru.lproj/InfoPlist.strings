@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Угадай рисунок";
+"NSLocalNetworkUsageDescription" = "Поиск и подключение к главным серверам и серверам комнат игры «Угадай рисунок» в локальной сети.";
+"NSMicrophoneUsageDescription" = "Разговаривайте с игроками, включив микрофон в комнате.";
+"NSPhotoLibraryAddUsageDescription" = "Сохранение рисунка при выборе «Сохранить изображение» в меню «Поделиться».";

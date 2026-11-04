@@ -12,12 +12,14 @@ android {
         applicationId = providers.gradleProperty("gtdApplicationId").getOrElse("com.guessthedrawing.mobile")
         minSdk = 26
         targetSdk = 36
-        versionCode = providers.gradleProperty("gtdVersionCode").getOrElse("3").toInt()
+        versionCode = providers.gradleProperty("gtdVersionCode").getOrElse("4").toInt()
         versionName = gameVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GAME_VERSION", "\"$gameVersion\"")
     }
     buildFeatures { buildConfig = true }
+    // Keep every language available for the in-app selector, including offline installs from an AAB.
+    bundle { language { enableSplit = false } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

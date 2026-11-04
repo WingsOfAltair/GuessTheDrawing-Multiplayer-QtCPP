@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Indovina il disegno";
+"NSLocalNetworkUsageDescription" = "Trova e connettiti ai server principali e delle stanze di Indovina il disegno sulla rete locale.";
+"NSMicrophoneUsageDescription" = "Parla con altri giocatori quando attivi il microfono in una stanza.";
+"NSPhotoLibraryAddUsageDescription" = "Salva un disegno quando scegli Salva immagine dal menu di condivisione.";

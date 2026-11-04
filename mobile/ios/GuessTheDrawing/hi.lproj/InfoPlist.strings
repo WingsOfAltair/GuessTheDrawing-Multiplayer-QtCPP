@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "चित्र पहचानें";
+"NSLocalNetworkUsageDescription" = "स्थानीय नेटवर्क पर चित्र पहचानें के मुख्य और कमरे के सर्वर खोजें और उनसे जुड़ें।";
+"NSMicrophoneUsageDescription" = "कमरे में माइक्रोफ़ोन चालू करके अन्य खिलाड़ियों से बात करें।";
+"NSPhotoLibraryAddUsageDescription" = "साझा करने के मेन्यू से चित्र सहेजें चुनने पर चित्र सहेजता है।";

@@ -1,0 +1,18 @@
+# Server rank names are presentation text; protocol values stay in English.
+Pencil|Lápiz|Crayon|Bleistift|Lápis|Matita|Карандаш|铅笔|えんぴつ|연필|قلم رصاص|पेंसिल
+Sketcher|Bocetista|Esquisseur|Skizzenzeichner|Esboçador|Bozzettista|Набросчик|素描者|スケッチャー|스케치 화가|رسام تخطيطي|रेखाचित्रकार
+Doodler|Garabateador|Gribouilleur|Kritzler|Rabiscador|Scarabocchiatore|Рисовальщик|涂鸦者|落書き名人|낙서 화가|رسام خربشات|डूडल कलाकार
+Illustrator|Ilustrador|Illustrateur|Illustrator|Ilustrador|Illustratore|Иллюстратор|插画师|イラストレーター|일러스트레이터|رسام توضيحي|चित्रकार
+Artist|Artista|Artiste|Künstler|Artista|Artista|Художник|艺术家|アーティスト|예술가|فنان|कलाकार
+Virtuoso|Virtuoso|Virtuose|Virtuose|Virtuoso|Virtuoso|Виртуоз|高手|達人|명인|بارع|उस्ताद
+Master Artist|Maestro del arte|Maître artiste|Meisterkünstler|Mestre artista|Maestro d'arte|Мастер-художник|艺术大师|芸術の達人|거장|فنان محترف|मास्टर कलाकार
+Grandmaster Artist|Gran maestro del arte|Grand maître artiste|Großmeisterkünstler|Grão-mestre artista|Gran maestro d'arte|Гроссмейстер искусства|艺术宗师|芸術の巨匠|최고의 거장|كبير الفنانين|महान कलाकार
+Word Seeker|Buscador de palabras|Chercheur de mots|Wortsucher|Buscador de palavras|Cercatore di parole|Искатель слов|寻词者|言葉の探求者|단어 탐색자|باحث عن الكلمات|शब्द खोजी
+Clue Finder|Buscador de pistas|Chercheur d'indices|Hinweisfinder|Buscador de pistas|Cercatore di indizi|Искатель подсказок|线索发现者|ヒントの発見者|단서 발견자|مكتشف الأدلة|सुराग खोजी
+Phrase Tracker|Rastreador de frases|Pisteur de phrases|Phrasenspürer|Rastreador de frases|Cacciatore di frasi|Следопыт фраз|短语追踪者|フレーズの追跡者|문구 추적자|متتبع العبارات|वाक्यांश खोजी
+Word Sleuth|Detective de palabras|Détective des mots|Wortdetektiv|Detetive de palavras|Investigatore di parole|Словесный сыщик|词语侦探|言葉の探偵|단어 탐정|محقق الكلمات|शब्द जासूस
+Lexicon Scout|Explorador del léxico|Éclaireur du lexique|Lexikonspäher|Explorador do léxico|Esploratore del lessico|Разведчик лексики|词汇探索者|語彙の探索者|어휘 정찰자|مستكشف المعجم|शब्दकोश अन्वेषक
+Vocabulary Virtuoso|Virtuoso del vocabulario|Virtuose du vocabulaire|Wortschatzvirtuose|Virtuoso do vocabulário|Virtuoso del vocabolario|Виртуоз словаря|词汇高手|語彙の達人|어휘 명인|بارع المفردات|शब्दावली उस्ताद
+Master Wordsmith|Maestro de las palabras|Maître des mots|Wortmeister|Mestre das palavras|Maestro delle parole|Мастер слова|词语大师|言葉の達人|단어의 거장|محترف الكلمات|शब्दों के उस्ताद
+Grandmaster Wordsmith|Gran maestro de las palabras|Grand maître des mots|Wortgroßmeister|Grão-mestre das palavras|Gran maestro delle parole|Гроссмейстер слова|词语宗师|言葉の巨匠|최고의 단어 거장|كبير خبراء الكلمات|शब्दों के महान उस्ताद
+Save|Guardar|Enregistrer|Speichern|Guardar|Salva|Сохранить|保存|保存|저장|حفظ|सहेजें

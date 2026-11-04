@@ -71,24 +71,31 @@ class MainActivity : ComponentActivity() {
     internal fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
     internal fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     internal fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-    internal fun label(text: String, size: Float = 16f) = TextView(this).apply {
-        this.text = text; textSize = size; setTextColor(appearance.palette.text); setPadding(dp(8), dp(6), dp(8), dp(6))
+    internal fun label(text: String, size: Float = 16f, translate: Boolean = true) = TextView(this).apply {
+        this.text = if (translate) L10n.text(text) else text
+        textDirection = View.TEXT_DIRECTION_FIRST_STRONG; gravity = Gravity.START
+        textSize = size; setTextColor(appearance.palette.text); setPadding(dp(8), dp(6), dp(8), dp(6))
     }
-    internal fun button(text: String, action: () -> Unit) = Button(this).apply {
-        this.text = text; isAllCaps = false; minHeight = dp(48); setOnClickListener { action() }
+    internal fun button(text: String, translate: Boolean = true, action: () -> Unit) = Button(this).apply {
+        this.text = if (translate) L10n.text(text) else text; isAllCaps = false; minHeight = dp(48); setOnClickListener { action() }
         appearance.apply(this)
     }
-    internal fun input(hint: String, value: String = "", password: Boolean = false, limit: Int = 128) = EditText(this).apply {
-        this.hint = hint; setText(value); setSingleLine(); minHeight = dp(52)
+    internal fun input(hintSource: String, value: String = "", password: Boolean = false, limit: Int = 128) = EditText(this).apply {
+        this.hint = L10n.text(hintSource); setText(value); setSingleLine(); minHeight = dp(52)
         filters = arrayOf(android.text.InputFilter.LengthFilter(limit))
         inputType = if (password) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        // Input type can reset TextView's direction; apply the explicit direction afterwards.
+        val technical = hintSource in listOf("Master server address", "Port", "Username", "Account username", "Duration amount")
+        textDirection = if (technical) View.TEXT_DIRECTION_LTR else View.TEXT_DIRECTION_FIRST_STRONG
+        if (technical) layoutDirection = View.LAYOUT_DIRECTION_LTR
         setPadding(dp(12), dp(6), dp(12), dp(6))
         appearance.apply(this)
     }
     internal fun scroll(content: View) = ScrollView(this).apply { isFillViewport = true; addView(content) }
     private fun weighted(parent: LinearLayout, view: View) = parent.addView(view, LinearLayout.LayoutParams(0, -2, 1f))
     override fun onCreate(savedInstanceState: Bundle?) {
+        L10n.configure(this)
         appearance.configure()
         super.onCreate(savedInstanceState)
         volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
@@ -105,6 +112,7 @@ class MainActivity : ComponentActivity() {
     private fun buildScreen() {
         screen = client.page; lastList = ""; board = null; listArea = null; authButton = null
         root = column().apply { setBackgroundColor(appearance.palette.window) }
+        root.layoutDirection = if (L10n.rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         micButton = null; audioButton = null; curveControls = null; curveHint = null; socialButton = null; drawingToolbar = null
         micInput = null; micLevel = null; micStatus = null
         root.setOnApplyWindowInsetsListener { v, insets ->
@@ -120,12 +128,13 @@ class MainActivity : ComponentActivity() {
         }
         setContentView(root)
         val toolbar = Toolbar(this).apply {
-            title = if (screen == "game") client.room.optString("roomName") else "Guess The Drawing"
+            title = if (screen == "game") client.room.optString("roomName") else L10n.text("Guess The Drawing")
             setTitleTextColor(appearance.palette.text); setBackgroundColor(appearance.palette.surface)
         }
-        toolbar.menu.add("Theme").setOnMenuItemClickListener { chooseTheme(); true }
+        toolbar.menu.add(L10n.text("Theme")).setOnMenuItemClickListener { chooseTheme(); true }
+        toolbar.menu.add(L10n.text("Language")).setOnMenuItemClickListener { chooseLanguage(); true }
         if (screen != "login") {
-            toolbar.menu.add(if (screen == "game") "Room options" else "Account").setOnMenuItemClickListener {
+            toolbar.menu.add(L10n.text(if (screen == "game") "Room options" else "Account")).setOnMenuItemClickListener {
                 if (screen == "game") roomOptions(toolbar) else accountOptions(toolbar)
                 true
             }
@@ -144,7 +153,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun login() {
         val form = column().apply { tag = "card"; setPadding(dp(18), dp(18), dp(18), dp(24)) }
-        form.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Guess The Drawing" }, LinearLayout.LayoutParams(dp(64), dp(64)))
+        form.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = L10n.text("Guess The Drawing") }, LinearLayout.LayoutParams(dp(64), dp(64)))
         form.addView(label("Draw together.\nGuess together.", 30f))
         form.addView(label("Sign in to play with desktop and mobile friends.", 16f))
         val host = input("Master server address", prefs.getString("host", "") ?: "", limit = 253)
@@ -153,12 +162,12 @@ class MainActivity : ComponentActivity() {
         val password = input("Password", password = true)
         val name = input("Display name", limit = 32).apply { visibility = View.GONE }
         val create = CheckBox(this).apply {
-            text = "Create an account"; minHeight = dp(48)
+            text = L10n.text("Create an account"); minHeight = dp(48)
             setOnCheckedChangeListener { _, checked -> name.visibility = if (checked) View.VISIBLE else View.GONE }
         }
         listOf(host, port, user, password, create, name).forEach { form.addView(it) }
         authButton = button("Continue") {
-            val number = port.text.toString().toIntOrNull() ?: 0
+            val number = L10n.digits(port.text.toString()).toIntOrNull() ?: 0
             if (number in 1..65535) prefs.edit().putString("host", host.text.toString().trim())
                 .putInt("port", number).putString("user", user.text.toString()).apply()
             client.authenticate(host.text.toString(), number, user.text.toString(), password.text.toString(),
@@ -177,7 +186,7 @@ class MainActivity : ComponentActivity() {
                 for (j in 0 until group.childCount) group.getChildAt(j).apply { tag = if (j == i) "primary" else null; isSelected = j == i }
                 appearance.apply(group); choose(i)
             }.apply { tag = if (i == selection) "primary" else null; isSelected = i == selection }
-            group.addView(item, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+            group.addView(item, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
         appearance.apply(group); return group
     }
@@ -193,7 +202,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun profile(area: LinearLayout) {
         val profile = client.profile
-        area.addView(label("@" + client.username, 24f))
+        area.addView(label(L10n.isolate("@" + client.username), 24f, translate = false))
         area.addView(label("Total " + profile.optInt("totalScore") + " · Guessing " + profile.optInt("guessingScore") +
             " · Drawing " + profile.optInt("drawingScore")))
         val name = input("Display name", profile.optString("displayName"), limit = 32)
@@ -206,7 +215,7 @@ class MainActivity : ComponentActivity() {
                 if (position > 0) runCatching {
                     val flag = ImageView(this@MainActivity)
                     assets.open("country-flags/${options[position].lowercase()}.png").use { flag.setImageDrawable(android.graphics.drawable.Drawable.createFromStream(it, null)) }
-                    flag.contentDescription = options[position]; addView(flag, LinearLayout.LayoutParams(dp(28), dp(22)))
+                    flag.contentDescription = L10n.text(options[position]); addView(flag, LinearLayout.LayoutParams(dp(28), dp(22)))
                 }
                 addView(label(options[position])); appearance.apply(this)
             }
@@ -246,23 +255,23 @@ class MainActivity : ComponentActivity() {
         val names = listOf("Pen", "Brush", "Airbrush", "Curve", "Polygon", "Line", "Rectangle", "Rounded rectangle", "Ellipse", "Move", "Object eraser", "Fill", "Pick color", "Text")
         val types = listOf("freehand", "brush", "airbrush", "curve", "polygon", "line", "rectangle", "rounded_rectangle", "ellipse", "move", "eraser", "fill", "pick", "text")
         tools.addView(button("Tools") {
-            AlertDialog.Builder(this).setTitle("Drawing tool").setItems(names.toTypedArray()) { _, index -> canvas.tool = types[index] }.show()
+            LocalizedDialogBuilder(this).setTitle("Drawing tool").setItems(names.toTypedArray()) { _, index -> canvas.tool = types[index] }.show()
         })
         tools.addView(button("Color") {
             val colors = arrayOf("#202124", "#FFFFFF", "#EF4444", "#F59E0B", "#FACC15", "#22C55E", "#06B6D4", "#3B82F6", "#8B5CF6", "#EC4899")
             val grid = GridLayout(this).apply { columnCount = 5; setPadding(dp(12), dp(12), dp(12), dp(12)) }
-            val dialog = AlertDialog.Builder(this).setTitle("Ink color").setView(grid).create()
+            val dialog = LocalizedDialogBuilder(this).setTitle("Ink color").setView(grid).create()
             colors.forEach { color -> grid.addView(button(" ") { canvas.ink = color; dialog.dismiss() }.apply {
-                tag = "ink"; contentDescription = color; backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor(color))
+                tag = "ink"; contentDescription = L10n.text(color); backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor(color))
             }, ViewGroup.LayoutParams(dp(52), dp(52))) }
             dialog.show()
         })
         tools.addView(button("Size") {
-            AlertDialog.Builder(this).setTitle("Stroke width").setItems(arrayOf("2", "4", "6", "12", "20", "32")) { _, i ->
+            LocalizedDialogBuilder(this).setTitle("Stroke width").setItems(arrayOf("2", "4", "6", "12", "20", "32")) { _, i ->
                 canvas.strokeSize = listOf(2, 4, 6, 12, 20, 32)[i]
             }.show()
         })
-        tools.addView(CheckBox(this).apply { text = "Filled"; setOnCheckedChangeListener { _, b -> canvas.filled = b } })
+        tools.addView(CheckBox(this).apply { text = L10n.text("Filled"); setOnCheckedChangeListener { _, b -> canvas.filled = b } })
         tools.addView(button("Undo") { canvas.undo() }); tools.addView(button("Redo") { canvas.redo() })
         drawingToolbar = HorizontalScrollView(this).apply { addView(tools) }
         root.addView(drawingToolbar)
@@ -273,7 +282,7 @@ class MainActivity : ComponentActivity() {
         micInput = column().apply {
             visibility = View.GONE
             micLevel = ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
-                isIndeterminate = false; max = 100; contentDescription = "Microphone input level"
+                isIndeterminate = false; max = 100; contentDescription = L10n.text("Microphone input level")
             }
             addView(micLevel, LinearLayout.LayoutParams(-1, dp(4)))
             micStatus = label("Microphone listening…", 12f)
@@ -283,7 +292,7 @@ class MainActivity : ComponentActivity() {
         root.addView(tabs(listOf("Chat", "Players", "Layers"), gameTab) { gameTab = it; lastList = ""; refreshList() })
         listArea = column(); root.addView(scroll(listArea!!), LinearLayout.LayoutParams(-1, 0, 1f))
         val compose = row()
-        guessSwitch = Switch(this).apply { text = "Guess"; isChecked = true; setOnCheckedChangeListener { _, _ -> updateControls() } }
+        guessSwitch = Switch(this).apply { text = L10n.text("Guess"); isChecked = true; setOnCheckedChangeListener { _, _ -> updateControls() } }
         messageInput = input("Your guess or message", limit = 300)
         sendButton = button("Send") {
             val edit = messageInput ?: return@button
@@ -295,14 +304,14 @@ class MainActivity : ComponentActivity() {
     }
     private fun updateControls() {
         if (screen != "game") return
-        roundLabel?.text = client.roundLabel
-        wordLabel?.text = when {
+        roundLabel?.text = L10n.text(client.roundLabel)
+        wordLabel?.text = L10n.text(when {
             client.word.isNotEmpty() -> (if (client.canDraw) "Your word: " else "Answer: ") + client.word
             client.queued -> "Waiting for a player slot · position " + client.queuePosition
             client.spectator -> "Spectating"
             client.guessed -> "Correct! Watch the rest of the round."
             else -> "Watch the drawing and guess!"
-        }
+        })
         val allowed = if (guessSwitch?.isChecked == true) client.canGuess else client.canTextChat
         sendButton?.isEnabled = allowed; messageInput?.isEnabled = allowed
         val roundKey = client.drawer + ":" + client.roundActive + ":" + client.scene.resetCount
@@ -316,13 +325,13 @@ class MainActivity : ComponentActivity() {
     }
     private fun render() {
         if (screen != client.page) { voice.close(); if (client.page == "login") communityUI.close(); buildScreen() }
-        status.text = client.status
+        status.text = if (screen == "game" && client.status == client.room.optString("roomName")) client.status else client.displayStatus
         status.visibility = if (screen == "game" && !client.busy && client.status == client.room.optString("roomName")) View.GONE else View.VISIBLE
         progress.visibility = if (client.busy) View.VISIBLE else View.GONE
         authButton?.isEnabled = !client.busy
         updateControls(); refreshList()
         val socialTitle = if (screen == "game") "People" else "People & messages"
-        socialButton?.text = socialTitle + if (client.community.badge > 0) " (${client.community.badge})" else ""
+        socialButton?.text = if (client.community.badge > 0) L10n.format("%1 (%2)", L10n.text(socialTitle), client.community.badge) else L10n.text(socialTitle)
         communityUI.refresh()
     }
     private fun refreshList() {
@@ -343,7 +352,7 @@ class MainActivity : ComponentActivity() {
                         setPadding(dp(12), dp(10), dp(12), dp(10))
                         tag = "card"
                     }
-                    card.addView(label(room.optString("roomName") + if (room.optBoolean("privateRoom")) " · Private" else "", 20f))
+                    card.addView(label(room.optString("roomName") + if (room.optBoolean("privateRoom")) " · " + L10n.text("Private room") else "", 20f, translate = false))
                     card.addView(label("${room.optInt("players")} / ${room.optInt("maxPlayers")} players · ${room.optInt("spectators")} watching", 14f))
                     val buttons = row()
                     fun join(spectator: Boolean) {
@@ -362,7 +371,7 @@ class MainActivity : ComponentActivity() {
         } else when (gameTab) {
             0 -> {
                 if (client.messages.isEmpty()) area.addView(label("Room messages will appear here."))
-                client.messages.takeLast(80).forEach { area.addView(label(it, 14f)) }
+                client.messages.takeLast(80).forEach { area.addView(label(client.messageText(it), 14f, translate = false)) }
                 area.post { (area.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN) }
             }
             1 -> client.players.objects().forEach {
@@ -374,18 +383,18 @@ class MainActivity : ComponentActivity() {
         appearance.apply(area)
     }
     private fun playerRow(area: LinearLayout, p: JSONObject, detail: String) {
-        val role = if (p.optBoolean("masterSuperAdmin")) "Super-admin" else p.optString("serverRole", "player")
-        communityUI.playerCard(area, p, "$detail · $role")
+        val role = if (p.optBoolean("masterSuperAdmin")) "Master super-admin" else p.optString("serverRole", "player")
+        communityUI.playerCard(area, p, L10n.detail(detail) + " · " + L10n.text(role))
     }
     private fun layers(area: LinearLayout) {
         val canvas = board ?: return
         area.addView(label("Layers · bottom to top", 14f))
         client.scene.layers.forEach { layer ->
-            area.addView(button(layer.optString("name") + (if (layer.optBoolean("locked")) " · Locked" else "") +
-                if (!layer.optBoolean("visible", true)) " · Hidden" else "") {
+            area.addView(button(L10n.isolate(layer.optString("name")) + (if (layer.optBoolean("locked")) " · " + L10n.text("locked") else "") +
+                (if (!layer.optBoolean("visible", true)) " · " + L10n.text("hidden") else ""), translate = false) {
                 canvas.selectedLayer = layer.optString("id")
                 val actions = arrayOf("Select", "Rename", "Show / hide", "Lock / unlock", "Move up (under)", "Move down (over)", "Clear layer", "Delete layer")
-                AlertDialog.Builder(this).setTitle(layer.optString("name")).setItems(actions) { _, which ->
+                LocalizedDialogBuilder(this).setRawTitle(layer.optString("name")).setItems(actions) { _, which ->
                     if (!client.canDraw || which == 0) return@setItems
                     val id = layer.optString("id")
                     fun update(key: String, value: Any) { client.operation(json("action" to "layer_upsert", "layer" to layer.copy().put(key, value))) }
@@ -416,17 +425,17 @@ class MainActivity : ComponentActivity() {
     }
     private fun prompt(title: String, secret: Boolean, action: (String) -> Unit) {
         val edit = input(title, password = secret)
-        AlertDialog.Builder(this).setTitle(title).setView(edit).setNegativeButton("Cancel", null)
+        LocalizedDialogBuilder(this).setTitle(title).setView(edit).setNegativeButton("Cancel", null)
             .setPositiveButton("Continue") { _, _ -> if (edit.text.isNotBlank()) action(edit.text.toString()) }.show()
     }
     private fun roomOptions(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add("Find players").setOnMenuItemClickListener { communityUI.hub("Find players"); true }
-            menu.add("Friends & inbox").setOnMenuItemClickListener { communityUI.hub(); true }
-            if (client.community.canModerate) menu.add("Server moderation").setOnMenuItemClickListener { communityUI.hub("Moderation"); true }
+            menu.add(L10n.text("Find players")).setOnMenuItemClickListener { communityUI.hub("Find players"); true }
+            menu.add(L10n.text("Friends & inbox")).setOnMenuItemClickListener { communityUI.hub(); true }
+            if (client.community.canModerate) menu.add(L10n.text("Server moderation")).setOnMenuItemClickListener { communityUI.hub("Moderation"); true }
             val role = if (client.queued) "Cancel player queue" else if (client.spectator) "Join as player" else "Switch to spectator"
-            menu.add(role).setOnMenuItemClickListener { client.changeRole(); true }
-            menu.add(if (voice.recording) "Turn microphone off" else "Turn microphone on").setOnMenuItemClickListener {
+            menu.add(L10n.text(role)).setOnMenuItemClickListener { client.changeRole(); true }
+            menu.add(L10n.text(if (voice.recording) "Turn microphone off" else "Turn microphone on")).setOnMenuItemClickListener {
                 if (voice.recording) voice.stopRecording()
                 else if (client.canSpeak) {
                     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) enableMic()
@@ -434,26 +443,26 @@ class MainActivity : ComponentActivity() {
                 } else client.notice("Drawing and correctly guessing players can only listen this round.")
                 true
             }
-            menu.add(if (voice.listening) "Mute room audio" else "Listen to room audio").setOnMenuItemClickListener {
+            menu.add(L10n.text(if (voice.listening) "Mute room audio" else "Listen to room audio")).setOnMenuItemClickListener {
                 voice.listening = !voice.listening; if (!voice.listening) voice.stopPlayback(); true
             }
-            menu.add("Export drawing").setOnMenuItemClickListener {
+            menu.add(L10n.text("Export drawing")).setOnMenuItemClickListener {
                 exportBitmap?.recycle(); exportBitmap = board?.snapshot()
                 exportDrawing.launch("drawing.png"); true
             }
-            menu.add("Clear canvas").setOnMenuItemClickListener {
-                if (client.canDraw) AlertDialog.Builder(this@MainActivity).setMessage("Clear all canvas objects?")
+            menu.add(L10n.text("Clear canvas")).setOnMenuItemClickListener {
+                if (client.canDraw) LocalizedDialogBuilder(this@MainActivity).setMessage("Clear all canvas objects?")
                     .setNegativeButton("Cancel", null).setPositiveButton("Clear") { _, _ ->
                         client.operation(json("action" to "clear")); board?.resetEditing()
                     }.show()
                 true
             }
-            menu.add("Leave room").setOnMenuItemClickListener { confirmLeave(); true }
+            menu.add(L10n.text("Leave room")).setOnMenuItemClickListener { confirmLeave(); true }
         }.show()
     }
     private fun accountOptions(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add("Sign out").setOnMenuItemClickListener { client.logout(); true }
+            menu.add(L10n.text("Sign out")).setOnMenuItemClickListener { client.logout(); true }
         }.show()
     }
     private fun enableMic() { if (voice.start()) client.notice("Microphone on") }
@@ -465,27 +474,38 @@ class MainActivity : ComponentActivity() {
         } else client.notice("Drawing and correctly guessing players cannot speak this round.")
     }
     private fun updateVoiceControls() {
-        micButton?.text = if (voice.recording) "● Mic on" else "Mic off"
+        micButton?.text = L10n.text(if (voice.recording) "● Mic on" else "Mic off")
         micButton?.isEnabled = client.canSpeak || voice.recording
-        audioButton?.text = if (voice.listening) "Audio on" else "Audio muted"
+        audioButton?.text = L10n.text(if (voice.listening) "Audio on" else "Audio muted")
         micInput?.visibility = if (voice.recording) View.VISIBLE else View.GONE
         micLevel?.progress = voice.inputLevel
-        micStatus?.text = voice.inputStatus
+        micStatus?.text = L10n.text(voice.inputStatus)
     }
     internal fun chooseTheme() {
         val ids = listOf("system") + ThemePalette.all.map { it.id }
         val names = listOf("System") + ThemePalette.all.map { it.name }
-        AlertDialog.Builder(this).setTitle("Appearance").setSingleChoiceItems(names.toTypedArray(), ids.indexOf(appearance.selection)) { dialog, which ->
+        LocalizedDialogBuilder(this).setTitle("Appearance").setSingleChoiceItems(names.toTypedArray(), ids.indexOf(appearance.selection)) { dialog, which ->
             appearance.select(ids[which]); root.setBackgroundColor(appearance.palette.window); appearance.apply(root)
             dialog.dismiss()
         }.setNegativeButton("Close", null).show()
     }
+    internal fun chooseLanguage() {
+        LocalizedDialogBuilder(this).setTitle("Language")
+            .setSingleChoiceItems(L10n.languages.map { it.second }.toTypedArray(), L10n.languages.indexOfFirst { it.first == L10n.language }) { dialog, index ->
+                dialog.dismiss(); selectLanguage(L10n.languages[index].first)
+            }.setNegativeButton("Close", null).show()
+    }
+    internal fun selectLanguage(code: String) {
+        board?.finishCurve(); communityUI.close()
+        L10n.configure(this, code)
+        buildScreen(); render()
+    }
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig); appearance.configure()
+        super.onConfigurationChanged(newConfig); L10n.configure(this); appearance.configure()
         root.setBackgroundColor(appearance.palette.window); appearance.apply(root)
     }
     private fun confirmLeave() {
-        AlertDialog.Builder(this).setMessage("Leave this room?").setNegativeButton("Stay", null)
+        LocalizedDialogBuilder(this).setMessage("Leave this room?").setNegativeButton("Stay", null)
             .setPositiveButton("Leave") { _, _ -> voice.close(); client.leaveRoom() }.show()
     }
     override fun onStart() { super.onStart(); voice.foreground = true; client.setForeground(true) }

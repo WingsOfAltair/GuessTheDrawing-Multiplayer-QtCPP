@@ -35,7 +35,11 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
     private val redo = ArrayDeque<Pair<JSONObject, JSONObject>>()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val images = android.util.LruCache<String, Bitmap>(12)
-    init { setBackgroundColor(Color.WHITE); contentDescription = "Shared drawing canvas"; isFocusable = true }
+    init {
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
+        contentDescription = L10n.text("Shared drawing canvas")
+        setBackgroundColor(Color.WHITE); isFocusable = true
+    }
     fun resetEditing() { cancelCurve(); draft = null; original = null; history.clear(); redo.clear(); invalidate() }
     private fun layer(): JSONObject? {
         val layers = client.scene.layers

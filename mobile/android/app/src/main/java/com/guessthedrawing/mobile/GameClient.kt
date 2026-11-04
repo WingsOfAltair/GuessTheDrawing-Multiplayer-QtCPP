@@ -29,7 +29,9 @@ class GameClient {
     var port = 45450; private set
     var page = "login"; private set
     var busy = false; private set
-    var status = "Connect to your game's master server"; private set
+    var status = "Connect to your game's master server"; private set(value) { field = value; literalStatus = false }
+    private var literalStatus = false
+    val displayStatus get() = if (literalStatus) status else L10n.text(status)
     var profile = JSONObject(); private set
     var rooms = JSONArray(); private set
     var room = JSONObject(); private set
@@ -46,6 +48,8 @@ class GameClient {
     var guessed = false; private set
     var connected = false; private set
     val messages = mutableListOf<String>()
+    private val literalMessages = mutableSetOf<String>()
+    fun messageText(value: String) = if (value in literalMessages) value else L10n.text(value)
     val scene = CanvasScene()
     val username get() = profile.optString("username")
     val canDraw get() = connected && roundActive && !spectator && drawer == username
@@ -72,9 +76,10 @@ class GameClient {
     init { ui.postDelayed(pulse, 5000) }
     private fun notifyChange() { changed() }
     fun notice(text: String) { status = text; notifyChange() }
-    private fun log(text: String) {
+    private fun log(text: String, literal: Boolean = false) {
         messages.add(text)
-        if (messages.size > 200) messages.removeAt(0)
+        if (literal) literalMessages.add(text)
+        if (messages.size > 200) { val removed = messages.removeAt(0); if (removed !in messages) literalMessages.remove(removed) }
     }
     private fun id() = UUID.randomUUID().toString()
     private fun waitForReply(text: String) {
@@ -171,7 +176,7 @@ class GameClient {
     fun join(selected: JSONObject, asSpectator: Boolean, password: String = "") {
         if (busy || token.isEmpty()) return
         room = selected.copy(); wantSpectator = asSpectator; joinPassword = password
-        reconnectUntil = 0; messages.clear()
+        reconnectUntil = 0; messages.clear(); literalMessages.clear()
         connectGame()
     }
     private fun connectGame() {
@@ -302,13 +307,13 @@ class GameClient {
                 if (m.optString("username") == username) guessed = true
                 log(m.optString("displayName") + " guessed correctly! +" + m.optInt("points"))
             }
-            "ChatMessage" -> log(m.optString("displayName") + ": " + m.optString("text"))
+            "ChatMessage" -> log(L10n.isolate(m.optString("displayName")) + ": " + m.optString("text"), literal = true)
             "VoiceFrame" -> { if (connected) voiceReceived(m); return }
             "VersionMismatch" -> versionMismatch(m)
             "ModerationNotice" -> moderation(m)
             "ModerationAnnouncement" -> {
                 if (m.optString("targetUsername") == username && m.optString("action") == "unmute") { serverTextMuted = false; serverVoiceMuted = false }
-                log(m.optString("targetUsername") + ": " + m.optString("action") + " · " + m.optString("reason"))
+                log(L10n.isolate(m.optString("targetUsername")) + ": " + L10n.text(m.optString("action")) + " · " + m.optString("reason"), literal = true)
             }
             "ServerUpdateScheduled" -> log("Server update in " + m.optInt("secondsRemaining") + " seconds")
             "ServerRestarting" -> { leaveRoom(false); status = "Server restarting. Refresh rooms shortly." }
@@ -318,12 +323,12 @@ class GameClient {
     }
     private fun moderation(m: JSONObject) {
         val text = m.optString("reason", m.optString("message", "Server moderation notice"))
-        log(text); status = text
+        log(text, literal = true); status = text; literalStatus = true
         if (m.optString("action") == "mute") {
             serverTextMuted = m.optBoolean("textChat"); serverVoiceMuted = m.optBoolean("voiceChat"); muteExpiresAt = m.optLong("expiresAt")
         }
         if (m.optString("action") == "unmute") { serverTextMuted = false; serverVoiceMuted = false; muteExpiresAt = 0 }
-        if (m.optString("action") in listOf("kick", "ban")) { leaveRoom(false); status = text }
+        if (m.optString("action") in listOf("kick", "ban")) { leaveRoom(false); status = text; literalStatus = true }
     }
     private fun versionMismatch(m: JSONObject) {
         val required = m.optString("requiredVersion")

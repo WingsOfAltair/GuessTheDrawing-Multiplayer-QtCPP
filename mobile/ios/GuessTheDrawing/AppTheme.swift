@@ -17,14 +17,16 @@ final class AppTheme: ObservableObject {
 }
 @MainActor
 struct ThemeMenu: View {
+    @EnvironmentObject private var language: AppLanguage
     @EnvironmentObject private var theme: AppTheme
     var body: some View {
+        let _ = language.selection
         Menu {
-            Picker("Appearance", selection: $theme.selection) {
-                Text("System").tag("system")
-                ForEach(ThemePalette.all, id: \.id) { Text($0.name).tag($0.id) }
+            Picker(L("Appearance"), selection: $theme.selection) {
+                Text(L("System")).tag("system")
+                ForEach(ThemePalette.all, id: \.id) { Text(L($0.name)).tag($0.id) }
             }
-        } label: { Label("Theme", systemImage: "paintpalette") }
+        } label: { Label(L("Theme"), systemImage: "paintpalette") }
     }
 }
 @MainActor

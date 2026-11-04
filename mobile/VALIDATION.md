@@ -1,6 +1,33 @@
-# Validation on 2026-11-03
+# Validation
 
-## Emulator microphone follow-up
+## Localization — 2026-11-04
+
+* Android build 4 and iOS project build 3 retain protocol version 1.0.0.
+* Complete catalog: 729 keys in English, Spanish, French, German, Portuguese,
+  Italian, Russian, Simplified Chinese, Japanese, Korean, Arabic and Hindi.
+  The portable checker verifies key coverage, native resource fidelity,
+  placeholders, permission strings, Xcode inclusion and RTL configuration.
+* Android debug compilation, twelve unit tests and lint passed. Lint reports
+  no errors; remaining warnings concern pinned dependencies, typography,
+  existing style resources, custom-view preview constructors and backup metadata.
+* Android instrumentation passed all 12 language selections, persisted selection
+  after Activity recreation, Arabic RTL and other-language LTR, explicit LTR
+  address/canvas behavior, literal user text and Arabic/Hindi numeric input.
+* The full real-Qt integration test passed with a mid-round switch to Arabic:
+  login, search, profiles, friends, inbox, notifications, curves and drawing relay,
+  voice transport, moderation, snapshots, chat and guessing. It used isolated
+  services/accounts and the regression app on emulator-5556.
+* Reviewed settled English, Arabic, German, Chinese and Hindi login screenshots,
+  plus Arabic live gameplay and a full player profile. Long labels wrap; controls
+  mirror in Arabic while country flags, user content and drawing geometry remain
+  intact. Fixed input-type changes overriding Android text direction, and grouped
+  `@username` / `#rank` prefixes with values for bidi isolation.
+* All Swift files passed syntax parsing, and Xcode localization/resource wiring
+  passed portable checks. Swift core tests now include interpolation, numeric
+  input and text-direction checks. Apple SDK type checking and iOS runtime layout
+  checks still require a Mac and were not executed on this Windows host.
+
+## Emulator microphone follow-up — 2026-11-03
 
 * The user reproduced one-way voice on Android Studio's Pixel Tablet emulator:
   desktop speech was audible on Android, but Android speech was silent on desktop.
@@ -61,7 +88,7 @@ the user's installed game. No production accounts, sanctions or data changed.
 
 ## Not executed here
 
-* Swift compilation, the eight Swift core tests and the iOS simulator build
+* Swift compilation, the ten Swift core tests and the iOS simulator build
   require macOS / Xcode. The checked-in macOS CI job performs these checks when
   run; it was not run from this Windows session.
 * Physical iPhone / Android device testing, microphone/speaker routing,

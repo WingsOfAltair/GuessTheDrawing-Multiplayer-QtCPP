@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Errate die Zeichnung";
+"NSLocalNetworkUsageDescription" = "Haupt- und Raumserver von Errate die Zeichnung im lokalen Netzwerk finden und verbinden.";
+"NSMicrophoneUsageDescription" = "Sprich mit anderen Spielern, wenn du dein Mikrofon in einem Raum einschaltest.";
+"NSPhotoLibraryAddUsageDescription" = "Speichert eine Zeichnung, wenn du im Teilen-Menü Bild sichern wählst.";

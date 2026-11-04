@@ -44,7 +44,7 @@ struct DrawingBoard: UIViewRepresentable {
         tools.cancelCurve = { [weak view] in view?.cancelCurve() }
         return view
     }
-    func updateUIView(_ view: BoardView, context: Context) { view.refresh() }
+    func updateUIView(_ view: BoardView, context: Context) { view.accessibilityLabel = L("Shared drawing canvas"); view.refresh() }
 }
 @MainActor
 final class BoardView: UIView {
@@ -64,7 +64,8 @@ final class BoardView: UIView {
         self.client = client; self.tools = tools
         super.init(frame: .zero)
         backgroundColor = .white; isMultipleTouchEnabled = false; isOpaque = true
-        accessibilityLabel = "Shared drawing canvas"
+        semanticContentAttribute = .forceLeftToRight
+        accessibilityLabel = L("Shared drawing canvas")
         images.countLimit = 12
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }

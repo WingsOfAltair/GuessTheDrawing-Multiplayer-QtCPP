@@ -43,6 +43,7 @@ class GameIntegrationTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             scenario.onActivity { activity ->
+                activity.selectLanguage("en")
                 player = activity.client
                 val views = descendants(activity.window.decorView)
                 fun fill(hint: String, text: String) {
@@ -65,6 +66,12 @@ class GameIntegrationTest {
             val drawing = if (player.canDraw) player else peer
             val guessing = if (drawing === player) peer else player
             await("word assigned") { drawing.word.isNotEmpty() }
+            // Language changes during a live round keep the session and canvas geometry intact.
+            scenario.onActivity { activity ->
+                activity.selectLanguage("ar")
+                assertTrue(player.connected)
+                assertSame(player, activity.client)
+            }
             main {
                 assertFalse(drawing.canChat); assertTrue(guessing.canGuess)
                 drawing.operation(json("action" to "object_upsert", "object" to json(
@@ -78,6 +85,10 @@ class GameIntegrationTest {
             main { watcher.join(watcher.rooms.getJSONObject(0), true, "mobile-room-passkey") }
             await("late spectator snapshot") { watcher.spectator && watcher.connected && watcher.scene.objects.any { it.optString("id") == "android-test-stroke" } }
             verifyCurve(drawing, guessing, watcher)
+            saveScreenshot("localization-ar-game.png")
+            scenario.onActivity { it.communityUI.profile(peer.username) }
+            saveScreenshot("localization-ar-profile.png")
+            scenario.onActivity { it.communityUI.close(); it.selectLanguage("en") }
             // Multiple simulated players share this process. Keep the Activity's listener
             // from competing with the test speaker for the same device's audio focus.
             scenario.onActivity { it.voice.listening = false }

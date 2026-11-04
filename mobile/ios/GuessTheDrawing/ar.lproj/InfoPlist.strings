@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "خمن الرسمة";
+"NSLocalNetworkUsageDescription" = "البحث عن خوادم خمن الرسمة الرئيسية وخوادم الغرف والاتصال بها على الشبكة المحلية.";
+"NSMicrophoneUsageDescription" = "تحدث مع اللاعبين الآخرين عند تشغيل الميكروفون في غرفة.";
+"NSPhotoLibraryAddUsageDescription" = "حفظ الرسم عند اختيار حفظ الصورة من قائمة المشاركة.";

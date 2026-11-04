@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "你画我猜";
+"NSLocalNetworkUsageDescription" = "查找并连接局域网中的你画我猜主服务器和房间服务器。";
+"NSMicrophoneUsageDescription" = "在房间中开启麦克风，与其他玩家交谈。";
+"NSPhotoLibraryAddUsageDescription" = "在分享菜单中选择“存储图像”时保存绘画。";

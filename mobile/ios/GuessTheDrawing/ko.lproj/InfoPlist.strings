@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "그림 맞히기";
+"NSLocalNetworkUsageDescription" = "로컬 네트워크에서 그림 맞히기의 마스터 서버와 방 서버를 찾아 연결합니다.";
+"NSMicrophoneUsageDescription" = "방에서 마이크를 켜면 다른 플레이어와 대화할 수 있습니다.";
+"NSPhotoLibraryAddUsageDescription" = "공유 메뉴에서 이미지 저장을 선택하면 그림을 저장합니다.";

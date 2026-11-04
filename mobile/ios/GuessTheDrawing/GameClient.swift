@@ -21,7 +21,9 @@ final class GameClient: ObservableObject {
     private(set) var port = 45450
     private(set) var page = "login"
     private(set) var busy = false
-    private(set) var status = "Connect to your game's master server"
+    private(set) var status = "Connect to your game's master server" { didSet { literalStatus = false } }
+    private var literalStatus = false
+    var displayStatus: String { literalStatus || status == room.string("roomName") ? status : L(status) }
     private(set) var profile: JSON = [:]
     private(set) var rooms: [JSON] = []
     private(set) var room: JSON = [:]
@@ -38,6 +40,8 @@ final class GameClient: ObservableObject {
     private(set) var guessed = false
     private(set) var connected = false
     private(set) var messages: [String] = []
+    private var literalMessages: Set<String> = []
+    func messageText(_ value: String) -> String { literalMessages.contains(value) ? value : L(value) }
     private(set) var scene = CanvasScene()
     var voiceReceived: (JSON) -> Void = { _ in }
     var username: String { profile.string("username") }
@@ -65,7 +69,10 @@ final class GameClient: ObservableObject {
     private func update() { objectWillChange.send() }
     func communityChanged() { update() }
     func notice(_ text: String) { status = text; update() }
-    private func log(_ text: String) { messages.append(text); if messages.count > 200 { messages.removeFirst() } }
+    private func log(_ text: String, literal: Bool = false) {
+        messages.append(text); if literal { literalMessages.insert(text) }
+        if messages.count > 200 { let removed = messages.removeFirst(); if !messages.contains(removed) { literalMessages.remove(removed) } }
+    }
     private func waitForReply(_ text: String) {
         busy = true; status = text; epoch += 1
         let expected = epoch
@@ -157,7 +164,7 @@ final class GameClient: ObservableObject {
     func join(_ room: JSON, spectator: Bool, passkey: String = "") {
         guard !busy, !token.isEmpty else { return }
         self.room = room; wantSpectator = spectator; self.passkey = passkey; reconnectUntil = nil
-        messages = []; connectGame()
+        messages = []; literalMessages = []; connectGame()
     }
     private func connectGame() {
         game?.close(); connected = false; joinID = UUID().uuidString
@@ -271,13 +278,13 @@ final class GameClient: ObservableObject {
         case "GuessCorrect":
             if m.string("username") == username { guessed = true }
             log(m.string("displayName") + " guessed correctly! +\(m.int("points"))")
-        case "ChatMessage": log(m.string("displayName") + ": " + m.string("text"))
+        case "ChatMessage": log(L10n.isolate(m.string("displayName")) + ": " + m.string("text"), literal: true)
         case "VoiceFrame": if connected { voiceReceived(m) }; return
         case "VersionMismatch": versionMismatch(m)
         case "ModerationNotice": moderation(m)
         case "ModerationAnnouncement":
             if m.string("targetUsername") == username, m.string("action") == "unmute" { serverTextMuted = false; serverVoiceMuted = false }
-            log(m.string("targetUsername") + ": " + m.string("action") + " · " + m.string("reason"))
+            log(L10n.isolate(m.string("targetUsername")) + ": " + L(m.string("action")) + " · " + m.string("reason"), literal: true)
         case "ServerUpdateScheduled": log("Server update in \(m.int("secondsRemaining")) seconds")
         case "ServerRestarting": leaveRoom(send: false); status = "Server restarting. Refresh rooms shortly."
         case "Error": busy = false; status = m.string("message"); log(status)
@@ -287,10 +294,10 @@ final class GameClient: ObservableObject {
     }
     private func moderation(_ m: JSON) {
         let text = m.string("reason", m.string("message", "Server moderation notice"))
-        log(text); status = text
+        log(text, literal: true); status = text; literalStatus = true
         if m.string("action") == "mute" { serverTextMuted = m.bool("textChat"); serverVoiceMuted = m.bool("voiceChat"); muteExpiresAt = m.number("expiresAt") }
         if m.string("action") == "unmute" { serverTextMuted = false; serverVoiceMuted = false; muteExpiresAt = 0 }
-        if ["kick", "ban"].contains(m.string("action")) { leaveRoom(send: false); status = text }
+        if ["kick", "ban"].contains(m.string("action")) { leaveRoom(send: false); status = text; literalStatus = true }
     }
     private func versionMismatch(_ m: JSON) {
         logout(send: false); status = "Server requires version \(m.string("requiredVersion")). Install a matching mobile build."

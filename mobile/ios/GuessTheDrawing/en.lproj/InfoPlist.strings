@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Guess The Drawing";
+"NSLocalNetworkUsageDescription" = "Find and connect to your Guess The Drawing master and room servers on the local network.";
+"NSMicrophoneUsageDescription" = "Talk with other players when you turn on your microphone in a room.";
+"NSPhotoLibraryAddUsageDescription" = "Save a drawing when you choose Save Image from the share sheet.";

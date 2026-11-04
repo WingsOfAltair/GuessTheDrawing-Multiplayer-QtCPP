@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Devine le dessin";
+"NSLocalNetworkUsageDescription" = "Rechercher et rejoindre les serveurs principaux et de salons de Devine le dessin sur le réseau local.";
+"NSMicrophoneUsageDescription" = "Discutez avec les joueurs lorsque vous activez votre microphone dans un salon.";
+"NSPhotoLibraryAddUsageDescription" = "Enregistrer un dessin lorsque vous choisissez Enregistrer l'image dans le menu de partage.";

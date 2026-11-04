@@ -29,6 +29,16 @@ resources = [add("build:flags", f'{{isa = PBXBuildFile; fileRef = {flags}; }}'),
 product = add("product", '{isa = PBXFileReference; explicitFileType = wrapper.application; path = GuessTheDrawing.app; sourceTree = BUILT_PRODUCTS_DIR; }')
 def array(values):
     return "(" + ", ".join(values) + ",)"
+regions = ['en', 'es', 'fr', 'de', 'pt', 'it', 'ru', 'zh-Hans', 'ja', 'ko', 'ar', 'hi']
+for filename in ['Localizable.strings', 'InfoPlist.strings']:
+    children = []
+    for language in regions:
+        relative = f'GuessTheDrawing/{language}.lproj/{filename}'
+        assert (root / relative).is_file(), relative
+        children.append(add(relative, f'{{isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = {quote(language)}; path = {quote(relative)}; sourceTree = "<group>"; }}'))
+    variant = add(filename, f'{{isa = PBXVariantGroup; children = {array(children)}; name = {quote(filename)}; sourceTree = "<group>"; }}')
+    references.append(variant)
+    resources.append(add('build:' + filename, f'{{isa = PBXBuildFile; fileRef = {variant}; }}'))
 group = add("group", f'{{isa = PBXGroup; children = {array(references + [flags, assets, config, info, product])}; sourceTree = "<group>"; }}')
 source_phase = add("sourcePhase", f'{{isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = {array(builds)}; runOnlyForDeploymentPostprocessing = 0; }}')
 resource_phase = add("resourcePhase", f'{{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = {array(resources)}; runOnlyForDeploymentPostprocessing = 0; }}')
@@ -38,7 +48,7 @@ for name in ("Debug", "Release"):
     target_settings = {
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
-        "CODE_SIGN_STYLE": "Automatic", "CURRENT_PROJECT_VERSION": "2",
+        "CODE_SIGN_STYLE": "Automatic", "CURRENT_PROJECT_VERSION": "3",
         "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "GuessTheDrawing/Info.plist",
         "IPHONEOS_DEPLOYMENT_TARGET": "16.0", "MARKETING_VERSION": "$(GTD_GAME_VERSION)",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.guessthedrawing.mobile",
@@ -57,7 +67,7 @@ def config_list(name, configurations):
 target_config = config_list("targetConfig", target_configs)
 project_config = config_list("projectConfig", project_configs)
 target = add("target", f'{{isa = PBXNativeTarget; buildConfigurationList = {target_config}; buildPhases = {array([source_phase, framework_phase, resource_phase])}; buildRules = (); dependencies = (); name = GuessTheDrawing; productName = GuessTheDrawing; productReference = {product}; productType = "com.apple.product-type.application"; }}')
-project = add("project", f'{{isa = PBXProject; attributes = {{ LastUpgradeCheck = 1600; }}; buildConfigurationList = {project_config}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = {group}; productRefGroup = {group}; projectDirPath = ""; projectRoot = ""; targets = {array([target])}; }}')
+project = add("project", f'{{isa = PBXProject; attributes = {{ LastUpgradeCheck = 1600; }}; buildConfigurationList = {project_config}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = {array([quote(r) for r in regions] + ["Base"])}; mainGroup = {group}; productRefGroup = {group}; projectDirPath = ""; projectRoot = ""; targets = {array([target])}; }}')
 directory = root / "GuessTheDrawing.xcodeproj"
 directory.mkdir(parents=True, exist_ok=True)
 (directory / "project.pbxproj").write_text(

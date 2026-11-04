@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "お絵かき当てゲーム";
+"NSLocalNetworkUsageDescription" = "ローカルネットワーク上のお絵かき当てゲームのマスターサーバーやルームサーバーに接続します。";
+"NSMicrophoneUsageDescription" = "ルームでマイクをオンにすると、他のプレイヤーと話せます。";
+"NSPhotoLibraryAddUsageDescription" = "共有メニューで「画像を保存」を選択したときに描画を保存します。";

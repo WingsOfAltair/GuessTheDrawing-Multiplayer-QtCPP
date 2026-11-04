@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 import plistlib
 import re
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 root = Path(__file__).resolve().parents[1]
@@ -26,3 +28,4 @@ fixture = json.loads((root / "fixtures/protocol.json").read_text(encoding="utf-8
 assert len(fixture["objects"]) == 2
 assert (root / "android/gradle/wrapper/gradle-wrapper.jar").is_file()
 print("PASS: version synchronization, Xcode source references, plist/XML/assets, fixtures and Gradle wrapper")
+subprocess.run([sys.executable, str(root / 'tools/check_localizations.py')], check=True)

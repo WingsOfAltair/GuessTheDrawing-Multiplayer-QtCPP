@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Adivina el dibujo";
+"NSLocalNetworkUsageDescription" = "Busca y conecta con los servidores principales y de salas de Adivina el dibujo en tu red local.";
+"NSMicrophoneUsageDescription" = "Habla con otros jugadores al activar tu micrófono en una sala.";
+"NSPhotoLibraryAddUsageDescription" = "Guarda un dibujo al elegir Guardar imagen en el menú Compartir.";

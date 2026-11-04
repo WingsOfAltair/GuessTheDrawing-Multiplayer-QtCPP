@@ -1,7 +1,9 @@
 import SwiftUI
 
 private func socialDate(_ seconds: Double) -> String {
-    seconds <= 0 ? "Permanent" : Date(timeIntervalSince1970: seconds).formatted(date: .abbreviated, time: .shortened)
+    if seconds <= 0 { return L("Permanent") }
+    let formatter = DateFormatter(); formatter.locale = L10n.locale; formatter.dateStyle = .medium; formatter.timeStyle = .short
+    return formatter.string(from: Date(timeIntervalSince1970: seconds))
 }
 struct PlayerDestination: Identifiable {
     let user: String
@@ -10,18 +12,22 @@ struct PlayerDestination: Identifiable {
 }
 @MainActor
 struct CommunityStatus: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var social: CommunityClient
     var body: some View {
-        HStack { if social.busy { ProgressView() }; if !social.status.isEmpty { Text(social.status).font(.footnote) }; Spacer() }
+        let _ = language.selection
+        HStack { if social.busy { ProgressView() }; if !social.status.isEmpty { Text(L(social.status)).font(.footnote) }; Spacer() }
             .padding(.horizontal).padding(.vertical, social.busy || !social.status.isEmpty ? 6 : 0)
     }
 }
 @MainActor
 struct PlayerIdentity: View {
+    @EnvironmentObject private var language: AppLanguage
     var profile: JSON
     var detail = ""
     @EnvironmentObject private var theme: AppTheme
     var body: some View {
+        let _ = language.selection
         HStack(spacing: 12) {
             ZStack {
                 Circle().fill(theme.accent.opacity(0.15))
@@ -36,37 +42,41 @@ struct PlayerIdentity: View {
                     Text("@" + profile.string("username"))
                     CountryFlag(code: profile.string("countryCode"))
                 }.font(.caption).foregroundStyle(theme.secondary)
-                if !detail.isEmpty { Text(detail).font(.subheadline).foregroundStyle(theme.secondary) }
+                if !detail.isEmpty { Text(L10n.detail(detail)).font(.subheadline).foregroundStyle(theme.secondary) }
             }
             Spacer(minLength: 0)
         }.padding(.vertical, 6)
     }
 }
 struct CountryFlag: View {
+    @EnvironmentObject private var language: AppLanguage
     let code: String
     var body: some View {
+        let _ = language.selection
         if !code.isEmpty {
             if let path = Bundle.main.path(forResource: code.lowercased(), ofType: "png", inDirectory: "country-flags"), let image = UIImage(contentsOfFile: path) {
                 Image(uiImage: image).resizable().scaledToFit().frame(width: 24, height: 18).accessibilityHidden(true)
             }
-            Text(code)
+            Text(verbatim: code).environment(\.layoutDirection, .leftToRight)
         }
     }
 }
 @MainActor
 struct InteractivePlayerRow: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let profile: JSON
     var detail = ""
     @State private var destination: PlayerDestination?
     var body: some View {
+        let _ = language.selection
         let user = profile.string("username")
         Button { destination = PlayerDestination(user: user) } label: { PlayerIdentity(profile: profile, detail: detail) }
             .buttonStyle(.plain).gtdRow().contentShape(Rectangle())
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.2).onEnded { _ in social.profile(user) })
             .contextMenu {
-                Button("View profile") { destination = PlayerDestination(user: user) }
+                Button(L("View profile")) { destination = PlayerDestination(user: user) }
                 PlayerActions(client: client, social: social, user: user) { destination = PlayerDestination(user: user, action: $0) }
             }
             .sheet(item: $destination) { route in PlayerDestinationView(client: client, social: social, destination: route) }
@@ -74,6 +84,7 @@ struct InteractivePlayerRow: View {
 }
 @MainActor
 struct CommunityHub: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     @Environment(\.dismiss) private var dismiss
@@ -88,23 +99,24 @@ struct CommunityHub: View {
     }
     private var sections: [String] { ["Friends", "Requests", "Inbox", "Notifications", "Find players", "Blocked"] + (social.canModerate ? ["Moderation"] : []) }
     var body: some View {
+        let _ = language.selection
         NavigationStack {
             VStack(spacing: 0) {
                 CommunityStatus(social: social)
-                Picker("Section", selection: $selection) { ForEach(sections, id: \.self) { Text($0).tag($0) } }.pickerStyle(.menu).padding(.horizontal)
+                Picker(L("Section"), selection: $selection) { ForEach(sections, id: \.self) { Text(L($0)).tag($0) } }.pickerStyle(.menu).padding(.horizontal)
                 if selection == "Find players" {
-                    HStack { TextField("Username or display name", text: $query).textFieldStyle(.roundedBorder).submitLabel(.search).onSubmit { social.search(query) }
-                        Button("Search") { social.search(query) } }.padding()
+                    HStack { TextField(L("Username or display name"), text: $query).textFieldStyle(.roundedBorder).submitLabel(.search).onSubmit { social.search(query) }
+                        Button(L("Search")) { social.search(query) } }.padding()
                 }
                 List { contents }.listStyle(.insetGrouped).gtdSurface().refreshable { refresh() }
-            }.gtdSurface().navigationTitle("People & messages").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .navigationBarLeading) { if !embedded { Button("Close") { dismiss() } } }; ToolbarItem(placement: .navigationBarTrailing) { Button { refresh() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Refresh") } }
+            }.gtdSurface().navigationTitle(L("People & messages")).navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .navigationBarLeading) { if !embedded { Button(L("Close")) { dismiss() } } }; ToolbarItem(placement: .navigationBarTrailing) { Button { refresh() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel(L("Refresh")) } }
                 .onAppear { query = social.query; refresh() }
                 .onChange(of: selection) { _ in if selection == "Moderation" { social.refreshAdmin() } }
                 .onChange(of: client.room.string("roomId")) { _ in dismiss() }
                 .sheet(item: $destination) { PlayerDestinationView(client: client, social: social, destination: $0) }
-                .confirmationDialog("Delete your copy of this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                    Button("Delete", role: .destructive) { social.action("InboxConversationDelete", user: deleteUser) }
+                .confirmationDialog(L("Delete your copy of this conversation?"), isPresented: $confirmDelete, titleVisibility: .visible) {
+                    Button(L("Delete"), role: .destructive) { social.action("InboxConversationDelete", user: deleteUser) }
                 }
         }
     }
@@ -115,7 +127,7 @@ struct CommunityHub: View {
             let entries = selection == "Friends" ? social.friends : social.users
             if entries.isEmpty { empty(selection == "Friends" ? "Make your first connection" : "Find your people", detail: selection == "Friends" ? "Search for a player to send a friend request." : "Search by username or display name.", icon: "person.2") }
             ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
-                InteractivePlayerRow(client: client, social: social, profile: entry.object("profile"), detail: entry.string("presenceStatus") + " · " + entry.string("relationship"))
+                InteractivePlayerRow(client: client, social: social, profile: entry.object("profile"), detail: L(entry.string("presenceStatus")) + " · " + L(entry.string("relationship")))
             }
         case "Requests": requestRows
         case "Inbox":
@@ -123,10 +135,10 @@ struct CommunityHub: View {
             ForEach(Array(social.conversations.enumerated()), id: \.offset) { _, conversation in
                 let user = conversation.string("username")
                 Button { destination = PlayerDestination(user: user, action: "message") } label: {
-                    HStack { PlayerIdentity(profile: conversation, detail: conversation.string("presence")); if conversation.int("unreadCount") > 0 { Text("\(conversation.int("unreadCount"))").font(.caption.bold()).padding(8).background(Color.accentColor.opacity(0.15), in: Capsule()) } }
+                    HStack { PlayerIdentity(profile: conversation, detail: conversation.string("presence")); if conversation.int("unreadCount") > 0 { Text(L("\(conversation.int("unreadCount"))")).font(.caption.bold()).padding(8).background(Color.accentColor.opacity(0.15), in: Capsule()) } }
                 }.buttonStyle(.plain).gtdRow().contextMenu {
-                    Button("View profile") { destination = PlayerDestination(user: user) }
-                    Button("Delete conversation", role: .destructive) { deleteUser = user; confirmDelete = true }
+                    Button(L("View profile")) { destination = PlayerDestination(user: user) }
+                    Button(L("Delete conversation"), role: .destructive) { deleteUser = user; confirmDelete = true }
                 }
             }
         case "Notifications":
@@ -136,15 +148,15 @@ struct CommunityHub: View {
         case "Blocked":
             if social.blocked.isEmpty { empty("No blocked players", detail: "You can manage blocked accounts here.", icon: "person.crop.circle.badge.checkmark") }
             ForEach(social.blocked, id: \.self) { user in HStack {
-                Button("@"+user) { destination = PlayerDestination(user: user) }; Spacer()
-                Button("Unblock") { social.action("BlockSet", user: user, fields: ["blocked": false]) }
+                Button(L("@"+user)) { destination = PlayerDestination(user: user) }; Spacer()
+                Button(L("Unblock")) { social.action("BlockSet", user: user, fields: ["blocked": false]) }
             }.gtdRow() }
         case "Moderation": ModerationRows(client: client, social: social) { destination = $0 }
         default: EmptyView()
         }
     }
     private func empty(_ title: String, detail: String, icon: String) -> some View {
-        VStack(spacing: 12) { Image(systemName: icon).font(.largeTitle).foregroundStyle(.tint); Text(title).font(.headline); Text(detail).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(.vertical, 30).gtdRow()
+        VStack(spacing: 12) { Image(systemName: icon).font(.largeTitle).foregroundStyle(.tint); Text(L(title)).font(.headline); Text(L10n.detail(detail)).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(.vertical, 30).gtdRow()
     }
     @ViewBuilder private var requestRows: some View {
         if social.requests.isEmpty && !social.notifications.contains(where: { $0.string("kind") == "friend_request_accepted" }) { empty("No pending requests", detail: "New requests will appear here.", icon: "person.badge.plus") }
@@ -152,15 +164,15 @@ struct CommunityHub: View {
             let outgoing = request.string("senderUsername") == client.username
             let user = request.string(outgoing ? "recipientUsername" : "senderUsername")
             VStack(alignment: .leading, spacing: 10) {
-                Button((outgoing ? "To @" : "From @") + user) { destination = PlayerDestination(user: user) }.font(.headline)
-                Text(request.string("status")).font(.caption).foregroundStyle(.secondary)
+                Button(L10n.format(outgoing ? "To @%1" : "From @%1", [user])) { destination = PlayerDestination(user: user) }.font(.headline)
+                Text(L(request.string("status"))).font(.caption).foregroundStyle(.secondary)
                 if !outgoing && request.string("status") == "pending" {
                     HStack {
-                        Button("Accept") { social.action("FriendRequestAccept", fields: ["friendRequestId": request.int("id")]) }.buttonStyle(.borderedProminent)
-                        Button("Decline") { social.action("FriendRequestDeny", fields: ["friendRequestId": request.int("id")]) }.buttonStyle(.bordered)
+                        Button(L("Accept")) { social.action("FriendRequestAccept", fields: ["friendRequestId": request.int("id")]) }.buttonStyle(.borderedProminent)
+                        Button(L("Decline")) { social.action("FriendRequestDeny", fields: ["friendRequestId": request.int("id")]) }.buttonStyle(.bordered)
                     }
                 } else if request.string("status") == "denied" {
-                    Button("Clear declined request") { social.action("FriendRequestClear", fields: ["friendRequestId": request.int("id")]); social.action("FriendRequestNotificationClear", user: user) }
+                    Button(L("Clear declined request")) { social.action("FriendRequestClear", fields: ["friendRequestId": request.int("id")]); social.action("FriendRequestNotificationClear", user: user) }
                 }
             }.gtdRow()
         }
@@ -171,16 +183,16 @@ struct CommunityHub: View {
         let kind = item.string("kind")
         let message = kind == "friends_now" ? "You and \(user) are now friends" : user + (kind == "friend_request_accepted" ? " accepted your friend request" : " declined your friend request")
         return Button { social.action("NotificationClear", fields: ["notificationId": item.int("id")]) } label: {
-            VStack(alignment: .leading, spacing: 6) { Text(message); Text(socialDate(item.number("createdAt")) + " · Tap to clear").font(.caption).foregroundStyle(.secondary) }
+            VStack(alignment: .leading, spacing: 6) { Text(L(message)); Text(L(socialDate(item.number("createdAt")) + " · Tap to clear")).font(.caption).foregroundStyle(.secondary) }
         }.buttonStyle(.plain).gtdRow()
     }
     @ViewBuilder private var invitationRows: some View {
         ForEach(Array(social.invitations.enumerated()), id: \.offset) { index, invite in
             VStack(alignment: .leading, spacing: 10) {
-                Text("@\(invite.string("fromUsername")) invited you to \(invite.object("room").string("roomName"))").font(.headline)
+                Text(L10n.format("@%1 invited you to %2", [invite.string("fromUsername"), invite.object("room").string("roomName")])).font(.headline)
                 HStack {
-                    Button("View invitation") { destination = PlayerDestination(user: invite.string("fromUsername"), action: "invite") }
-                    Button("Dismiss") { social.dismissInvitation(index) }
+                    Button(L("View invitation")) { destination = PlayerDestination(user: invite.string("fromUsername"), action: "invite") }
+                    Button(L("Dismiss")) { social.dismissInvitation(index) }
                 }.buttonStyle(.bordered)
             }.gtdRow()
         }
@@ -188,6 +200,7 @@ struct CommunityHub: View {
 }
 @MainActor
 struct PlayerActions: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let user: String
@@ -195,42 +208,45 @@ struct PlayerActions: View {
     private var entry: JSON { social.profiles[user] ?? social.friends.first { $0.object("profile").string("username") == user } ?? [:] }
     private var inRoom: Bool { client.players.contains { $0.object("profile").string("username") == user } }
     var body: some View {
+        let _ = language.selection
         if user != client.username {
             switch entry.string("relationship", "none") {
-            case "none": Button("Send friend request") { social.action("FriendRequestSend", user: user) }
+            case "none": Button(L("Send friend request")) { social.action("FriendRequestSend", user: user) }
             case "incoming":
-                Button("Accept friend request") { social.action("FriendRequestAccept", fields: ["friendRequestId": entry.int("relationshipId")]) }
-                Button("Decline friend request") { social.action("FriendRequestDeny", fields: ["friendRequestId": entry.int("relationshipId")]) }
-            case "denied": Button("Clear declined request") { social.action("FriendRequestClear", fields: ["friendRequestId": entry.int("relationshipId")]); social.action("FriendRequestNotificationClear", user: user) }
+                Button(L("Accept friend request")) { social.action("FriendRequestAccept", fields: ["friendRequestId": entry.int("relationshipId")]) }
+                Button(L("Decline friend request")) { social.action("FriendRequestDeny", fields: ["friendRequestId": entry.int("relationshipId")]) }
+            case "denied": Button(L("Clear declined request")) { social.action("FriendRequestClear", fields: ["friendRequestId": entry.int("relationshipId")]); social.action("FriendRequestNotificationClear", user: user) }
             case "friend":
-                Button("Message") { open("message") }
-                if client.connected { Button("Invite to my room") { social.action("RoomInviteSend", user: user) } }
-                Button("Remove friend", role: .destructive) { open("remove") }
+                Button(L("Message")) { open("message") }
+                if client.connected { Button(L("Invite to my room")) { social.action("RoomInviteSend", user: user) } }
+                Button(L("Remove friend"), role: .destructive) { open("remove") }
             default: EmptyView()
             }
-            Button(entry.string("relationship") == "blocked" ? "Unblock user" : "Block user") { open(entry.string("relationship") == "blocked" ? "unblock" : "block") }
-            if entry.bool("hasRoom") { Button("Join player's room") { open("join") }; Button("Watch player's room") { open("watch") } }
+            Button(L(entry.string("relationship") == "blocked" ? "Unblock user" : "Block user")) { open(entry.string("relationship") == "blocked" ? "unblock" : "block") }
+            if entry.bool("hasRoom") { Button(L("Join player's room")) { open("join") }; Button(L("Watch player's room")) { open("watch") } }
             let target = social.targetProfile(user), targetLevel = CommunityPolicy.level(target)
             if client.connected && targetLevel == 0 && (inRoom || target.bool("roomRoleLoaded")) {
-                Button(social.mutedText.contains(user) ? "Unmute text" : "Mute text") { social.mute(user, text: !social.mutedText.contains(user), voice: social.mutedVoice.contains(user)) }
-                Button(social.mutedVoice.contains(user) ? "Unmute voice" : "Mute voice") { social.mute(user, text: social.mutedText.contains(user), voice: !social.mutedVoice.contains(user)) }
-                if inRoom { Button("Report player") { open("report") } }
+                Button(L(social.mutedText.contains(user) ? "Unmute text" : "Mute text")) { social.mute(user, text: !social.mutedText.contains(user), voice: social.mutedVoice.contains(user)) }
+                Button(L(social.mutedVoice.contains(user) ? "Unmute voice" : "Mute voice")) { social.mute(user, text: social.mutedText.contains(user), voice: !social.mutedVoice.contains(user)) }
+                if inRoom { Button(L("Report player")) { open("report") } }
             }
             if social.canModerate && social.level > targetLevel && (inRoom || target.bool("roomRoleLoaded")) {
-                Button("Kick player…", role: .destructive) { open("kick") }
-                Button("Ban player…", role: .destructive) { open("ban") }
-                Button("Server mute…") { open("mute") }
-                if social.level >= 2 { Button("Set server role…") { open("role") } }
+                Button(L("Kick player…"), role: .destructive) { open("kick") }
+                Button(L("Ban player…"), role: .destructive) { open("ban") }
+                Button(L("Server mute…")) { open("mute") }
+                if social.level >= 2 { Button(L("Set server role…")) { open("role") } }
             }
         }
     }
 }
 @MainActor
 struct PlayerDestinationView: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let destination: PlayerDestination
     var body: some View {
+        let _ = language.selection
         switch destination.action {
         case "profile": PlayerProfileSheet(client: client, social: social, user: destination.user)
         case "message": InboxView(client: client, social: social, user: destination.user)
@@ -240,52 +256,55 @@ struct PlayerDestinationView: View {
 }
 @MainActor
 struct PlayerProfileSheet: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let user: String
     @Environment(\.dismiss) private var dismiss
     @State private var destination: PlayerDestination?
     var body: some View {
+        let _ = language.selection
         let entry = social.profiles[user] ?? [:], p = social.targetProfile(user)
         NavigationStack {
             VStack(spacing: 0) {
                 CommunityStatus(social: social)
                 List {
                     Section { PlayerIdentity(profile: p, detail: entry.string("presenceStatus", "Loading…")) }.gtdRow()
-                    Section("Game stats") {
+                    Section(L("Game stats")) {
                         stat("Total score", "\(p.int("totalScore"))")
-                        stat("Guessing", "\(p.int("guessingScore")) · \(p.string("guessingRank"))")
-                        stat("Drawing", "\(p.int("drawingScore")) · \(p.string("drawingRank"))")
+                        stat("Guessing", "\(p.int("guessingScore")) · \(L(p.string("guessingRank")))")
+                        stat("Drawing", "\(p.int("drawingScore")) · \(L(p.string("drawingRank")))")
                         stat("Wins / losses", "\(p.int("roundsWon")) / \(p.int("roundsLost"))")
                         stat("Abandoned rounds", "\(p.int("roundsAbandoned"))")
                         stat("Leaderboard", "#\(p.int("leaderboardRank"))")
                         stat("Guessing leaderboard", "#\(p.int("guessingLeaderboardRank"))")
                         stat("Drawing leaderboard", "#\(p.int("drawingLeaderboardRank"))")
                     }.gtdRow()
-                    Section("Account") {
-                        stat("Relationship", entry.string("relationship", "Loading…"))
-                        HStack { Text("Country"); Spacer(); if p.string("countryCode").isEmpty { Text("Not set") } else { CountryFlag(code: p.string("countryCode")) } }
-                        stat("Role", p.bool("masterSuperAdmin") ? "Master super-admin" : p.string("serverRole", "player"))
+                    Section(L("Account")) {
+                        stat("Relationship", L(entry.string("relationship", "Loading…")))
+                        HStack { Text(L("Country")); Spacer(); if p.string("countryCode").isEmpty { Text(L("Not set")) } else { CountryFlag(code: p.string("countryCode")) } }
+                        stat("Role", L(p.bool("masterSuperAdmin") ? "Master super-admin" : p.string("serverRole", "player")))
                         if !p.string("avatarUrl").isEmpty { stat("Avatar", p.string("avatarUrl")) }
                         if entry.bool("hasRoom") { stat("Current room", entry.object("room").string("roomName")) }
                     }.gtdRow()
-                    if !entry.objects("activeBans").isEmpty { Section("Active bans") {
+                    if !entry.objects("activeBans").isEmpty { Section(L("Active bans")) {
                         ForEach(Array(entry.objects("activeBans").enumerated()), id: \.offset) { _, ban in
-                            VStack(alignment: .leading) { Text(ban.string("serverId")).font(.headline); Text(ban.string("reason")); Text(socialDate(ban.number("expiresAt"))).font(.caption) }
+                            VStack(alignment: .leading) { Text(ban.string("serverId")).font(.headline); Text(ban.string("reason")); Text(L(socialDate(ban.number("expiresAt")))).font(.caption) }
                         }
                     }.gtdRow() }
-                    if entry["relationship"] != nil { Section("Player actions") { PlayerActions(client: client, social: social, user: user) { destination = PlayerDestination(user: user, action: $0) } }.gtdRow() }
+                    if entry["relationship"] != nil { Section(L("Player actions")) { PlayerActions(client: client, social: social, user: user) { destination = PlayerDestination(user: user, action: $0) } }.gtdRow() }
                 }.gtdSurface()
-            }.gtdSurface().navigationTitle("Player profile").navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("Done") { dismiss() } }.onAppear { social.profile(user) }
+            }.gtdSurface().navigationTitle(L("Player profile")).navigationBarTitleDisplayMode(.inline)
+                .toolbar { Button(L("Done")) { dismiss() } }.onAppear { social.profile(user) }
                 .sheet(item: $destination) { PlayerDestinationView(client: client, social: social, destination: $0) }
                 .onChange(of: client.room.string("roomId")) { _ in dismiss() }
         }
     }
-    private func stat(_ name: String, _ value: String) -> some View { HStack(alignment: .top) { Text(name).foregroundStyle(.secondary); Spacer(); Text(value).multilineTextAlignment(.trailing) } }
+    private func stat(_ name: String, _ value: String) -> some View { HStack(alignment: .top) { Text(L(name)).foregroundStyle(.secondary); Spacer(); Text(L10n.isolate(value)).multilineTextAlignment(.trailing) } }
 }
 @MainActor
 struct InboxView: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let user: String
@@ -295,18 +314,19 @@ struct InboxView: View {
     @State private var deleteID = 0
     @State private var confirmDelete = false
     var body: some View {
+        let _ = language.selection
         NavigationStack {
             VStack(spacing: 0) {
                 CommunityStatus(social: social)
                 ScrollViewReader { reader in
                     List {
-                        if social.hasOlder[user] == true { Button("Load older messages") { atBottom = false; social.inbox(user, older: true) }.gtdRow() }
+                        if social.hasOlder[user] == true { Button(L("Load older messages")) { atBottom = false; social.inbox(user, older: true) }.gtdRow() }
                         ForEach(Array(social.messages[user, default: []].enumerated()), id: \.element.intID) { _, message in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(message.string("body"))
-                                Text("@\(message.string("senderUsername")) · \(socialDate(message.number("createdAt")))").font(.caption).foregroundStyle(.secondary)
+                                Text(L("@\(message.string("senderUsername")) · \(socialDate(message.number("createdAt")))")).font(.caption).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: message.string("senderUsername") == client.username ? .trailing : .leading).gtdRow()
-                                .contextMenu { Button("Delete message", role: .destructive) { deleteID = message.int("id"); confirmDelete = true } }
+                                .contextMenu { Button(L("Delete message"), role: .destructive) { deleteID = message.int("id"); confirmDelete = true } }
                         }
                         Color.clear.frame(height: 1).id("bottom").listRowBackground(Color.clear)
                             .onAppear { atBottom = true; social.openConversation = user; social.action("InboxMarkRead", user: user) }
@@ -314,13 +334,13 @@ struct InboxView: View {
                     }.gtdSurface().onChange(of: social.messages[user, default: []].count) { _ in if atBottom { reader.scrollTo("bottom", anchor: .bottom) } }
                 }
                 HStack {
-                    TextField("Private message", text: $text).textFieldStyle(.roundedBorder).submitLabel(.send).onSubmit(send)
-                    Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title) }.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty).accessibilityLabel("Send private message")
+                    TextField(L("Private message"), text: $text).textFieldStyle(.roundedBorder).submitLabel(.send).onSubmit(send)
+                    Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title) }.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty).accessibilityLabel(L("Send private message"))
                 }.padding()
-            }.gtdSurface().navigationTitle("Inbox · @"+user).navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("Done") { dismiss() } }
+            }.gtdSurface().navigationTitle(L("Inbox · @"+user)).navigationBarTitleDisplayMode(.inline)
+                .toolbar { Button(L("Done")) { dismiss() } }
                 .onAppear { social.inbox(user) }.onDisappear { if social.openConversation == user { social.openConversation = "" } }
-                .confirmationDialog("Delete this message from your view?", isPresented: $confirmDelete, titleVisibility: .visible) { Button("Delete", role: .destructive) { social.action("InboxMessageDelete", fields: ["messageId": deleteID]) } }
+                .confirmationDialog(L("Delete this message from your view?"), isPresented: $confirmDelete, titleVisibility: .visible) { Button(L("Delete"), role: .destructive) { social.action("InboxMessageDelete", fields: ["messageId": deleteID]) } }
         }
     }
     private func send() { let body = text.trimmingCharacters(in: .whitespacesAndNewlines); if !body.isEmpty && social.action("DirectMessageSend", user: user, fields: ["body": String(body.prefix(2000))]) { text = "" } }
@@ -328,37 +348,40 @@ struct InboxView: View {
 extension Dictionary where Key == String, Value == Any { var intID: Int { int("id") } }
 @MainActor
 struct ModerationRows: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let open: (PlayerDestination) -> Void
     @State private var revoke: JSON = [:]
     @State private var confirm = false
     var body: some View {
+        let _ = language.selection
         if social.canModerate {
-            ForEach(["bans", "mutes"], id: \.self) { kind in Section(kind.capitalized) {
+            ForEach(["bans", "mutes"], id: \.self) { kind in Section(L(kind.capitalized)) {
                 ForEach(Array(social.admin.objects(kind).enumerated()), id: \.offset) { _, item in
                     VStack(alignment: .leading, spacing: 8) {
-                        Button("@"+item.string("targetUsername")) { open(PlayerDestination(user: item.string("targetUsername"))) }.font(.headline)
+                        Button(L("@"+item.string("targetUsername"))) { open(PlayerDestination(user: item.string("targetUsername"))) }.font(.headline)
                         Text(item.string("reason"))
-                        if kind == "mutes" { Text((item.bool("textChat") ? "Text " : "") + (item.bool("voiceChat") ? "Voice" : "")).font(.caption) }
-                        Text("By @\(item.string("issuedBy")) · \(socialDate(item.number("expiresAt")))").font(.caption).foregroundStyle(.secondary)
-                        Button(kind == "bans" ? "Unban" : "Unmute") { revoke = item; revoke["action"] = kind == "bans" ? "unban" : "unmute"; confirm = true }
+                        if kind == "mutes" { Text(L(item.bool("textChat") && item.bool("voiceChat") ? "Text and voice" : item.bool("textChat") ? "Text chat" : "Voice chat")).font(.caption) }
+                        Text(L("By @\(item.string("issuedBy")) · \(socialDate(item.number("expiresAt")))")).font(.caption).foregroundStyle(.secondary)
+                        Button(L(kind == "bans" ? "Unban" : "Unmute")) { revoke = item; revoke["action"] = kind == "bans" ? "unban" : "unmute"; confirm = true }
                     }.gtdRow()
                 }
             } }
-            Section("Staff") {
+            Section(L("Staff")) {
                 ForEach(Array(social.admin.objects("staff").enumerated()), id: \.offset) { _, item in Button {
                     open(PlayerDestination(user: item.string("username")))
-                } label: { VStack(alignment: .leading) { Text("@"+item.string("username")); Text(item.string("role") + " · assigned by @"+item.string("assignedBy")).font(.caption) } }.gtdRow() }
-                if social.level >= 2 { Button("Assign staff role") { open(PlayerDestination(user: "", action: "role")) }.gtdRow() }
-            }.confirmationDialog("Revoke this sanction?", isPresented: $confirm, titleVisibility: .visible) {
-                Button("Revoke") { social.roomRequest("ModerationRequest", user: revoke.string("targetUsername"), fields: ["action": revoke.string("action"), "sanctionId": revoke.int("id")]) }
+                } label: { VStack(alignment: .leading) { Text("@"+item.string("username")); Text(L10n.format("%1 · assigned by @%2", [L(item.string("role")), item.string("assignedBy")])).font(.caption) } }.gtdRow() }
+                if social.level >= 2 { Button(L("Assign staff role")) { open(PlayerDestination(user: "", action: "role")) }.gtdRow() }
+            }.confirmationDialog(L("Revoke this sanction?"), isPresented: $confirm, titleVisibility: .visible) {
+                Button(L("Revoke")) { social.roomRequest("ModerationRequest", user: revoke.string("targetUsername"), fields: ["action": revoke.string("action"), "sanctionId": revoke.int("id")]) }
             }
-        } else { Text("Your current role cannot manage this server.").gtdRow() }
+        } else { Text(L("Your current role cannot manage this server.")).gtdRow() }
     }
 }
 @MainActor
 struct PlayerActionForm: View {
+    @EnvironmentObject private var language: AppLanguage
     @ObservedObject var client: GameClient
     @ObservedObject var social: CommunityClient
     let destination: PlayerDestination
@@ -373,26 +396,27 @@ struct PlayerActionForm: View {
         return social.profiles[destination.user]?.object("room") ?? [:]
     }
     var body: some View {
+        let _ = language.selection
         NavigationStack {
             Form {
-                Section { Text("@" + destination.user).font(.title2.bold()); CommunityStatus(social: social) }.gtdRow()
+                Section { Text(L("@" + destination.user)).font(.title2.bold()); CommunityStatus(social: social) }.gtdRow()
                 if ["join", "watch", "invite"].contains(action) {
-                    Section("Join room") { Text(room.string("roomName")); if client.connected { Text("This will leave your current room.").foregroundStyle(.secondary) }; Toggle("Watch as spectator", isOn: $watch); if room.bool("privateRoom") { SecureField("Room passkey", text: $passkey) } }.gtdRow()
+                    Section(L("Join room")) { Text(room.string("roomName")); if client.connected { Text(L("This will leave your current room.")).foregroundStyle(.secondary) }; Toggle(L("Watch as spectator"), isOn: $watch); if room.bool("privateRoom") { SecureField(L("Room passkey"), text: $passkey) } }.gtdRow()
                 } else if action == "role" {
-                    Section("Server role") { TextField("Account username", text: $username).textInputAutocapitalization(.never); Picker("Role", selection: $role) { Text("Player").tag("player"); Text("Moderator").tag("moderator"); if social.level >= 3 { Text("Admin").tag("admin") } } }.gtdRow()
+                    Section(L("Server role")) { TextField(L("Account username"), text: $username).environment(\.layoutDirection, .leftToRight).textInputAutocapitalization(.never); Picker(L("Role"), selection: $role) { Text(L("Player")).tag("player"); Text(L("Moderator")).tag("moderator"); if social.level >= 3 { Text(L("Admin")).tag("admin") } } }.gtdRow()
                 } else if ["kick", "ban", "mute", "report"].contains(action) {
-                    Section("Reason") { TextField("Explain the reason", text: $reason) }.gtdRow()
-                    if action == "mute" { Section("Mute channels") { Toggle("Text chat", isOn: $textChat); Toggle("Voice chat", isOn: $voiceChat) }.gtdRow() }
-                    if ["ban", "mute"].contains(action) { Section("Expires") {
-                        Picker("Duration", selection: $mode) { Text("For a duration").tag("duration"); Text("Until date and time").tag("date"); Text("Permanent").tag("permanent") }
-                        if mode == "duration" { TextField("Amount", text: $amount).keyboardType(.numberPad); Picker("Unit", selection: $unit) { ForEach(CommunityPolicy.durationUnits, id: \.1) { Text($0.0).tag($0.1) } } }
-                        if mode == "date" { DatePicker("Until", selection: $until, in: Date()..., displayedComponents: [.date, .hourAndMinute]) }
+                    Section(L("Reason")) { TextField(L("Explain the reason"), text: $reason) }.gtdRow()
+                    if action == "mute" { Section(L("Mute channels")) { Toggle(L("Text chat"), isOn: $textChat); Toggle(L("Voice chat"), isOn: $voiceChat) }.gtdRow() }
+                    if ["ban", "mute"].contains(action) { Section(L("Expires")) {
+                        Picker(L("Duration"), selection: $mode) { Text(L("For a duration")).tag("duration"); Text(L("Until date and time")).tag("date"); Text(L("Permanent")).tag("permanent") }
+                        if mode == "duration" { TextField(L("Amount"), text: $amount).keyboardType(.numberPad); Picker(L("Unit"), selection: $unit) { ForEach(CommunityPolicy.durationUnits, id: \.1) { Text(L($0.0)).tag($0.1) } } }
+                        if mode == "date" { DatePicker(L("Until"), selection: $until, in: Date()..., displayedComponents: [.date, .hourAndMinute]) }
                     }.gtdRow() }
-                } else { Text(action == "remove" ? "Remove this player from your friends?" : action == "block" ? "Block this player?" : "Unblock this player?").gtdRow() }
-                if !error.isEmpty { Text(error).foregroundStyle(.red).gtdRow() }
-                Button(["join", "watch", "invite"].contains(action) ? "Join room" : "Confirm " + action, action: submit).gtdRow()
-            }.gtdSurface().navigationTitle(action.capitalized).navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("Cancel") { dismiss() } }.onAppear { username = destination.user; watch = action == "watch" }
+                } else { Text(L(action == "remove" ? "Remove this player from your friends?" : action == "block" ? "Block this player?" : "Unblock this player?")).gtdRow() }
+                if !error.isEmpty { Text(L(error)).foregroundStyle(.red).gtdRow() }
+                Button(L(["join", "watch", "invite"].contains(action) ? "Join room" : "Confirm"), action: submit).gtdRow()
+            }.gtdSurface().navigationTitle(L(action.capitalized)).navigationBarTitleDisplayMode(.inline)
+                .toolbar { Button(L("Cancel")) { dismiss() } }.onAppear { username = destination.user; watch = action == "watch" }
         }
     }
     private func submit() {
@@ -416,7 +440,7 @@ struct PlayerActionForm: View {
         if action == "mute" && !textChat && !voiceChat { error = "Select at least one chat channel."; return }
         if action != "kick" && mode != "permanent" {
             let expiry: Double
-            if mode == "duration" { guard let n = Int(amount), (1...100000).contains(n) else { error = "Choose an amount between 1 and 100000."; return }; expiry = Date().timeIntervalSince1970 + Double(n) * Double(unit) }
+            if mode == "duration" { guard let n = L10n.integer(amount), (1...100000).contains(n) else { error = "Choose an amount between 1 and 100000."; return }; expiry = Date().timeIntervalSince1970 + Double(n) * Double(unit) }
             else { expiry = until.timeIntervalSince1970 }
             guard expiry > Date().timeIntervalSince1970 else { error = "Choose a future expiry."; return }; fields["expiresAt"] = Int(expiry)
         }

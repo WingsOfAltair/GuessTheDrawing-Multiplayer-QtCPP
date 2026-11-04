@@ -129,7 +129,7 @@ xcodebuild -project mobile/ios/GuessTheDrawing.xcodeproj \
 ~~~
 
 Android also accepts GTD_RELEASE_VERSION, matching the Qt build environment
-variable. Store build numbers (Android versionCode 3 / iOS CURRENT_PROJECT_VERSION 2) are
+variable. Store build numbers (Android versionCode 4 / iOS CURRENT_PROJECT_VERSION 3) are
 independent of the exact protocol app-version string. Mismatches are shown in
 the app; mobile builds never download or execute the Windows updater.
 
@@ -166,6 +166,49 @@ saved locally, applies to gameplay and community screens, and can change without
 disconnecting. System follows the device appearance; the drawing canvas remains
 white so artwork stays consistent across players.
 
+## Languages and text direction
+
+Both apps offer the desktop language list: English, Español, Français, Deutsch,
+Português, Italiano, Русский, 中文（简体）, 日本語, 한국어, العربية and हिन्दी.
+Use **Language** in the Android toolbar menu, or beside **Theme** on the iOS
+login screen, profile screen and room menu. The first launch uses the device's
+supported language; your selection is saved locally. Switching languages keeps
+the current game connection. Android rebuilds its native screen and closes open
+sheets, so switch before entering an unsaved form.
+
+Arabic mirrors navigation, lists, forms and menus. Host addresses, usernames
+and numeric connection fields use left-to-right input; the drawing canvas keeps
+the desktop coordinate system. Embedded usernames, ranks, IP addresses and
+numbers use Unicode directional isolation. Arabic and Hindi digits are accepted
+in port/duration input. Dates use the selected locale. All other listed languages
+use left-to-right layout.
+
+The shared catalog covers gameplay, drawing tools, themes, profiles and ranks,
+search, friends, inbox, notifications, moderation, voice guidance, common server
+responses and iOS permission descriptions. User-written messages, room/layer
+names, moderation reasons and the server's game words stay unchanged. Translating
+the interface does not translate the shared game dictionary. Unknown server or
+operating-system diagnostics are displayed as supplied. System-owned permission
+and share dialogs follow the OS/app language settings.
+
+`localization/desktop.json` is a snapshot of the 172 shared translations from
+`src/client/main_window.cpp`; the UTF-8 pipe-separated `.tsv` files add mobile text.
+`aliases.json` reuses equivalent labels; `compositions.json` combines labels in
+statistic rows. `required.json` lists the required mobile keys. Native resources
+and `catalog.json` are generated and checked in:
+
+~~~sh
+python mobile/tools/generate_localizations.py
+python mobile/tools/generate_xcode_project.py
+python mobile/tools/check_localizations.py
+~~~
+
+Generation fails on missing translations unless the explicit development-only
+`--allow-incomplete` option is used. Android packages all languages even in an
+App Bundle, allowing offline language changes. iOS uses localized `.lproj`
+resources and explicit SwiftUI locale/layout direction. Keep placeholder numbers
+unchanged when editing translations. See `localization/README.md` for details.
+
 ## Profiles, friends and moderation
 
 Tap a player in the room, rankings, friends or search results to open their full
@@ -188,8 +231,8 @@ context actions; the same actions are available inside the profile.
   years, a specific date/time, or permanent sanctions. Actions follow the
   desktop role hierarchy; the server remains authoritative about permissions.
 
-Desktop translations, object scaling, clipboard actions and stroke-cutting
-eraser are not included. The mobile eraser deletes whole objects. Polygon
+Object scaling, clipboard actions and the desktop stroke-cutting eraser are not
+included. The mobile eraser deletes whole objects. Polygon
 draws a closed freehand gesture. Android provides a canvas color sampler;
 iOS uses its system color picker.
 
@@ -209,18 +252,27 @@ capture and voice relay, moderation, drawing snapshots, chat and guessing.
 
 ~~~powershell
 python mobile/tools/check_projects.py
+python mobile/tools/check_localizations.py
 python mobile/tools/server_smoke.py --bin build/Debug --qt-bin C:/Qt/6.9.1/msvc2022_64/bin
 # With an already-running Android emulator:
 python mobile/tools/server_smoke.py --bin build/Debug --qt-bin C:/Qt/6.9.1/msvc2022_64/bin --android
+# Specify one emulator when several are running:
+python mobile/tools/server_smoke.py --bin build/Debug --qt-bin C:/Qt/6.9.1/msvc2022_64/bin --android --serial emulator-5556
 ~~~
 
 Use --version when the binaries use a release override. Tests use disposable
 accounts, a private room, unique ports and a temporary database/config; they do
 not use production data. Android mode uses a separate regression application ID,
-seeds a staff account only in its disposable database, uses adb -e reverse and
+seeds a staff account only in its disposable database, uses device-specific adb reverse and
 removes its own forwarding rules afterward. Set ANDROID_HOME and JAVA_HOME.
 After that test, run a normal assembleDebug to produce the installable app with
 its standard application ID. See VALIDATION.md for executed checks and limits.
+
+The Android localization test switches through all 12 languages, checks native
+resources, RTL/LTR layout, unchanged user content, address input, numeric input,
+and persistence after Activity recreation. The live-game test changes language
+during a round before verifying drawing relay. Screenshots are written under
+the test emulator's `Pictures/GTDLocalization` and `Pictures/GTDTest` folders.
 
 The mobile GitHub Actions workflow builds/tests Android on Linux and builds
 the iOS simulator app and runs Swift core tests on macOS. iOS compilation,

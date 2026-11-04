@@ -77,10 +77,13 @@ def main():
     parser.add_argument("--qt-bin", type=Path)
     parser.add_argument("--android", action="store_true")
     parser.add_argument("--adb", type=Path)
+    parser.add_argument("--serial", help="Use this Android device only (for example emulator-5556)")
     parser.add_argument("--version", default=VERSION, help="Exact version of the server binaries under test")
     args = parser.parse_args()
     VERSION = args.version
     env = os.environ.copy()
+    if args.serial:
+        env["ANDROID_SERIAL"] = args.serial
     for key in ("GTD_SESSION_SECRET", "GTD_SERVER_SECRET", "GTD_ROOM_PASSKEY"):
         env.pop(key, None)
     if args.qt_bin:
@@ -93,6 +96,7 @@ def main():
         game_port = available_port()
     processes, peers, logs = [], [], []
     adb = str(args.adb or Path(env.get("ANDROID_HOME", "")) / "platform-tools" / ("adb.exe" if os.name == "nt" else "adb"))
+    device = ["-s", args.serial] if args.serial else ["-e"]
     with tempfile.TemporaryDirectory(prefix="gtd-mobile-") as folder:
         folder = Path(folder)
         config = {
@@ -136,7 +140,7 @@ def main():
                     db.execute("INSERT INTO master_super_admins(username) VALUES (?)", ("mobile_test_admin",))
                 db.close()
                 for port in (master_port, game_port):
-                    subprocess.run([adb, "-e", "reverse", f"tcp:{port}", f"tcp:{port}"], check=True)
+                    subprocess.run([adb, *device, "reverse", f"tcp:{port}", f"tcp:{port}"], check=True)
                 gradle = MOBILE / "android" / ("gradlew.bat" if os.name == "nt" else "gradlew")
                 subprocess.run([str(gradle), "--no-daemon", "connectedDebugAndroidTest",
                     f"-PgtdVersion={VERSION}",
@@ -194,7 +198,7 @@ def main():
                 peer.close()
             if args.android:
                 for port in (master_port, game_port):
-                    subprocess.run([adb, "-e", "reverse", "--remove", f"tcp:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run([adb, *device, "reverse", "--remove", f"tcp:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for process in processes:
                 process.terminate()
             for process in processes:
