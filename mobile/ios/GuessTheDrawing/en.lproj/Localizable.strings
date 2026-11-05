@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "Enter the current password and a new password to change it";
 "Enter the server, username, password and a display name if registering." = "Enter the server, username, password and a display name if registering.";
 "Enter the server, username, password and display name if registering." = "Enter the server, username, password and display name if registering.";
+"Eraser" = "Eraser";
 "Eraser · cut strokes" = "Eraser · cut strokes";
 "Error" = "Error";
 "Expires" = "Expires";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "Speaker write failed (%1)";
 "Spectating" = "Spectating";
 "Spectator" = "Spectator";
+"Spectators" = "Spectators";
 "Staff" = "Staff";
 "Start a conversation" = "Start a conversation";
 "Stay" = "Stay";

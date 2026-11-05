@@ -48,7 +48,7 @@ for name in ("Debug", "Release"):
     target_settings = {
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
-        "CODE_SIGN_STYLE": "Automatic", "CURRENT_PROJECT_VERSION": "3",
+        "CODE_SIGN_STYLE": "Automatic", "CURRENT_PROJECT_VERSION": "4",
         "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "GuessTheDrawing/Info.plist",
         "IPHONEOS_DEPLOYMENT_TARGET": "16.0", "MARKETING_VERSION": "$(GTD_GAME_VERSION)",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.guessthedrawing.mobile",

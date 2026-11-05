@@ -201,6 +201,7 @@
     <string name="l_725b57807307" formatted="false">"Saisissez les mots de passe actuel et nouveau pour le modifier."</string>
     <string name="l_fcf5c114d52b" formatted="false">"Saisissez le serveur, l\'identifiant, le mot de passe et, pour une inscription, un nom affiché."</string>
     <string name="l_e2252e1b2865" formatted="false">"Saisissez le serveur, l\'identifiant, le mot de passe et, pour une inscription, un nom affiché."</string>
+    <string name="l_a5742851f0f8" formatted="false">"Gomme"</string>
     <string name="l_1fdcb52e5ff2" formatted="false">"Gomme · couper les traits"</string>
     <string name="l_7f2f6a15cf8d" formatted="false">"Erreur"</string>
     <string name="l_a99be3da0c9d" formatted="false">"Expiration"</string>
@@ -573,6 +574,7 @@
     <string name="l_f09f7841d657" formatted="false">"Impossible de démarrer la lecture audio (%1)"</string>
     <string name="l_0c6b6d4f70cf" formatted="false">"spectateur"</string>
     <string name="l_4e920fa89711" formatted="false">"spectateur"</string>
+    <string name="l_996dc5d03b66" formatted="false">"Spectateurs"</string>
     <string name="l_a4730a22cf49" formatted="false">"Équipe du serveur"</string>
     <string name="l_244c20ea947b" formatted="false">"Démarrer une conversation"</string>
     <string name="l_ae768f766f75" formatted="false">"Rester"</string>

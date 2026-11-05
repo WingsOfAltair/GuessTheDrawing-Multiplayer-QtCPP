@@ -9,6 +9,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.*
 import org.json.JSONObject
 import java.text.DateFormat
@@ -47,7 +48,11 @@ class CommunityUI(private val activity: MainActivity) {
         val content = column()
         body.addView(activity.scroll(content), LinearLayout.LayoutParams(-1, 0, 1f))
         dialog.setOnDismissListener { watchers.remove(dialog) }
-        dialog.show(); dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (activity.resources.displayMetrics.heightPixels * 0.9).toInt())
+        dialog.show()
+        // Editors are added after show(); AlertDialog has already marked the empty sheet as non-editable.
+        dialog.window?.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (activity.resources.displayMetrics.heightPixels * 0.9).toInt())
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(activity.appearance.palette.window))
         body.setBackgroundColor(activity.appearance.palette.window)
         return Sheet(dialog, body, content)
@@ -67,7 +72,8 @@ class CommunityUI(private val activity: MainActivity) {
         val sheet = sheet("People & messages")
         val sections = listOf("Friends", "Requests", "Inbox", "Notifications", "Find players", "Blocked") + if (social.canModerate) listOf("Moderation") else emptyList()
         var section = initial.takeIf { it in sections } ?: "Friends"
-        val chooser = Spinner(activity).apply { adapter = L10n.options(activity, sections); setSelection(sections.indexOf(section)) }
+        val sectionAdapter = L10n.options(activity, sections) { social.sectionLabel(it) }
+        val chooser = Spinner(activity).apply { adapter = sectionAdapter; setSelection(sections.indexOf(section)) }
         sheet.body.addView(chooser, 3)
         val searchRow = activity.row()
         val search = activity.input("Username or display name", social.query, limit = 80)
@@ -75,6 +81,7 @@ class CommunityUI(private val activity: MainActivity) {
         sheet.body.addView(searchRow, 4)
         chooser.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (section == sections[position]) return
                 section = sections[position]; searchRow.visibility = if (section == "Find players") View.VISIBLE else View.GONE
                 if (section == "Moderation") social.refreshAdmin()
                 refresh()
@@ -82,6 +89,7 @@ class CommunityUI(private val activity: MainActivity) {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
         watch(sheet, { section + social.friends + social.requests + social.conversations + social.notifications + social.blocked + social.users + social.admin + social.invitations + social.canModerate }) { area ->
+            sectionAdapter.notifyDataSetChanged()
             when (section) {
                 "Friends", "Find players" -> {
                     val entries = if (section == "Friends") social.friends else social.users

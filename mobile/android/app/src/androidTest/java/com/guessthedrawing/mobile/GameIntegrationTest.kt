@@ -85,10 +85,20 @@ class GameIntegrationTest {
             main { watcher.join(watcher.rooms.getJSONObject(0), true, "mobile-room-passkey") }
             await("late spectator snapshot") { watcher.spectator && watcher.connected && watcher.scene.objects.any { it.optString("id") == "android-test-stroke" } }
             verifyCurve(drawing, guessing, watcher)
+            verifyEraser(drawing, guessing, watcher)
             saveScreenshot("localization-ar-game.png")
             scenario.onActivity { it.communityUI.profile(peer.username) }
             saveScreenshot("localization-ar-profile.png")
             scenario.onActivity { it.communityUI.close(); it.selectLanguage("en") }
+            scenario.onActivity { activity ->
+                descendants(activity.window.decorView).filterIsInstance<Button>().first { it.text == "Players" }.performClick()
+            }
+            await("Players and spectators have separate counted sections") {
+                val labels = android.view.inspector.WindowInspector.getGlobalWindowViews().flatMap(::descendants)
+                    .filterIsInstance<android.widget.TextView>().map { it.text.toString() }
+                "Players (2)" in labels && "Spectators (1)" in labels
+            }
+            saveScreenshot("players-and-spectators.png")
             // Multiple simulated players share this process. Keep the Activity's listener
             // from competing with the test speaker for the same device's audio focus.
             scenario.onActivity { it.voice.listening = false }
@@ -204,6 +214,60 @@ class GameIntegrationTest {
         await("curve is one undo transaction") { peer.scene.objects.none { it.optString("id") == id } }
         main { canvas.redo() }
         await("curve redo") { peer.scene.objects.any { it.optString("id") == id && it.array("points").length() == 3 } }
+    }
+    private fun verifyEraser(drawing: GameClient, peer: GameClient, watcher: GameClient) {
+        lateinit var canvas: DrawingView
+        val layerID = "eraser-test-layer"
+        fun event(action: Int, x: Float, y: Float) {
+            val e = MotionEvent.obtain(SystemClock.uptimeMillis(), SystemClock.uptimeMillis(), action, x*800, y*600, 0)
+            canvas.onTouchEvent(e); e.recycle()
+        }
+        main {
+            canvas = DrawingView(instrumentation.targetContext, drawing).apply { layout(0, 0, 800, 600); tool = "stroke_eraser"; strokeSize = 6 }
+            android.widget.FrameLayout(instrumentation.targetContext).addView(canvas)
+            val bottomLayer = drawing.scene.layers.first().optString("id")
+            drawing.operation(json("action" to "layer_upsert", "layer" to json("id" to layerID, "name" to "Eraser test", "order" to 20, "visible" to true, "locked" to false)))
+            fun shape(id: String, layer: String, color: String) = json("id" to id, "layerId" to layer, "type" to "rectangle", "filled" to true,
+                "color" to color, "fillColor" to color, "strokeWidth" to 6, "x" to .2, "y" to .1, "width" to .6, "height" to .6)
+            drawing.operation(json("action" to "object_upsert", "object" to shape("eraser-underneath", bottomLayer, "#0000FF")))
+            drawing.operation(json("action" to "object_upsert", "object" to shape("eraser-shape", layerID, "#FF0000")))
+            drawing.operation(json("action" to "object_upsert", "object" to json("id" to "eraser-stroke", "layerId" to layerID,
+                "type" to "freehand", "color" to "#00AA00", "strokeWidth" to 6, "x" to .1, "y" to .85, "width" to .8, "height" to 0,
+                "points" to JSONArray().put(json("x" to .1, "y" to .85)).put(json("x" to .9, "y" to .85)))))
+            canvas.selectedLayer = layerID
+        }
+        await("eraser setup reaches both clients") { listOf(peer, watcher).all { it.scene.objects.any { o -> o.optString("id") == "eraser-stroke" } } }
+        main {
+            event(MotionEvent.ACTION_DOWN, .5f, .3f); event(MotionEvent.ACTION_MOVE, .5f, .65f); event(MotionEvent.ACTION_UP, .5f, .9f)
+            val image = canvas.snapshot()
+            assertEquals("Erasing reveals the lower blue layer", android.graphics.Color.BLUE, image.getPixel(image.width/2, (image.height*.4).toInt()))
+            assertEquals("The unerased red shape remains", android.graphics.Color.RED, image.getPixel((image.width*.3).toInt(), (image.height*.4).toInt()))
+            image.recycle()
+        }
+        await("partial eraser relays split strokes and raster transparency") {
+            listOf(peer, watcher).all { other ->
+                other.scene.objects.count { it.optString("layerId") == layerID && it.optString("type") == "freehand" } == 2 &&
+                    other.scene.objects.any { it.optString("id") == "eraser-shape" && it.optString("type") == "fill" }
+            }
+        }
+        main { canvas.undo() }
+        await("one undo restores every object touched in the drag") {
+            listOf(peer, watcher).all { other ->
+                other.scene.objects.count { it.optString("layerId") == layerID } == 2 &&
+                    other.scene.objects.any { it.optString("id") == "eraser-shape" && it.optString("type") == "rectangle" } &&
+                    other.scene.objects.first { it.optString("id") == "eraser-stroke" }.array("points").length() == 2
+            }
+        }
+        main { canvas.redo() }
+        await("redo reapplies the entire erase gesture") { peer.scene.objects.count { it.optString("layerId") == layerID } == 3 }
+        main {
+            val layer = drawing.scene.layers.first { it.optString("id") == layerID }.copy().put("locked", true)
+            drawing.operation(json("action" to "layer_upsert", "layer" to layer))
+            val before = drawing.scene.objects.toString()
+            event(MotionEvent.ACTION_DOWN, .3f, .4f); event(MotionEvent.ACTION_UP, .3f, .4f)
+            assertEquals("The eraser respects locked layers", before, drawing.scene.objects.toString())
+            drawing.operation(json("action" to "layer_upsert", "layer" to layer.put("locked", false)))
+        }
     }
     private fun verifyVoice(speaker: GameClient, listener: GameClient) {
         instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, android.Manifest.permission.RECORD_AUDIO)

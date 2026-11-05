@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "Для смены пароля введите текущий и новый пароль.";
 "Enter the server, username, password and a display name if registering." = "Укажите сервер, имя пользователя, пароль и отображаемое имя при регистрации.";
 "Enter the server, username, password and display name if registering." = "Укажите сервер, имя пользователя, пароль и отображаемое имя при регистрации.";
+"Eraser" = "Ластик";
 "Eraser · cut strokes" = "Ластик · стирать штрихи";
 "Error" = "Ошибка";
 "Expires" = "Истекает";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "Не удалось начать воспроизведение аудио (%1)";
 "Spectating" = "зритель";
 "Spectator" = "зритель";
+"Spectators" = "Зрители";
 "Staff" = "Команда сервера";
 "Start a conversation" = "Начать переписку";
 "Stay" = "Остаться";

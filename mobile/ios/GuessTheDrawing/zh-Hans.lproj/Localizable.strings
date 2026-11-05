@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "请输入当前密码和新密码以更改密码。";
 "Enter the server, username, password and a display name if registering." = "请输入服务器、用户名和密码；注册时还需填写显示名称。";
 "Enter the server, username, password and display name if registering." = "请输入服务器、用户名和密码；注册时还需填写显示名称。";
+"Eraser" = "橡皮擦";
 "Eraser · cut strokes" = "橡皮擦 · 删除笔画";
 "Error" = "错误";
 "Expires" = "到期时间";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "无法启动音频播放 (%1)";
 "Spectating" = "观众";
 "Spectator" = "观众";
+"Spectators" = "观众";
 "Staff" = "服务器管理团队";
 "Start a conversation" = "开始聊天";
 "Stay" = "留下";

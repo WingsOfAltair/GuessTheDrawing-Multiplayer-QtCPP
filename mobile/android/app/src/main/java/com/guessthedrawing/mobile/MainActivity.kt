@@ -252,8 +252,8 @@ class MainActivity : ComponentActivity() {
             curveControls?.visibility = if (canvas.curvePending) View.VISIBLE else View.GONE
         }
         val tools = row()
-        val names = listOf("Pen", "Brush", "Airbrush", "Curve", "Polygon", "Line", "Rectangle", "Rounded rectangle", "Ellipse", "Move", "Object eraser", "Fill", "Pick color", "Text")
-        val types = listOf("freehand", "brush", "airbrush", "curve", "polygon", "line", "rectangle", "rounded_rectangle", "ellipse", "move", "eraser", "fill", "pick", "text")
+        val names = listOf("Pen", "Brush", "Airbrush", "Curve", "Polygon", "Line", "Rectangle", "Rounded rectangle", "Ellipse", "Move", "Eraser", "Object eraser", "Fill", "Pick color", "Text")
+        val types = listOf("freehand", "brush", "airbrush", "curve", "polygon", "line", "rectangle", "rounded_rectangle", "ellipse", "move", "stroke_eraser", "eraser", "fill", "pick", "text")
         tools.addView(button("Tools") {
             LocalizedDialogBuilder(this).setTitle("Drawing tool").setItems(names.toTypedArray()) { _, index -> canvas.tool = types[index] }.show()
         })
@@ -374,9 +374,13 @@ class MainActivity : ComponentActivity() {
                 client.messages.takeLast(80).forEach { area.addView(label(client.messageText(it), 14f, translate = false)) }
                 area.post { (area.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN) }
             }
-            1 -> client.players.objects().forEach {
-                playerRow(area, it.obj("profile"), (if (it.optBoolean("spectator")) "Spectator" else "Player") +
-                    " · " + it.optInt("roomScore") + " points" + if (it.optBoolean("guessed")) " · Guessed" else "")
+            1 -> listOf(false, true).forEach { spectators ->
+                val entries = client.players.objects().filter { it.optBoolean("spectator") == spectators }
+                area.addView(label(L10n.format("%1 (%2)", L10n.text(if (spectators) "Spectators" else "Players"), entries.size), 20f, translate = false))
+                entries.forEach {
+                    playerRow(area, it.obj("profile"), (if (spectators) "Spectator" else "Player") +
+                        " · " + it.optInt("roomScore") + " points" + if (it.optBoolean("guessed")) " · Guessed" else "")
+                }
             }
             else -> layers(area)
         }

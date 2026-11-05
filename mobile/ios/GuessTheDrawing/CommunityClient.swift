@@ -17,6 +17,19 @@ final class CommunityClient: ObservableObject {
     init(client: GameClient) { self.client = client }
     private func update() { objectWillChange.send(); client?.communityChanged() }
     var busy: Bool { !pending.isEmpty }
+    func sectionCount(_ section: String) -> Int {
+        switch section {
+        case "Friends": return friends.count
+        case "Requests": return requests.count + notifications.filter { $0.string("kind") == "friend_request_accepted" }.count
+        case "Inbox": return conversations.count
+        case "Notifications": return notifications.count + invitations.count
+        case "Find players": return users.count
+        case "Blocked": return blocked.count
+        case "Moderation": return ["bans", "mutes", "staff"].reduce(0) { $0 + admin.objects($1).count }
+        default: return 0
+        }
+    }
+    func sectionLabel(_ section: String) -> String { L10n.format("%1 (%2)", [L(section), sectionCount(section)]) }
     var badge: Int {
         requests.filter { $0.string("recipientUsername") == client?.username && $0.string("status") == "pending" }.count +
             notifications.count + conversations.reduce(0) { $0 + $1.int("unreadCount") } + invitations.count

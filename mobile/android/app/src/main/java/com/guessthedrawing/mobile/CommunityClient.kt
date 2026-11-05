@@ -30,6 +30,17 @@ class CommunityClient(private val client: GameClient, private val send: (String,
     private val latest = mutableMapOf<String, String>()
     private val ui = Handler(Looper.getMainLooper())
     val busy get() = pending.isNotEmpty()
+    fun sectionCount(section: String): Int = when (section) {
+        "Friends" -> friends.size
+        "Requests" -> requests.size + notifications.count { it.optString("kind") == "friend_request_accepted" }
+        "Inbox" -> conversations.size
+        "Notifications" -> notifications.size + invitations.size
+        "Find players" -> users.size
+        "Blocked" -> blocked.size
+        "Moderation" -> listOf("bans", "mutes", "staff").sumOf { admin.array(it).length() }
+        else -> 0
+    }
+    fun sectionLabel(section: String) = L10n.format("%1 (%2)", L10n.text(section), sectionCount(section))
     val badge get() = requests.count { it.optString("recipientUsername") == client.username && it.optString("status") == "pending" } +
         notifications.size + conversations.sumOf { it.optInt("unreadCount") } + invitations.size
     val ownRole: JSONObject get() = client.players.objects().find { it.obj("profile").optString("username") == client.username }?.obj("profile") ?: client.profile

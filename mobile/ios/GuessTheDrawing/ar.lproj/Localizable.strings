@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "أدخل كلمة المرور الحالية والجديدة لتغيير كلمة المرور.";
 "Enter the server, username, password and a display name if registering." = "أدخل الخادم واسم المستخدم وكلمة المرور، والاسم الظاهر عند التسجيل.";
 "Enter the server, username, password and display name if registering." = "أدخل الخادم واسم المستخدم وكلمة المرور، والاسم الظاهر عند التسجيل.";
+"Eraser" = "ممحاة";
 "Eraser · cut strokes" = "ممحاة · قص الخطوط";
 "Error" = "خطأ";
 "Expires" = "انتهاء الصلاحية";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "تعذر بدء تشغيل الصوت (%1)";
 "Spectating" = "مشاهد";
 "Spectator" = "مشاهد";
+"Spectators" = "المتفرجون";
 "Staff" = "فريق الخادم";
 "Start a conversation" = "بدء محادثة";
 "Stay" = "البقاء";

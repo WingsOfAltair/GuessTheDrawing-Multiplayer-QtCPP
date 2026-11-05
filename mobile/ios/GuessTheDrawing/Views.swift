@@ -316,8 +316,8 @@ struct GameView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 18) {
                 Menu {
-                    let names = ["Pen", "Brush", "Airbrush", "Curve", "Polygon", "Line", "Rectangle", "Rounded rectangle", "Ellipse", "Move", "Object eraser", "Fill", "Text"]
-                    let types = ["freehand", "brush", "airbrush", "curve", "polygon", "line", "rectangle", "rounded_rectangle", "ellipse", "move", "eraser", "fill", "text"]
+                    let names = ["Pen", "Brush", "Airbrush", "Curve", "Polygon", "Line", "Rectangle", "Rounded rectangle", "Ellipse", "Move", "Eraser", "Object eraser", "Fill", "Text"]
+                    let types = ["freehand", "brush", "airbrush", "curve", "polygon", "line", "rectangle", "rounded_rectangle", "ellipse", "move", "stroke_eraser", "eraser", "fill", "text"]
                     ForEach(names.indices, id: \.self) { i in Button(L(names[i])) { tools.tool = types[i] } }
                 } label: { Label(L("Tools"), systemImage: "paintbrush.pointed") }
                 ColorPicker(L("Ink color"), selection: $tools.color, supportsOpacity: false).labelsHidden().frame(width: 32)
@@ -338,8 +338,15 @@ struct GameView: View {
                     .onChange(of: client.messages.count) { _ in if !client.messages.isEmpty { reader.scrollTo(client.messages.count - 1, anchor: .bottom) } }
             }
         } else if tab == 1 {
-            List(Array(client.players.enumerated()), id: \.offset) { _, p in
-                InteractivePlayerRow(client: client, social: client.community, profile: p.object("profile"), detail: L(p.bool("spectator") ? "Spectator" : "Player") + " · " + L10n.format("%1 points", [p.int("roomScore")]))
+            List {
+                ForEach([false, true], id: \.self) { spectators in
+                    let entries = client.players.filter { $0.bool("spectator") == spectators }
+                    Section(L10n.format("%1 (%2)", [L(spectators ? "Spectators" : "Players"), entries.count])) {
+                        ForEach(Array(entries.enumerated()), id: \.offset) { _, p in
+                            InteractivePlayerRow(client: client, social: client.community, profile: p.object("profile"), detail: L(spectators ? "Spectator" : "Player") + " · " + L10n.format("%1 points", [p.int("roomScore")]))
+                        }
+                    }
+                }
             }.listStyle(.plain).gtdSurface()
         } else { LayersView(client: client, tools: tools) }
     }

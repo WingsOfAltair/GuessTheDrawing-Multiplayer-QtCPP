@@ -40,7 +40,7 @@ struct DrawingBoard: UIViewRepresentable {
         tools.redo = { [weak view] in view?.redo() }
         tools.snapshot = { [weak view] in view?.snapshot() }
         tools.addText = { [weak view] in view?.addText($0) }
-        tools.finishCurve = { [weak view] in view?.finishCurve() }
+        tools.finishCurve = { [weak view] in view?.finishCurve(); view?.finishErasing() }
         tools.cancelCurve = { [weak view] in view?.cancelCurve() }
         return view
     }
@@ -57,8 +57,12 @@ final class BoardView: UIView {
     private var lastSent = Date.distantPast
     private var roundKey = ""
     private var curveHandle: Int?
-    private var history: [(JSON, JSON)] = []
-    private var redoHistory: [(JSON, JSON)] = []
+    private struct Edit { let forward: [JSON]; let inverse: [JSON] }
+    private var history: [Edit] = []
+    private var redoHistory: [Edit] = []
+    private var eraseIDs: [String] = []
+    private var eraseBefore: [String: JSON] = [:]
+    private var eraseLast: CGPoint?
     private let images = NSCache<NSString, UIImage>()
     init(client: GameClient, tools: DrawingTools) {
         self.client = client; self.tools = tools
@@ -73,7 +77,7 @@ final class BoardView: UIView {
         let key = "\(client.drawer):\(client.roundActive):\(client.canDraw):\(client.scene.resetCount)"
         if key != roundKey || !editable {
             draft = nil; original = nil; curveHandle = nil
-            if key != roundKey { history = []; redoHistory = []; roundKey = key }
+            if key != roundKey { history = []; redoHistory = []; eraseIDs = []; eraseBefore = [:]; eraseLast = nil; roundKey = key }
             // updateUIView must not publish a SwiftUI change synchronously.
             if tools.curvePending { DispatchQueue.main.async { [weak self] in self?.publishCurveState() } }
         }
@@ -86,18 +90,119 @@ final class BoardView: UIView {
     private func upsert(_ object: JSON) -> JSON { ["action": "object_upsert", "object": object] }
     private func deletion(_ id: String) -> JSON { ["action": "object_delete", "objectId": id] }
     private func commit(_ forward: JSON, inverse: JSON) {
-        client.operation(forward); history.append((forward, inverse)); redoHistory = []
+        client.operation(forward); remember(Edit(forward: [forward], inverse: [inverse]))
+    }
+    private func remember(_ edit: Edit) {
+        history.append(edit); redoHistory = []
         if history.count > 50 { history.removeFirst() }
     }
     func undo() {
+        finishErasing()
         if draft?.string("type") == "curve" { cancelCurve(); return }
         guard client.canDraw, let entry = history.popLast() else { return }
-        client.operation(entry.1); redoHistory.append(entry)
+        entry.inverse.forEach(client.operation); redoHistory.append(entry)
     }
     func redo() {
-        finishCurve()
+        finishCurve(); finishErasing()
         guard client.canDraw, let entry = redoHistory.popLast() else { return }
-        client.operation(entry.0); history.append(entry)
+        entry.forward.forEach(client.operation); history.append(entry)
+    }
+    private func eraseOperation(_ operation: JSON, id: String) {
+        if !eraseIDs.contains(id) {
+            eraseIDs.append(id)
+            eraseBefore[id] = client.scene.objects.first { $0.string("id") == id }
+        }
+        client.operation(operation)
+    }
+    func finishErasing() {
+        var forward: [JSON] = [], inverse: [JSON] = []
+        for id in eraseIDs {
+            let before = eraseBefore[id], after = client.scene.objects.first { $0.string("id") == id }
+            if before != nil || after != nil {
+                forward.append(after.map(upsert) ?? deletion(id))
+                inverse.append(before.map(upsert) ?? deletion(id))
+            }
+        }
+        func deletionsFirst(_ operations: [JSON]) -> [JSON] {
+            operations.filter { $0.string("action") == "object_delete" } + operations.filter { $0.string("action") != "object_delete" }
+        }
+        if !forward.isEmpty { remember(Edit(forward: deletionsFirst(forward), inverse: deletionsFirst(inverse))) }
+        eraseIDs = []; eraseBefore = [:]; eraseLast = nil
+    }
+    private func eraseTo(_ p: CGPoint) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let last = eraseLast ?? p, radius = max(6, CGFloat(tools.width) * 2)
+        let centers = StrokeEraser.sweep(from: CGPoint(x: last.x * bounds.width, y: last.y * bounds.height),
+            to: CGPoint(x: p.x * bounds.width, y: p.y * bounds.height), radius: radius)
+        eraseLast = p
+        if tools.tool == "eraser" {
+            for center in centers {
+                if let old = hit(CGPoint(x: center.x / bounds.width, y: center.y / bounds.height)) {
+                    eraseOperation(deletion(old.string("id")), id: old.string("id"))
+                }
+            }
+            return
+        }
+        for object in client.scene.objects {
+            guard object.string("layerId") == selectedLayer?.string("id") else { continue }
+            let id = object.string("id")
+            if ["freehand", "brush", "airbrush", "curve"].contains(object.string("type")) {
+                var fragments = [object.objects("points").map { CGPoint(x: CGFloat($0.number("x")) * bounds.width, y: CGFloat($0.number("y")) * bounds.height) }]
+                var changed = false
+                for center in centers {
+                    fragments = fragments.flatMap { path in
+                        let cut = StrokeEraser.cut(path, center: center, radius: radius)
+                        changed = changed || cut.changed; return cut.fragments
+                    }
+                }
+                guard changed else { continue }
+                guard client.scene.objects.count - 1 + fragments.count <= 1000 else { client.notice("Canvas has reached its object limit."); continue }
+                if fragments.isEmpty { eraseOperation(deletion(id), id: id) }
+                for (index, points) in fragments.enumerated() {
+                    var fragment = object
+                    fragment["id"] = index == 0 ? id : UUID().uuidString
+                    fragment["points"] = points.map { point(CGPoint(x: $0.x / bounds.width, y: $0.y / bounds.height)) }
+                    geometry(&fragment); eraseOperation(upsert(fragment), id: fragment.string("id"))
+                }
+            } else { eraseRaster(object, centers: centers, radius: radius) }
+        }
+    }
+    private func eraseRaster(_ object: JSON, centers: [CGPoint], radius: CGFloat) {
+        let padding = CGFloat(object.int("strokeWidth", 4)) * min(bounds.width, bounds.height) / 300
+        let box = rect(object, size: bounds.size).insetBy(dx: -radius-padding, dy: -radius-padding)
+        guard centers.contains(where: box.contains) else { return }
+        let factor = 512 / max(bounds.width, bounds.height)
+        let size = CGSize(width: max(1, floor(bounds.width * factor)), height: max(1, floor(bounds.height * factor)))
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false; format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        // Isolate the object, preserving transparent holes instead of painting the canvas white.
+        let before = renderer.image { paint(object, in: $0.cgContext, size: size) }
+        let after = renderer.image { context in
+            before.draw(at: .zero)
+            context.cgContext.setBlendMode(.clear)
+            for p in centers {
+                context.cgContext.fillEllipse(in: CGRect(x: (p.x-radius)*factor, y: (p.y-radius)*factor, width: radius*factor*2, height: radius*factor*2))
+            }
+        }
+        // Compare alpha masks so a miss never turns an untouched vector object into a bitmap.
+        func alpha(_ image: UIImage) -> [UInt8]? {
+            guard let cg = image.cgImage else { return nil }
+            var bytes = [UInt8](repeating: 0, count: cg.width * cg.height)
+            let success = bytes.withUnsafeMutableBytes { storage -> Bool in
+                guard let context = CGContext(data: storage.baseAddress, width: cg.width, height: cg.height,
+                    bitsPerComponent: 8, bytesPerRow: cg.width, space: nil, bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return false }
+                context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)); return true
+            }
+            return success ? bytes : nil
+        }
+        guard let originalAlpha = alpha(before), let remainingAlpha = alpha(after), originalAlpha != remainingAlpha else { return }
+        let id = object.string("id")
+        if !remainingAlpha.contains(where: { $0 != 0 }) { eraseOperation(deletion(id), id: id); return }
+        guard let data = after.pngData()?.base64EncodedString(), data.count <= 700 * 1024 else { return }
+        var replacement = object
+        replacement["type"] = "fill"; replacement["filled"] = true; replacement["points"] = [JSON](); replacement["text"] = ""
+        replacement["x"] = 0; replacement["y"] = 0; replacement["width"] = 1; replacement["height"] = 1; replacement["imageData"] = data
+        eraseOperation(upsert(replacement), id: id)
     }
     private func newObject(_ p: CGPoint, type: String? = nil) -> JSON {
         ["id": UUID().uuidString, "layerId": selectedLayer?.string("id") ?? "", "type": type ?? tools.tool,
@@ -249,7 +354,7 @@ final class BoardView: UIView {
         switch tools.tool {
         case "curve": beginCurve(start)
         case "text": textPoint = start; tools.askText = true
-        case "eraser": if let old = hit(start) { commit(deletion(old.string("id")), inverse: upsert(old)) }
+        case "stroke_eraser", "eraser": finishErasing(); eraseTo(start)
         case "move": original = hit(start); draft = original
         case "fill": floodFill(start)
         default:
@@ -267,14 +372,18 @@ final class BoardView: UIView {
         guard let touch = touches.first else { return }; updateStroke(location(touch), ended: true)
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        cancelCurve()
+        finishErasing(); cancelCurve()
         if let draft, client.canDraw, client.scene.objects.contains(where: { $0.string("id") == draft.string("id") }) {
             commit(upsert(draft), inverse: original.map(upsert) ?? deletion(draft.string("id")))
         }
         draft = nil; original = nil; setNeedsDisplay()
     }
     private func updateStroke(_ p: CGPoint, ended: Bool) {
-        guard editable, var object = draft else { cancelCurve(); draft = nil; return }
+        guard editable else { finishErasing(); cancelCurve(); draft = nil; return }
+        if tools.tool == "stroke_eraser" || tools.tool == "eraser" {
+            eraseTo(p); if ended { finishErasing() }; setNeedsDisplay(); return
+        }
+        guard var object = draft else { cancelCurve(); return }
         if tools.tool == "curve" {
             var points = curvePoints
             if let i = curveHandle, points.indices.contains(i) { points[i] = p; setCurvePoints(points) }

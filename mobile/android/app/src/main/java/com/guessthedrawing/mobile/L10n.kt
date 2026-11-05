@@ -71,11 +71,11 @@ object L10n {
     }
     fun isolate(value: String) = if (rtl && value.isNotEmpty()) "\u2068$value\u2069" else value
     fun digits(value: String) = value.map { ch -> Character.digit(ch, 10).takeIf { it >= 0 }?.let { ('0'.code + it).toChar() } ?: ch }.joinToString("")
-    fun options(context: Context, values: List<String>) = object : ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item, values) {
+    fun options(context: Context, values: List<String>, label: (String) -> String = ::text) = object : ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item, values) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
-            (super.getView(position, convertView, parent) as TextView).apply { text = L10n.text(values[position]) }
+            (super.getView(position, convertView, parent) as TextView).apply { text = label(values[position]) }
         override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
-            (super.getDropDownView(position, convertView, parent) as TextView).apply { text = L10n.text(values[position]) }
+            (super.getDropDownView(position, convertView, parent) as TextView).apply { text = label(values[position]) }
     }
 }
 

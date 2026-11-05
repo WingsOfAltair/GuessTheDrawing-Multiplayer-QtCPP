@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "비밀번호를 변경하려면 현재 비밀번호와 새 비밀번호를 모두 입력하세요.";
 "Enter the server, username, password and a display name if registering." = "서버, 사용자 이름, 비밀번호를 입력하고 가입 시 표시 이름도 입력하세요.";
 "Enter the server, username, password and display name if registering." = "서버, 사용자 이름, 비밀번호를 입력하고 가입 시 표시 이름도 입력하세요.";
+"Eraser" = "지우개";
 "Eraser · cut strokes" = "지우개 · 획 자르기";
 "Error" = "오류";
 "Expires" = "만료";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "오디오 재생을 시작할 수 없음 (%1)";
 "Spectating" = "관전자";
 "Spectator" = "관전자";
+"Spectators" = "관전자";
 "Staff" = "서버 운영진";
 "Start a conversation" = "대화 시작";
 "Stay" = "머무르기";

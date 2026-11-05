@@ -15,12 +15,12 @@ import kotlin.concurrent.thread
 
 class DrawingView(context: Context, val client: GameClient) : View(context) {
     var tool = "freehand"
-        set(value) { if (field != value) finishCurve(); field = value; editingChanged() }
+        set(value) { if (field != value) { finishCurve(); finishErasing() }; field = value; editingChanged() }
     var ink = "#202124"
     var strokeSize = 6
     var filled = false
     var selectedLayer = ""
-        set(value) { if (field != value) finishCurve(); field = value }
+        set(value) { if (field != value) { finishCurve(); finishErasing() }; field = value }
     var editingChanged: () -> Unit = {}
     val curvePending get() = draft?.optString("type") == "curve"
     private var curveHandle = -1
@@ -31,8 +31,12 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
     private var start = PointF()
     private var lastSent = 0L
     private var filling = false
-    private val history = ArrayDeque<Pair<JSONObject, JSONObject>>()
-    private val redo = ArrayDeque<Pair<JSONObject, JSONObject>>()
+    private data class Edit(val forward: List<JSONObject>, val inverse: List<JSONObject>)
+    private val history = ArrayDeque<Edit>()
+    private val redo = ArrayDeque<Edit>()
+    // null means that a fragment was created during this gesture.
+    private val eraseBefore = linkedMapOf<String, JSONObject?>()
+    private var eraseLast: PointF? = null
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val images = android.util.LruCache<String, Bitmap>(12)
     init {
@@ -40,7 +44,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
         contentDescription = L10n.text("Shared drawing canvas")
         setBackgroundColor(Color.WHITE); isFocusable = true
     }
-    fun resetEditing() { cancelCurve(); draft = null; original = null; history.clear(); redo.clear(); invalidate() }
+    fun resetEditing() { cancelCurve(); draft = null; original = null; eraseBefore.clear(); eraseLast = null; history.clear(); redo.clear(); invalidate() }
     private fun layer(): JSONObject? {
         val layers = client.scene.layers
         if (!choosingLayer && layers.none { it.optString("id") == selectedLayer }) {
@@ -56,18 +60,113 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
     private fun upsert(o: JSONObject) = json("action" to "object_upsert", "object" to o)
     private fun deletion(id: String) = json("action" to "object_delete", "objectId" to id)
     fun undo() {
+        finishErasing()
         if (curvePending) { cancelCurve(); return }
         if (!client.canDraw || history.isEmpty()) return
-        val entry = history.removeLast(); client.operation(entry.second); redo.addLast(entry)
+        val entry = history.removeLast(); entry.inverse.forEach(client::operation); redo.addLast(entry)
     }
     fun redo() {
-        finishCurve()
+        finishCurve(); finishErasing()
         if (!client.canDraw || redo.isEmpty()) return
-        val entry = redo.removeLast(); client.operation(entry.first); history.addLast(entry)
+        val entry = redo.removeLast(); entry.forward.forEach(client::operation); history.addLast(entry)
     }
     private fun commit(forward: JSONObject, inverse: JSONObject) {
-        client.operation(forward); history.addLast(forward.copy() to inverse.copy()); redo.clear()
+        client.operation(forward); remember(Edit(listOf(forward.copy()), listOf(inverse.copy())))
+    }
+    private fun remember(edit: Edit) {
+        history.addLast(edit); redo.clear()
         if (history.size > 50) history.removeFirst()
+    }
+    private fun eraseOperation(operation: JSONObject, id: String) {
+        if (!eraseBefore.containsKey(id)) eraseBefore[id] = client.scene.objects.find { it.optString("id") == id }?.copy()
+        client.operation(operation)
+    }
+    private fun finishErasing() {
+        if (eraseBefore.isNotEmpty()) {
+            val forward = mutableListOf<JSONObject>(); val inverse = mutableListOf<JSONObject>()
+            eraseBefore.forEach { (id, before) ->
+                val after = client.scene.objects.find { it.optString("id") == id }
+                if (before != null || after != null) {
+                    forward.add(after?.let { upsert(it.copy()) } ?: deletion(id))
+                    inverse.add(before?.let { upsert(it.copy()) } ?: deletion(id))
+                }
+            }
+            // Delete temporary fragments before restoring originals at the canvas object limit.
+            if (forward.isNotEmpty()) remember(Edit(forward.sortedBy { it.optString("action") != "object_delete" },
+                inverse.sortedBy { it.optString("action") != "object_delete" }))
+        }
+        eraseBefore.clear(); eraseLast = null
+    }
+    private fun eraseTo(x: Float, y: Float) {
+        val last = eraseLast ?: PointF(x, y)
+        val radius = max(6f, strokeSize * 2f) * resources.displayMetrics.density
+        val centers = StrokeEraser.sweep(StrokeEraser.Point(last.x * width.toDouble(), last.y * height.toDouble()),
+            StrokeEraser.Point(x * width.toDouble(), y * height.toDouble()), radius.toDouble())
+        eraseLast = PointF(x, y)
+        if (tool == "eraser") {
+            centers.forEach { p -> hit((p.x / width).toFloat(), (p.y / height).toFloat())?.let {
+                eraseOperation(deletion(it.optString("id")), it.optString("id"))
+            } }
+            return
+        }
+        for (objectToCut in client.scene.objects.toList()) {
+            if (objectToCut.optString("layerId") != selectedLayer) continue
+            val id = objectToCut.optString("id")
+            if (objectToCut.optString("type") in listOf("freehand", "brush", "airbrush", "curve")) {
+                var fragments = listOf(objectToCut.array("points").objects().map {
+                    StrokeEraser.Point(it.optDouble("x") * width, it.optDouble("y") * height)
+                })
+                var changed = false
+                centers.forEach { center -> fragments = fragments.flatMap {
+                    val cut = StrokeEraser.cut(it, center, radius.toDouble()); changed = changed || cut.changed; cut.fragments
+                } }
+                if (!changed) continue
+                if (client.scene.objects.size - 1 + fragments.size > 1000) { client.notice("Canvas has reached its object limit."); continue }
+                if (fragments.isEmpty()) eraseOperation(deletion(id), id)
+                fragments.forEachIndexed { index, points ->
+                    val fragment = objectToCut.copy().put("id", if (index == 0) id else UUID.randomUUID().toString())
+                    fragment.put("points", JSONArray(points.map { point((it.x / width).toFloat(), (it.y / height).toFloat()) }))
+                    geometry(fragment); eraseOperation(upsert(fragment), fragment.optString("id"))
+                }
+            } else eraseRaster(objectToCut, centers, radius)
+        }
+    }
+    // The bounded 512px result must be applied in gesture order before the next touch/undo.
+    @android.annotation.SuppressLint("ThreadConstraint")
+    private fun eraseRaster(o: JSONObject, centers: List<StrokeEraser.Point>, radius: Float) {
+        val box = bounds(o, width.toFloat(), height.toFloat())
+        val padding = radius + o.optInt("strokeWidth", 4) * min(width, height) / 300f
+        box.inset(-padding, -padding)
+        if (centers.none { box.contains(it.x.toFloat(), it.y.toFloat()) }) return
+        // Render only this object on transparency, so erasing reveals the objects underneath it.
+        val factor = 512f / max(width, height)
+        val bitmap = Bitmap.createBitmap(max(1, (width * factor).toInt()), max(1, (height * factor).toInt()), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawObject(canvas, o, bitmap.width.toFloat(), bitmap.height.toFloat())
+        val before = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(before, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val clear = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+        centers.forEach { canvas.drawCircle((it.x * factor).toFloat(), (it.y * factor).toFloat(), radius * factor, clear) }
+        val pixels = IntArray(before.size)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        if (before.contentEquals(pixels)) { bitmap.recycle(); return }
+        var left = bitmap.width; var top = bitmap.height; var right = -1; var bottom = -1
+        pixels.forEachIndexed { index, color -> if (Color.alpha(color) > 0) {
+            val x = index % bitmap.width; val y = index / bitmap.width
+            left = min(left, x); right = max(right, x); top = min(top, y); bottom = max(bottom, y)
+        } }
+        val id = o.optString("id")
+        if (right < left) { bitmap.recycle(); eraseOperation(deletion(id), id); return }
+        val cropped = Bitmap.createBitmap(bitmap, left, top, right - left + 1, bottom - top + 1)
+        val stream = ByteArrayOutputStream(); cropped.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        val data = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+        val replacement = o.copy().put("type", "fill").put("filled", true).put("points", JSONArray()).put("text", "")
+            .put("x", left.toDouble() / bitmap.width).put("y", top.toDouble() / bitmap.height)
+            .put("width", cropped.width.toDouble() / bitmap.width).put("height", cropped.height.toDouble() / bitmap.height)
+            .put("imageData", data)
+        if (cropped !== bitmap) cropped.recycle()
+        bitmap.recycle()
+        if (data.length <= 700 * 1024) eraseOperation(upsert(replacement), id)
     }
     private fun newObject(x: Float, y: Float, kind: String = tool) = json(
         "id" to UUID.randomUUID().toString(), "layerId" to selectedLayer, "type" to kind,
@@ -220,8 +319,10 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
             rect.contains(x, y)
         }
     }
+    // Eraser rasterization is capped at 512px and ordered synchronously with undo/redo.
+    @android.annotation.SuppressLint("ThreadConstraint")
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (!editable() || filling) { cancelCurve(); draft = null; return false }
+        if (!editable() || filling) { finishErasing(); cancelCurve(); draft = null; return false }
         val x = (e.x / max(1, width)).coerceIn(0f, 1f)
         val y = (e.y / max(1, height)).coerceIn(0f, 1f)
         when (e.actionMasked) {
@@ -235,7 +336,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                         ink = String.format("#%06X", pixel and 0xffffff); bitmap.recycle()
                     }
                     "fill" -> floodFill(x, y)
-                    "eraser" -> hit(x, y)?.let { commit(deletion(it.optString("id")), upsert(it)) }
+                    "stroke_eraser", "eraser" -> { finishErasing(); eraseTo(x, y) }
                     "move" -> { original = hit(x, y)?.copy(); draft = original?.copy() }
                     else -> {
                         if (client.scene.objects.size >= 1000) { client.notice("Canvas has reached its object limit."); return true }
@@ -248,6 +349,13 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                 invalidate(); return true
             }
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                if (tool == "stroke_eraser" || tool == "eraser") {
+                    eraseTo(x, y)
+                    if (e.actionMasked == MotionEvent.ACTION_UP) {
+                        finishErasing(); parent.requestDisallowInterceptTouchEvent(false); performClick()
+                    }
+                    invalidate(); return true
+                }
                 if (tool == "curve") {
                     val points = curvePoints().toMutableList()
                     if (curveHandle in points.indices) { points[curveHandle] = CurvePoint(x, y); setCurvePoints(points) }
@@ -290,7 +398,7 @@ class DrawingView(context: Context, val client: GameClient) : View(context) {
                 invalidate(); return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                cancelCurve()
+                finishErasing(); cancelCurve()
                 draft?.let { d ->
                     if (client.scene.objects.any { it.optString("id") == d.optString("id") })
                         commit(upsert(d), original?.let { upsert(it) } ?: deletion(d.optString("id")))

@@ -201,6 +201,7 @@
     <string name="l_725b57807307" formatted="false">"Introduce la contraseña actual y la nueva para cambiarla."</string>
     <string name="l_fcf5c114d52b" formatted="false">"Introduce servidor, usuario y contraseña; si te registras, también un nombre visible."</string>
     <string name="l_e2252e1b2865" formatted="false">"Introduce servidor, usuario y contraseña; si te registras, también un nombre visible."</string>
+    <string name="l_a5742851f0f8" formatted="false">"Borrador"</string>
     <string name="l_1fdcb52e5ff2" formatted="false">"Borrador · cortar trazos"</string>
     <string name="l_7f2f6a15cf8d" formatted="false">"Error"</string>
     <string name="l_a99be3da0c9d" formatted="false">"Caduca"</string>
@@ -573,6 +574,7 @@
     <string name="l_f09f7841d657" formatted="false">"No se pudo iniciar la reproducción de audio (%1)"</string>
     <string name="l_0c6b6d4f70cf" formatted="false">"espectador"</string>
     <string name="l_4e920fa89711" formatted="false">"espectador"</string>
+    <string name="l_996dc5d03b66" formatted="false">"Espectadores"</string>
     <string name="l_a4730a22cf49" formatted="false">"Personal del servidor"</string>
     <string name="l_244c20ea947b" formatted="false">"Iniciar conversación"</string>
     <string name="l_ae768f766f75" formatted="false">"Quedarme"</string>

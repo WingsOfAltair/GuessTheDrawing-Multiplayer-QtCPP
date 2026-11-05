@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "Saisissez les mots de passe actuel et nouveau pour le modifier.";
 "Enter the server, username, password and a display name if registering." = "Saisissez le serveur, l'identifiant, le mot de passe et, pour une inscription, un nom affiché.";
 "Enter the server, username, password and display name if registering." = "Saisissez le serveur, l'identifiant, le mot de passe et, pour une inscription, un nom affiché.";
+"Eraser" = "Gomme";
 "Eraser · cut strokes" = "Gomme · couper les traits";
 "Error" = "Erreur";
 "Expires" = "Expiration";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "Impossible de démarrer la lecture audio (%1)";
 "Spectating" = "spectateur";
 "Spectator" = "spectateur";
+"Spectators" = "Spectateurs";
 "Staff" = "Équipe du serveur";
 "Start a conversation" = "Démarrer une conversation";
 "Stay" = "Rester";

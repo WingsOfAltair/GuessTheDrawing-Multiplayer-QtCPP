@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "パスワードを変更するには現在と新しいパスワードを入力してください。";
 "Enter the server, username, password and a display name if registering." = "サーバー、ユーザー名、パスワードを入力し、登録時は表示名も入力してください。";
 "Enter the server, username, password and display name if registering." = "サーバー、ユーザー名、パスワードを入力し、登録時は表示名も入力してください。";
+"Eraser" = "消しゴム";
 "Eraser · cut strokes" = "消しゴム · 線を消す";
 "Error" = "エラー";
 "Expires" = "有効期限";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "音声を再生できません (%1)";
 "Spectating" = "観戦者";
 "Spectator" = "観戦者";
+"Spectators" = "観戦者";
 "Staff" = "サーバースタッフ";
 "Start a conversation" = "会話を始める";
 "Stay" = "残る";

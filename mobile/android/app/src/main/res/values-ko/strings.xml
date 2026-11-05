@@ -201,6 +201,7 @@
     <string name="l_725b57807307" formatted="false">"비밀번호를 변경하려면 현재 비밀번호와 새 비밀번호를 모두 입력하세요."</string>
     <string name="l_fcf5c114d52b" formatted="false">"서버, 사용자 이름, 비밀번호를 입력하고 가입 시 표시 이름도 입력하세요."</string>
     <string name="l_e2252e1b2865" formatted="false">"서버, 사용자 이름, 비밀번호를 입력하고 가입 시 표시 이름도 입력하세요."</string>
+    <string name="l_a5742851f0f8" formatted="false">"지우개"</string>
     <string name="l_1fdcb52e5ff2" formatted="false">"지우개 · 획 자르기"</string>
     <string name="l_7f2f6a15cf8d" formatted="false">"오류"</string>
     <string name="l_a99be3da0c9d" formatted="false">"만료"</string>
@@ -573,6 +574,7 @@
     <string name="l_f09f7841d657" formatted="false">"오디오 재생을 시작할 수 없음 (%1)"</string>
     <string name="l_0c6b6d4f70cf" formatted="false">"관전자"</string>
     <string name="l_4e920fa89711" formatted="false">"관전자"</string>
+    <string name="l_996dc5d03b66" formatted="false">"관전자"</string>
     <string name="l_a4730a22cf49" formatted="false">"서버 운영진"</string>
     <string name="l_244c20ea947b" formatted="false">"대화 시작"</string>
     <string name="l_ae768f766f75" formatted="false">"머무르기"</string>

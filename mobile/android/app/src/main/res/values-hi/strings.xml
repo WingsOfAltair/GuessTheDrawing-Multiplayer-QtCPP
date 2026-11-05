@@ -201,6 +201,7 @@
     <string name="l_725b57807307" formatted="false">"पासवर्ड बदलने के लिए वर्तमान और नया पासवर्ड दर्ज करें।"</string>
     <string name="l_fcf5c114d52b" formatted="false">"सर्वर, उपयोगकर्ता नाम, पासवर्ड और पंजीकरण के समय प्रदर्शित नाम दर्ज करें।"</string>
     <string name="l_e2252e1b2865" formatted="false">"सर्वर, उपयोगकर्ता नाम, पासवर्ड और पंजीकरण के समय प्रदर्शित नाम दर्ज करें।"</string>
+    <string name="l_a5742851f0f8" formatted="false">"इरेज़र"</string>
     <string name="l_1fdcb52e5ff2" formatted="false">"इरेज़र · स्ट्रोक काटें"</string>
     <string name="l_7f2f6a15cf8d" formatted="false">"त्रुटि"</string>
     <string name="l_a99be3da0c9d" formatted="false">"समाप्ति"</string>
@@ -573,6 +574,7 @@
     <string name="l_f09f7841d657" formatted="false">"ऑडियो प्लेबैक शुरू नहीं हो सका (%1)"</string>
     <string name="l_0c6b6d4f70cf" formatted="false">"दर्शक"</string>
     <string name="l_4e920fa89711" formatted="false">"दर्शक"</string>
+    <string name="l_996dc5d03b66" formatted="false">"दर्शक"</string>
     <string name="l_a4730a22cf49" formatted="false">"सर्वर कर्मचारी"</string>
     <string name="l_244c20ea947b" formatted="false">"बातचीत शुरू करें"</string>
     <string name="l_ae768f766f75" formatted="false">"यहीं रहें"</string>

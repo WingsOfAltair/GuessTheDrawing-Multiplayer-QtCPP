@@ -103,7 +103,7 @@ struct CommunityHub: View {
         NavigationStack {
             VStack(spacing: 0) {
                 CommunityStatus(social: social)
-                Picker(L("Section"), selection: $selection) { ForEach(sections, id: \.self) { Text(L($0)).tag($0) } }.pickerStyle(.menu).padding(.horizontal)
+                Picker(L("Section"), selection: $selection) { ForEach(sections, id: \.self) { Text(social.sectionLabel($0)).tag($0) } }.pickerStyle(.menu).padding(.horizontal)
                 if selection == "Find players" {
                     HStack { TextField(L("Username or display name"), text: $query).textFieldStyle(.roundedBorder).submitLabel(.search).onSubmit { social.search(query) }
                         Button(L("Search")) { social.search(query) } }.padding()

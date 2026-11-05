@@ -199,6 +199,7 @@
 "Enter the current password and a new password to change it" = "पासवर्ड बदलने के लिए वर्तमान और नया पासवर्ड दर्ज करें।";
 "Enter the server, username, password and a display name if registering." = "सर्वर, उपयोगकर्ता नाम, पासवर्ड और पंजीकरण के समय प्रदर्शित नाम दर्ज करें।";
 "Enter the server, username, password and display name if registering." = "सर्वर, उपयोगकर्ता नाम, पासवर्ड और पंजीकरण के समय प्रदर्शित नाम दर्ज करें।";
+"Eraser" = "इरेज़र";
 "Eraser · cut strokes" = "इरेज़र · स्ट्रोक काटें";
 "Error" = "त्रुटि";
 "Expires" = "समाप्ति";
@@ -571,6 +572,7 @@
 "Speaker write failed (%1)" = "ऑडियो प्लेबैक शुरू नहीं हो सका (%1)";
 "Spectating" = "दर्शक";
 "Spectator" = "दर्शक";
+"Spectators" = "दर्शक";
 "Staff" = "सर्वर कर्मचारी";
 "Start a conversation" = "बातचीत शुरू करें";
 "Stay" = "यहीं रहें";
