@@ -190,7 +190,7 @@ final class BoardView: UIView {
             var bytes = [UInt8](repeating: 0, count: cg.width * cg.height)
             let success = bytes.withUnsafeMutableBytes { storage -> Bool in
                 guard let context = CGContext(data: storage.baseAddress, width: cg.width, height: cg.height,
-                    bitsPerComponent: 8, bytesPerRow: cg.width, space: nil, bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return false }
+                    bitsPerComponent: 8, bytesPerRow: cg.width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return false }
                 context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)); return true
             }
             return success ? bytes : nil
