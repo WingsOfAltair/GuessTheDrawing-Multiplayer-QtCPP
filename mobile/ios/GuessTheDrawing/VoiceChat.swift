@@ -17,6 +17,7 @@ final class VoiceChat: ObservableObject {
     private var foreground = true
     private var interrupted = false
     private var lastError = Date.distantPast
+    private var lastStart = Date.distantPast
     private weak var client: GameClient?
     private let wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
     private let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
@@ -50,6 +51,8 @@ final class VoiceChat: ObservableObject {
     func attach(client: GameClient) { self.client = client; foreground = true }
     func setForeground(_ value: Bool) { foreground = value; if !value { close() } }
     private func routeChanged() {
+        // Starting the mic reconfigures the session/route; ignore those self-inflicted notifications.
+        guard Date().timeIntervalSince(lastStart) > 1.5 else { return }
         let wasRecording = recording
         resetEngine()
         if wasRecording { client?.notice("Audio output changed. Tap Mic to speak again.") }
@@ -69,18 +72,24 @@ final class VoiceChat: ObservableObject {
     }
     private func configureSession(record: Bool) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(record ? .playAndRecord : .playback, mode: record ? .voiceChat : .default,
+        // Avoid .voiceChat/voice processing: the VPIO unit fails to render (err -1) with this engine graph.
+        try session.setCategory(record ? .playAndRecord : .playback, mode: .default,
             options: record ? [.defaultToSpeaker, .allowBluetooth] : [])
-        if record { try session.setPreferredIOBufferDuration(0.02) }
         try session.setActive(true)
+    }
+    // Deactivating can block for a while (or hang on a stuck audio unit); never do it on the main thread.
+    private nonisolated func deactivateSession() {
+        DispatchQueue.global(qos: .utility).async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
     private func start(client: GameClient) {
         resetEngine()
+        lastStart = Date()
         do {
             try configureSession(record: true)
             let input = engine.inputNode
-            // Voice processing provides echo cancellation on supported devices/routes.
-            try? input.setVoiceProcessingEnabled(true)
+            _ = engine.mainMixerNode // ensure the output side of the graph is connected
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0, let converter = AVAudioConverter(from: format, to: wireFormat) else {
                 throw NSError(domain: "VoiceChat", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone format is unavailable"])
@@ -105,7 +114,7 @@ final class VoiceChat: ObservableObject {
                     }
                 }
             }
-            tapInstalled = true; engine.prepare(); try engine.start(); recording = true
+            tapInstalled = true; engine.prepare(); try engine.start(); recording = true; lastStart = Date()
         } catch { resetEngine(); client.notice("Could not start microphone: " + error.localizedDescription) }
     }
     private func resetEngine() {

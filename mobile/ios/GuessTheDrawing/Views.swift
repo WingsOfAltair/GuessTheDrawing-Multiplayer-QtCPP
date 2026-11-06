@@ -273,6 +273,10 @@ struct GameView: View {
                     }
                 }.font(.subheadline).buttonStyle(.bordered)
                 Picker(L("Room panel"), selection: $tab) { Text(L("Chat")).tag(0); Text(L("Players")).tag(1); Text(L("Layers")).tag(2) }.pickerStyle(.segmented)
+                    // Separate view: stacking two confirmationDialogs on one view makes only one of them present.
+                    .confirmationDialog(L("Clear all canvas objects?"), isPresented: $clear, titleVisibility: .visible) {
+                        Button(L("Clear canvas"), role: .destructive) { client.operation(["action": "clear"]) }
+                    }
                 roomPanel.frame(maxHeight: .infinity)
                 HStack {
                     Menu { Button(L("Guess")) { guess = true }; Button(L("Chat")) { guess = false } } label: {
@@ -286,14 +290,15 @@ struct GameView: View {
             }.padding(.horizontal).padding(.bottom, 8).gtdSurface()
                 .navigationTitle(client.room.string("roomName")).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button(L("Leave")) { leave = true } }
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(L("Leave")) { leave = true }
+                            .confirmationDialog(L("Leave this room?"), isPresented: $leave, titleVisibility: .visible) {
+                                // Audio is closed by onDisappear once the page switches.
+                                Button(L("Leave room"), role: .destructive) { client.leaveRoom() }
+                                Button(L("Cancel"), role: .cancel) {}
+                            }
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) { roomMenu }
-                }
-                .confirmationDialog(L("Leave this room?"), isPresented: $leave, titleVisibility: .visible) {
-                    Button(L("Leave room"), role: .destructive) { voice.close(); client.leaveRoom() }
-                }
-                .confirmationDialog(L("Clear all canvas objects?"), isPresented: $clear, titleVisibility: .visible) {
-                    Button(L("Clear canvas"), role: .destructive) { client.operation(["action": "clear"]) }
                 }
                 .alert(L("Add text"), isPresented: $tools.askText) {
                     TextField(L("Text"), text: $text)

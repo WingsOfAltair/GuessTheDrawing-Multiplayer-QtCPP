@@ -1,88 +1,367 @@
 // !$*UTF8*$!
-{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
-743AD631623EE100E62C7A1B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/AppLanguage.swift"; sourceTree = "<group>"; };
-091502F410BB89C41209045B = {isa = PBXBuildFile; fileRef = 743AD631623EE100E62C7A1B; };
-89BD84F5374D17EB91068BB3 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/AppTheme.swift"; sourceTree = "<group>"; };
-9D5733CC186025C285B4FF61 = {isa = PBXBuildFile; fileRef = 89BD84F5374D17EB91068BB3; };
-94C0A065A36E1542CAB2B2DA = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/CommunityClient.swift"; sourceTree = "<group>"; };
-FDBC212F4835CB396B2DECDA = {isa = PBXBuildFile; fileRef = 94C0A065A36E1542CAB2B2DA; };
-56B56186A330E21A9C07FFA7 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/CommunityViews.swift"; sourceTree = "<group>"; };
-293F748B9B747B6BBC03F4CA = {isa = PBXBuildFile; fileRef = 56B56186A330E21A9C07FFA7; };
-3EAB37EF1074FA652D4CADB5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Connection.swift"; sourceTree = "<group>"; };
-93F77EE5E47B5A9A7B7D5681 = {isa = PBXBuildFile; fileRef = 3EAB37EF1074FA652D4CADB5; };
-8C4C03D2D0B58F3FB0214461 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/CanvasScene.swift"; sourceTree = "<group>"; };
-81F15E96C3B651C5A6227D9F = {isa = PBXBuildFile; fileRef = 8C4C03D2D0B58F3FB0214461; };
-84038BD01269C6F01DC474B1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/CommunityPolicy.swift"; sourceTree = "<group>"; };
-E3FEB22780213880C4BE7B4C = {isa = PBXBuildFile; fileRef = 84038BD01269C6F01DC474B1; };
-C274C627B1F39573B1E31EC1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/CurveGeometry.swift"; sourceTree = "<group>"; };
-B6BF3D3DC36FD0E34019F149 = {isa = PBXBuildFile; fileRef = C274C627B1F39573B1E31EC1; };
-473F90C46AD98C38ECAB2419 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/L10n.swift"; sourceTree = "<group>"; };
-0249B636C95461C80D3D557A = {isa = PBXBuildFile; fileRef = 473F90C46AD98C38ECAB2419; };
-943AB296CF1D95AAFB130F2E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/LocalizationKeys.swift"; sourceTree = "<group>"; };
-3BB9D14F13C433D267C1BCF2 = {isa = PBXBuildFile; fileRef = 943AB296CF1D95AAFB130F2E; };
-073BE70B22A8150AB49D7E94 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/Protocol.swift"; sourceTree = "<group>"; };
-874C9AFA89BCE31296CEFAD5 = {isa = PBXBuildFile; fileRef = 073BE70B22A8150AB49D7E94; };
-4D359470D08C83B60D09960A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/StrokeEraser.swift"; sourceTree = "<group>"; };
-25ECC270D69EB37FA057C2DE = {isa = PBXBuildFile; fileRef = 4D359470D08C83B60D09960A; };
-DD5210119208C973212A20D1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/ThemePalette.swift"; sourceTree = "<group>"; };
-A168FE543579B2ED44067148 = {isa = PBXBuildFile; fileRef = DD5210119208C973212A20D1; };
-007EC4445C320E2A125A808C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Core/VoicePcm.swift"; sourceTree = "<group>"; };
-1E1C01C8C59F77A5D3B2EC3A = {isa = PBXBuildFile; fileRef = 007EC4445C320E2A125A808C; };
-0584B5307516AEFD202FA802 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/DrawingBoard.swift"; sourceTree = "<group>"; };
-196EE995FA88BE1D6D5B8D89 = {isa = PBXBuildFile; fileRef = 0584B5307516AEFD202FA802; };
-673376E5762AE554F75607BB = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/GameClient.swift"; sourceTree = "<group>"; };
-C529C4C06F0E57D51AF2EDD4 = {isa = PBXBuildFile; fileRef = 673376E5762AE554F75607BB; };
-5CDB7DC30C66B3A75CF51ED5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/GuessTheDrawingApp.swift"; sourceTree = "<group>"; };
-71B457C6230EFA86D1A710AB = {isa = PBXBuildFile; fileRef = 5CDB7DC30C66B3A75CF51ED5; };
-5449ECB1E856A0A792D746BA = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/Views.swift"; sourceTree = "<group>"; };
-C4AB34767B997619901AA057 = {isa = PBXBuildFile; fileRef = 5449ECB1E856A0A792D746BA; };
-B31517BE4FFDCBFE235B2B2B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuessTheDrawing/VoiceChat.swift"; sourceTree = "<group>"; };
-AEDA0DF02EC67CAED666D088 = {isa = PBXBuildFile; fileRef = B31517BE4FFDCBFE235B2B2B; };
-2934FB49D6B38ADEF036C28F = {isa = PBXFileReference; lastKnownFileType = folder; path = "../../country-flags"; sourceTree = "<group>"; };
-8BF729FFE074CAEE622C0292 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = GuessTheDrawing/Assets.xcassets; sourceTree = "<group>"; };
-B79606FB3AFEA5BD1609ED40 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "../GameVersion.xcconfig"; sourceTree = "<group>"; };
-06271BAF49532C879AA3C58B = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GuessTheDrawing/Info.plist; sourceTree = "<group>"; };
-F61393D4077173717B8C8126 = {isa = PBXBuildFile; fileRef = 2934FB49D6B38ADEF036C28F; };
-999FF37E9C5A0FFB78E1CDE2 = {isa = PBXBuildFile; fileRef = 8BF729FFE074CAEE622C0292; };
-A8792157CB4F27FB949C035F = {isa = PBXFileReference; explicitFileType = wrapper.application; path = GuessTheDrawing.app; sourceTree = BUILT_PRODUCTS_DIR; };
-059BBD40DBB8DDFFE1E24D7B = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "GuessTheDrawing/en.lproj/Localizable.strings"; sourceTree = "<group>"; };
-D4EF5326C140EB8246CF726C = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "GuessTheDrawing/es.lproj/Localizable.strings"; sourceTree = "<group>"; };
-B415893B4B3F529CD695041B = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "GuessTheDrawing/fr.lproj/Localizable.strings"; sourceTree = "<group>"; };
-CE5AAC19F277504A63C58CC9 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "GuessTheDrawing/de.lproj/Localizable.strings"; sourceTree = "<group>"; };
-973F91560D6B7E81DFAD8CB6 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt"; path = "GuessTheDrawing/pt.lproj/Localizable.strings"; sourceTree = "<group>"; };
-51B27B384AACD442B116A33F = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "it"; path = "GuessTheDrawing/it.lproj/Localizable.strings"; sourceTree = "<group>"; };
-59378A5D792E8EB6368DB607 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ru"; path = "GuessTheDrawing/ru.lproj/Localizable.strings"; sourceTree = "<group>"; };
-A20EFC04D6DC1E32214BCB38 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "GuessTheDrawing/zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
-109BA6CFAD7829B92BD59388 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "GuessTheDrawing/ja.lproj/Localizable.strings"; sourceTree = "<group>"; };
-50390A2E70B47D1E88099077 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ko"; path = "GuessTheDrawing/ko.lproj/Localizable.strings"; sourceTree = "<group>"; };
-87FB8AF277BD5B2A502EF2C3 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ar"; path = "GuessTheDrawing/ar.lproj/Localizable.strings"; sourceTree = "<group>"; };
-E903A9DFA128C890893717D0 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "GuessTheDrawing/hi.lproj/Localizable.strings"; sourceTree = "<group>"; };
-535E07509D3851C3F3447DA4 = {isa = PBXVariantGroup; children = (059BBD40DBB8DDFFE1E24D7B, D4EF5326C140EB8246CF726C, B415893B4B3F529CD695041B, CE5AAC19F277504A63C58CC9, 973F91560D6B7E81DFAD8CB6, 51B27B384AACD442B116A33F, 59378A5D792E8EB6368DB607, A20EFC04D6DC1E32214BCB38, 109BA6CFAD7829B92BD59388, 50390A2E70B47D1E88099077, 87FB8AF277BD5B2A502EF2C3, E903A9DFA128C890893717D0,); name = "Localizable.strings"; sourceTree = "<group>"; };
-31E47623E9E496DCBEA27AA8 = {isa = PBXBuildFile; fileRef = 535E07509D3851C3F3447DA4; };
-91BD4462691B27CD26910F71 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "GuessTheDrawing/en.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-88A91B8B279CB6DB006D8BE7 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "GuessTheDrawing/es.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-F1F6460EB8DB9E72293F0D2F = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "GuessTheDrawing/fr.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-4E3E1051F21C488654565E0E = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "GuessTheDrawing/de.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-ADF2B367E06E5530DD7B6209 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt"; path = "GuessTheDrawing/pt.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-E2D42DAF004D839A9938BC17 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "it"; path = "GuessTheDrawing/it.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-1CE4A7186E1407512DB1EACD = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ru"; path = "GuessTheDrawing/ru.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-D3E57C6AE4052CBC5CF088E8 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "GuessTheDrawing/zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-657B3BF3F26217E2E0B9D711 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "GuessTheDrawing/ja.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-D412DAFAB88C4045A6917228 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ko"; path = "GuessTheDrawing/ko.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-21362774CCF78914E93F1D88 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ar"; path = "GuessTheDrawing/ar.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-A5627122E5B3CAAC1D28F342 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "GuessTheDrawing/hi.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-89832BF4CA493217BDB4BD8B = {isa = PBXVariantGroup; children = (91BD4462691B27CD26910F71, 88A91B8B279CB6DB006D8BE7, F1F6460EB8DB9E72293F0D2F, 4E3E1051F21C488654565E0E, ADF2B367E06E5530DD7B6209, E2D42DAF004D839A9938BC17, 1CE4A7186E1407512DB1EACD, D3E57C6AE4052CBC5CF088E8, 657B3BF3F26217E2E0B9D711, D412DAFAB88C4045A6917228, 21362774CCF78914E93F1D88, A5627122E5B3CAAC1D28F342,); name = "InfoPlist.strings"; sourceTree = "<group>"; };
-70F2A036CF8605653FEB6851 = {isa = PBXBuildFile; fileRef = 89832BF4CA493217BDB4BD8B; };
-AD936FCBED631FA67E05C3EA = {isa = PBXGroup; children = (743AD631623EE100E62C7A1B, 89BD84F5374D17EB91068BB3, 94C0A065A36E1542CAB2B2DA, 56B56186A330E21A9C07FFA7, 3EAB37EF1074FA652D4CADB5, 8C4C03D2D0B58F3FB0214461, 84038BD01269C6F01DC474B1, C274C627B1F39573B1E31EC1, 473F90C46AD98C38ECAB2419, 943AB296CF1D95AAFB130F2E, 073BE70B22A8150AB49D7E94, 4D359470D08C83B60D09960A, DD5210119208C973212A20D1, 007EC4445C320E2A125A808C, 0584B5307516AEFD202FA802, 673376E5762AE554F75607BB, 5CDB7DC30C66B3A75CF51ED5, 5449ECB1E856A0A792D746BA, B31517BE4FFDCBFE235B2B2B, 535E07509D3851C3F3447DA4, 89832BF4CA493217BDB4BD8B, 2934FB49D6B38ADEF036C28F, 8BF729FFE074CAEE622C0292, B79606FB3AFEA5BD1609ED40, 06271BAF49532C879AA3C58B, A8792157CB4F27FB949C035F,); sourceTree = "<group>"; };
-2BDC836913C0251C655AC270 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (091502F410BB89C41209045B, 9D5733CC186025C285B4FF61, FDBC212F4835CB396B2DECDA, 293F748B9B747B6BBC03F4CA, 93F77EE5E47B5A9A7B7D5681, 81F15E96C3B651C5A6227D9F, E3FEB22780213880C4BE7B4C, B6BF3D3DC36FD0E34019F149, 0249B636C95461C80D3D557A, 3BB9D14F13C433D267C1BCF2, 874C9AFA89BCE31296CEFAD5, 25ECC270D69EB37FA057C2DE, A168FE543579B2ED44067148, 1E1C01C8C59F77A5D3B2EC3A, 196EE995FA88BE1D6D5B8D89, C529C4C06F0E57D51AF2EDD4, 71B457C6230EFA86D1A710AB, C4AB34767B997619901AA057, AEDA0DF02EC67CAED666D088,); runOnlyForDeploymentPostprocessing = 0; };
-B4A5B8DEEC6F3BA340C44838 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (F61393D4077173717B8C8126, 999FF37E9C5A0FFB78E1CDE2, 31E47623E9E496DCBEA27AA8, 70F2A036CF8605653FEB6851,); runOnlyForDeploymentPostprocessing = 0; };
-85A1A7D12D3BA9F4EB2AEE07 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-EDDA600A3F771F810A8065C9 = {isa = XCBuildConfiguration; baseConfigurationReference = B79606FB3AFEA5BD1609ED40; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon"; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor"; CODE_SIGN_STYLE = "Automatic"; CURRENT_PROJECT_VERSION = "4"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "GuessTheDrawing/Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = "16.0"; MARKETING_VERSION = "$(GTD_GAME_VERSION)"; PRODUCT_BUNDLE_IDENTIFIER = "com.guessthedrawing.mobile"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = "iphoneos"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = "NO"; SWIFT_VERSION = "5.0"; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = "YES"; }; name = Debug; };
-2B23A31EEC75B029432F2445 = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; }; name = Debug; };
-594BCDCC96599D88EF772A08 = {isa = XCBuildConfiguration; baseConfigurationReference = B79606FB3AFEA5BD1609ED40; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon"; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor"; CODE_SIGN_STYLE = "Automatic"; CURRENT_PROJECT_VERSION = "4"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "GuessTheDrawing/Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = "16.0"; MARKETING_VERSION = "$(GTD_GAME_VERSION)"; PRODUCT_BUNDLE_IDENTIFIER = "com.guessthedrawing.mobile"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = "iphoneos"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = "NO"; SWIFT_VERSION = "5.0"; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; SWIFT_OPTIMIZATION_LEVEL = "-O"; ENABLE_TESTABILITY = "NO"; }; name = Release; };
-07CA1E69F6068DEA30A4DA6B = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; }; name = Release; };
-28A8BB66987DD87BDA946B2E = {isa = XCConfigurationList; buildConfigurations = (EDDA600A3F771F810A8065C9, 594BCDCC96599D88EF772A08,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-D69E6ABAEE8D1F0F03292F91 = {isa = XCConfigurationList; buildConfigurations = (2B23A31EEC75B029432F2445, 07CA1E69F6068DEA30A4DA6B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-34A04005BCAF206EEC990BD9 = {isa = PBXNativeTarget; buildConfigurationList = 28A8BB66987DD87BDA946B2E; buildPhases = (2BDC836913C0251C655AC270, 85A1A7D12D3BA9F4EB2AEE07, B4A5B8DEEC6F3BA340C44838,); buildRules = (); dependencies = (); name = GuessTheDrawing; productName = GuessTheDrawing; productReference = A8792157CB4F27FB949C035F; productType = "com.apple.product-type.application"; };
-244210E48437B6556980A702 = {isa = PBXProject; attributes = { LastUpgradeCheck = 1600; }; buildConfigurationList = D69E6ABAEE8D1F0F03292F91; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = ("en", "es", "fr", "de", "pt", "it", "ru", "zh-Hans", "ja", "ko", "ar", "hi", Base,); mainGroup = AD936FCBED631FA67E05C3EA; productRefGroup = AD936FCBED631FA67E05C3EA; projectDirPath = ""; projectRoot = ""; targets = (34A04005BCAF206EEC990BD9,); };
-}; rootObject = 244210E48437B6556980A702; }
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0249B636C95461C80D3D557A /* GuessTheDrawing/Core/L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 473F90C46AD98C38ECAB2419 /* GuessTheDrawing/Core/L10n.swift */; };
+		091502F410BB89C41209045B /* GuessTheDrawing/AppLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743AD631623EE100E62C7A1B /* GuessTheDrawing/AppLanguage.swift */; };
+		196EE995FA88BE1D6D5B8D89 /* GuessTheDrawing/DrawingBoard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0584B5307516AEFD202FA802 /* GuessTheDrawing/DrawingBoard.swift */; };
+		1E1C01C8C59F77A5D3B2EC3A /* GuessTheDrawing/Core/VoicePcm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 007EC4445C320E2A125A808C /* GuessTheDrawing/Core/VoicePcm.swift */; };
+		25ECC270D69EB37FA057C2DE /* GuessTheDrawing/Core/StrokeEraser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D359470D08C83B60D09960A /* GuessTheDrawing/Core/StrokeEraser.swift */; };
+		293F748B9B747B6BBC03F4CA /* GuessTheDrawing/CommunityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B56186A330E21A9C07FFA7 /* GuessTheDrawing/CommunityViews.swift */; };
+		31E47623E9E496DCBEA27AA8 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 535E07509D3851C3F3447DA4 /* Localizable.strings */; };
+		3BB9D14F13C433D267C1BCF2 /* GuessTheDrawing/Core/LocalizationKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943AB296CF1D95AAFB130F2E /* GuessTheDrawing/Core/LocalizationKeys.swift */; };
+		70F2A036CF8605653FEB6851 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 89832BF4CA493217BDB4BD8B /* InfoPlist.strings */; };
+		71B457C6230EFA86D1A710AB /* GuessTheDrawing/GuessTheDrawingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CDB7DC30C66B3A75CF51ED5 /* GuessTheDrawing/GuessTheDrawingApp.swift */; };
+		81F15E96C3B651C5A6227D9F /* GuessTheDrawing/Core/CanvasScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C4C03D2D0B58F3FB0214461 /* GuessTheDrawing/Core/CanvasScene.swift */; };
+		874C9AFA89BCE31296CEFAD5 /* GuessTheDrawing/Core/Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073BE70B22A8150AB49D7E94 /* GuessTheDrawing/Core/Protocol.swift */; };
+		93F77EE5E47B5A9A7B7D5681 /* GuessTheDrawing/Connection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EAB37EF1074FA652D4CADB5 /* GuessTheDrawing/Connection.swift */; };
+		999FF37E9C5A0FFB78E1CDE2 /* GuessTheDrawing/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8BF729FFE074CAEE622C0292 /* GuessTheDrawing/Assets.xcassets */; };
+		9D5733CC186025C285B4FF61 /* GuessTheDrawing/AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89BD84F5374D17EB91068BB3 /* GuessTheDrawing/AppTheme.swift */; };
+		A168FE543579B2ED44067148 /* GuessTheDrawing/Core/ThemePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5210119208C973212A20D1 /* GuessTheDrawing/Core/ThemePalette.swift */; };
+		AEDA0DF02EC67CAED666D088 /* GuessTheDrawing/VoiceChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31517BE4FFDCBFE235B2B2B /* GuessTheDrawing/VoiceChat.swift */; };
+		B6BF3D3DC36FD0E34019F149 /* GuessTheDrawing/Core/CurveGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C274C627B1F39573B1E31EC1 /* GuessTheDrawing/Core/CurveGeometry.swift */; };
+		C4AB34767B997619901AA057 /* GuessTheDrawing/Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5449ECB1E856A0A792D746BA /* GuessTheDrawing/Views.swift */; };
+		C529C4C06F0E57D51AF2EDD4 /* GuessTheDrawing/GameClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 673376E5762AE554F75607BB /* GuessTheDrawing/GameClient.swift */; };
+		E3FEB22780213880C4BE7B4C /* GuessTheDrawing/Core/CommunityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84038BD01269C6F01DC474B1 /* GuessTheDrawing/Core/CommunityPolicy.swift */; };
+		F61393D4077173717B8C8126 /* ../../country-flags in Resources */ = {isa = PBXBuildFile; fileRef = 2934FB49D6B38ADEF036C28F /* ../../country-flags */; };
+		FDBC212F4835CB396B2DECDA /* GuessTheDrawing/CommunityClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C0A065A36E1542CAB2B2DA /* GuessTheDrawing/CommunityClient.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		007EC4445C320E2A125A808C /* GuessTheDrawing/Core/VoicePcm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/VoicePcm.swift; sourceTree = "<group>"; };
+		0584B5307516AEFD202FA802 /* GuessTheDrawing/DrawingBoard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/DrawingBoard.swift; sourceTree = "<group>"; };
+		059BBD40DBB8DDFFE1E24D7B /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = GuessTheDrawing/en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		06271BAF49532C879AA3C58B /* GuessTheDrawing/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GuessTheDrawing/Info.plist; sourceTree = "<group>"; };
+		073BE70B22A8150AB49D7E94 /* GuessTheDrawing/Core/Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/Protocol.swift; sourceTree = "<group>"; };
+		109BA6CFAD7829B92BD59388 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = GuessTheDrawing/ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+		1CE4A7186E1407512DB1EACD /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = GuessTheDrawing/ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		21362774CCF78914E93F1D88 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = GuessTheDrawing/ar.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		2934FB49D6B38ADEF036C28F /* ../../country-flags */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "../../country-flags"; sourceTree = "<group>"; };
+		3EAB37EF1074FA652D4CADB5 /* GuessTheDrawing/Connection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Connection.swift; sourceTree = "<group>"; };
+		473F90C46AD98C38ECAB2419 /* GuessTheDrawing/Core/L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/L10n.swift; sourceTree = "<group>"; };
+		4D359470D08C83B60D09960A /* GuessTheDrawing/Core/StrokeEraser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/StrokeEraser.swift; sourceTree = "<group>"; };
+		4E3E1051F21C488654565E0E /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = GuessTheDrawing/de.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		50390A2E70B47D1E88099077 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = GuessTheDrawing/ko.lproj/Localizable.strings; sourceTree = "<group>"; };
+		51B27B384AACD442B116A33F /* it */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = it; path = GuessTheDrawing/it.lproj/Localizable.strings; sourceTree = "<group>"; };
+		5449ECB1E856A0A792D746BA /* GuessTheDrawing/Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Views.swift; sourceTree = "<group>"; };
+		56B56186A330E21A9C07FFA7 /* GuessTheDrawing/CommunityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/CommunityViews.swift; sourceTree = "<group>"; };
+		59378A5D792E8EB6368DB607 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = GuessTheDrawing/ru.lproj/Localizable.strings; sourceTree = "<group>"; };
+		5CDB7DC30C66B3A75CF51ED5 /* GuessTheDrawing/GuessTheDrawingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/GuessTheDrawingApp.swift; sourceTree = "<group>"; };
+		657B3BF3F26217E2E0B9D711 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = GuessTheDrawing/ja.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		673376E5762AE554F75607BB /* GuessTheDrawing/GameClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/GameClient.swift; sourceTree = "<group>"; };
+		743AD631623EE100E62C7A1B /* GuessTheDrawing/AppLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/AppLanguage.swift; sourceTree = "<group>"; };
+		84038BD01269C6F01DC474B1 /* GuessTheDrawing/Core/CommunityPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/CommunityPolicy.swift; sourceTree = "<group>"; };
+		87FB8AF277BD5B2A502EF2C3 /* ar */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = GuessTheDrawing/ar.lproj/Localizable.strings; sourceTree = "<group>"; };
+		88A91B8B279CB6DB006D8BE7 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = GuessTheDrawing/es.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		89BD84F5374D17EB91068BB3 /* GuessTheDrawing/AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/AppTheme.swift; sourceTree = "<group>"; };
+		8BF729FFE074CAEE622C0292 /* GuessTheDrawing/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = GuessTheDrawing/Assets.xcassets; sourceTree = "<group>"; };
+		8C4C03D2D0B58F3FB0214461 /* GuessTheDrawing/Core/CanvasScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/CanvasScene.swift; sourceTree = "<group>"; };
+		91BD4462691B27CD26910F71 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = GuessTheDrawing/en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		943AB296CF1D95AAFB130F2E /* GuessTheDrawing/Core/LocalizationKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/LocalizationKeys.swift; sourceTree = "<group>"; };
+		94C0A065A36E1542CAB2B2DA /* GuessTheDrawing/CommunityClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/CommunityClient.swift; sourceTree = "<group>"; };
+		973F91560D6B7E81DFAD8CB6 /* pt */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = pt; path = GuessTheDrawing/pt.lproj/Localizable.strings; sourceTree = "<group>"; };
+		A20EFC04D6DC1E32214BCB38 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "GuessTheDrawing/zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		A5627122E5B3CAAC1D28F342 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = GuessTheDrawing/hi.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		A8792157CB4F27FB949C035F /* GuessTheDrawing.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = GuessTheDrawing.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ADF2B367E06E5530DD7B6209 /* pt */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = pt; path = GuessTheDrawing/pt.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		B31517BE4FFDCBFE235B2B2B /* GuessTheDrawing/VoiceChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/VoiceChat.swift; sourceTree = "<group>"; };
+		B415893B4B3F529CD695041B /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = GuessTheDrawing/fr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		B79606FB3AFEA5BD1609ED40 /* ../GameVersion.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ../GameVersion.xcconfig; sourceTree = "<group>"; };
+		C274C627B1F39573B1E31EC1 /* GuessTheDrawing/Core/CurveGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/CurveGeometry.swift; sourceTree = "<group>"; };
+		CE5AAC19F277504A63C58CC9 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = de; path = GuessTheDrawing/de.lproj/Localizable.strings; sourceTree = "<group>"; };
+		D3E57C6AE4052CBC5CF088E8 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "GuessTheDrawing/zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		D412DAFAB88C4045A6917228 /* ko */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ko; path = GuessTheDrawing/ko.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		D4EF5326C140EB8246CF726C /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = GuessTheDrawing/es.lproj/Localizable.strings; sourceTree = "<group>"; };
+		DD5210119208C973212A20D1 /* GuessTheDrawing/Core/ThemePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuessTheDrawing/Core/ThemePalette.swift; sourceTree = "<group>"; };
+		E2D42DAF004D839A9938BC17 /* it */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = it; path = GuessTheDrawing/it.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		E903A9DFA128C890893717D0 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hi; path = GuessTheDrawing/hi.lproj/Localizable.strings; sourceTree = "<group>"; };
+		F1F6460EB8DB9E72293F0D2F /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = GuessTheDrawing/fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		85A1A7D12D3BA9F4EB2AEE07 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AD936FCBED631FA67E05C3EA = {
+			isa = PBXGroup;
+			children = (
+				743AD631623EE100E62C7A1B /* GuessTheDrawing/AppLanguage.swift */,
+				89BD84F5374D17EB91068BB3 /* GuessTheDrawing/AppTheme.swift */,
+				94C0A065A36E1542CAB2B2DA /* GuessTheDrawing/CommunityClient.swift */,
+				56B56186A330E21A9C07FFA7 /* GuessTheDrawing/CommunityViews.swift */,
+				3EAB37EF1074FA652D4CADB5 /* GuessTheDrawing/Connection.swift */,
+				8C4C03D2D0B58F3FB0214461 /* GuessTheDrawing/Core/CanvasScene.swift */,
+				84038BD01269C6F01DC474B1 /* GuessTheDrawing/Core/CommunityPolicy.swift */,
+				C274C627B1F39573B1E31EC1 /* GuessTheDrawing/Core/CurveGeometry.swift */,
+				473F90C46AD98C38ECAB2419 /* GuessTheDrawing/Core/L10n.swift */,
+				943AB296CF1D95AAFB130F2E /* GuessTheDrawing/Core/LocalizationKeys.swift */,
+				073BE70B22A8150AB49D7E94 /* GuessTheDrawing/Core/Protocol.swift */,
+				4D359470D08C83B60D09960A /* GuessTheDrawing/Core/StrokeEraser.swift */,
+				DD5210119208C973212A20D1 /* GuessTheDrawing/Core/ThemePalette.swift */,
+				007EC4445C320E2A125A808C /* GuessTheDrawing/Core/VoicePcm.swift */,
+				0584B5307516AEFD202FA802 /* GuessTheDrawing/DrawingBoard.swift */,
+				673376E5762AE554F75607BB /* GuessTheDrawing/GameClient.swift */,
+				5CDB7DC30C66B3A75CF51ED5 /* GuessTheDrawing/GuessTheDrawingApp.swift */,
+				5449ECB1E856A0A792D746BA /* GuessTheDrawing/Views.swift */,
+				B31517BE4FFDCBFE235B2B2B /* GuessTheDrawing/VoiceChat.swift */,
+				535E07509D3851C3F3447DA4 /* Localizable.strings */,
+				89832BF4CA493217BDB4BD8B /* InfoPlist.strings */,
+				2934FB49D6B38ADEF036C28F /* ../../country-flags */,
+				8BF729FFE074CAEE622C0292 /* GuessTheDrawing/Assets.xcassets */,
+				B79606FB3AFEA5BD1609ED40 /* ../GameVersion.xcconfig */,
+				06271BAF49532C879AA3C58B /* GuessTheDrawing/Info.plist */,
+				A8792157CB4F27FB949C035F /* GuessTheDrawing.app */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		34A04005BCAF206EEC990BD9 /* GuessTheDrawing */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 28A8BB66987DD87BDA946B2E /* Build configuration list for PBXNativeTarget "GuessTheDrawing" */;
+			buildPhases = (
+				2BDC836913C0251C655AC270 /* Sources */,
+				85A1A7D12D3BA9F4EB2AEE07 /* Frameworks */,
+				B4A5B8DEEC6F3BA340C44838 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GuessTheDrawing;
+			productName = GuessTheDrawing;
+			productReference = A8792157CB4F27FB949C035F /* GuessTheDrawing.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		244210E48437B6556980A702 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = D69E6ABAEE8D1F0F03292F91 /* Build configuration list for PBXProject "GuessTheDrawing" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				es,
+				fr,
+				de,
+				pt,
+				it,
+				ru,
+				"zh-Hans",
+				ja,
+				ko,
+				ar,
+				hi,
+				Base,
+			);
+			mainGroup = AD936FCBED631FA67E05C3EA;
+			productRefGroup = AD936FCBED631FA67E05C3EA;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				34A04005BCAF206EEC990BD9 /* GuessTheDrawing */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B4A5B8DEEC6F3BA340C44838 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F61393D4077173717B8C8126 /* ../../country-flags in Resources */,
+				999FF37E9C5A0FFB78E1CDE2 /* GuessTheDrawing/Assets.xcassets in Resources */,
+				31E47623E9E496DCBEA27AA8 /* Localizable.strings in Resources */,
+				70F2A036CF8605653FEB6851 /* InfoPlist.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2BDC836913C0251C655AC270 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				091502F410BB89C41209045B /* GuessTheDrawing/AppLanguage.swift in Sources */,
+				9D5733CC186025C285B4FF61 /* GuessTheDrawing/AppTheme.swift in Sources */,
+				FDBC212F4835CB396B2DECDA /* GuessTheDrawing/CommunityClient.swift in Sources */,
+				293F748B9B747B6BBC03F4CA /* GuessTheDrawing/CommunityViews.swift in Sources */,
+				93F77EE5E47B5A9A7B7D5681 /* GuessTheDrawing/Connection.swift in Sources */,
+				81F15E96C3B651C5A6227D9F /* GuessTheDrawing/Core/CanvasScene.swift in Sources */,
+				E3FEB22780213880C4BE7B4C /* GuessTheDrawing/Core/CommunityPolicy.swift in Sources */,
+				B6BF3D3DC36FD0E34019F149 /* GuessTheDrawing/Core/CurveGeometry.swift in Sources */,
+				0249B636C95461C80D3D557A /* GuessTheDrawing/Core/L10n.swift in Sources */,
+				3BB9D14F13C433D267C1BCF2 /* GuessTheDrawing/Core/LocalizationKeys.swift in Sources */,
+				874C9AFA89BCE31296CEFAD5 /* GuessTheDrawing/Core/Protocol.swift in Sources */,
+				25ECC270D69EB37FA057C2DE /* GuessTheDrawing/Core/StrokeEraser.swift in Sources */,
+				A168FE543579B2ED44067148 /* GuessTheDrawing/Core/ThemePalette.swift in Sources */,
+				1E1C01C8C59F77A5D3B2EC3A /* GuessTheDrawing/Core/VoicePcm.swift in Sources */,
+				196EE995FA88BE1D6D5B8D89 /* GuessTheDrawing/DrawingBoard.swift in Sources */,
+				C529C4C06F0E57D51AF2EDD4 /* GuessTheDrawing/GameClient.swift in Sources */,
+				71B457C6230EFA86D1A710AB /* GuessTheDrawing/GuessTheDrawingApp.swift in Sources */,
+				C4AB34767B997619901AA057 /* GuessTheDrawing/Views.swift in Sources */,
+				AEDA0DF02EC67CAED666D088 /* GuessTheDrawing/VoiceChat.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		535E07509D3851C3F3447DA4 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				059BBD40DBB8DDFFE1E24D7B /* en */,
+				D4EF5326C140EB8246CF726C /* es */,
+				B415893B4B3F529CD695041B /* fr */,
+				CE5AAC19F277504A63C58CC9 /* de */,
+				973F91560D6B7E81DFAD8CB6 /* pt */,
+				51B27B384AACD442B116A33F /* it */,
+				59378A5D792E8EB6368DB607 /* ru */,
+				A20EFC04D6DC1E32214BCB38 /* zh-Hans */,
+				109BA6CFAD7829B92BD59388 /* ja */,
+				50390A2E70B47D1E88099077 /* ko */,
+				87FB8AF277BD5B2A502EF2C3 /* ar */,
+				E903A9DFA128C890893717D0 /* hi */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		89832BF4CA493217BDB4BD8B /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				91BD4462691B27CD26910F71 /* en */,
+				88A91B8B279CB6DB006D8BE7 /* es */,
+				F1F6460EB8DB9E72293F0D2F /* fr */,
+				4E3E1051F21C488654565E0E /* de */,
+				ADF2B367E06E5530DD7B6209 /* pt */,
+				E2D42DAF004D839A9938BC17 /* it */,
+				1CE4A7186E1407512DB1EACD /* ru */,
+				D3E57C6AE4052CBC5CF088E8 /* zh-Hans */,
+				657B3BF3F26217E2E0B9D711 /* ja */,
+				D412DAFAB88C4045A6917228 /* ko */,
+				21362774CCF78914E93F1D88 /* ar */,
+				A5627122E5B3CAAC1D28F342 /* hi */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		07CA1E69F6068DEA30A4DA6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+			};
+			name = Release;
+		};
+		2B23A31EEC75B029432F2445 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+			};
+			name = Debug;
+		};
+		594BCDCC96599D88EF772A08 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B79606FB3AFEA5BD1609ED40 /* ../GameVersion.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 2XN96WY753;
+				ENABLE_TESTABILITY = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GuessTheDrawing/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(GTD_GAME_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.guessthedrawing.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		EDDA600A3F771F810A8065C9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B79606FB3AFEA5BD1609ED40 /* ../GameVersion.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = 2XN96WY753;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GuessTheDrawing/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(GTD_GAME_VERSION)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.guessthedrawing.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		28A8BB66987DD87BDA946B2E /* Build configuration list for PBXNativeTarget "GuessTheDrawing" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EDDA600A3F771F810A8065C9 /* Debug */,
+				594BCDCC96599D88EF772A08 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D69E6ABAEE8D1F0F03292F91 /* Build configuration list for PBXProject "GuessTheDrawing" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2B23A31EEC75B029432F2445 /* Debug */,
+				07CA1E69F6068DEA30A4DA6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 244210E48437B6556980A702 /* Project object */;
+}
